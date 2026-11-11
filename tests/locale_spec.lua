@@ -120,6 +120,36 @@ end
 
 local function src(path) return read_file('crimson-hitman/' .. path) end
 
+local PageScan = require('tests.harness.pagescan')
+
+--- locales/en.json, read once.
+local pageWords = nil
+local function englishPages()
+    pageWords = pageWords or json.decode(read_file('crimson-hitman/locales/en.json'))
+    return pageWords
+end
+
+local function pageKey(words, key)
+    local section, name = key:match('^([%w_]+)%.(.+)$')
+    return section ~= nil and type(words[section]) == 'table' and type(words[section][name]) == 'string'
+end
+
+--- The pages whose words are all in locales/en.json.
+local MOVED_PAGES = { 'ui/app.js' }
+
+--- What the page scan reads as words and is not, by page: each with why.
+local PAGE_ALLOW = {
+    ['ui/app.js'] = {
+        -- The page's fault reports, read in the server console.
+        ['further page errors suppressed'] = true, ['page diagnostics'] = true,
+        ['diagnostics requested by the player'] = true,
+        -- A class name with its last part added.
+        ['diag-row is-'] = true,
+        -- The code of an answer that never came, looked up in errors.
+        ['no reply'] = true,
+    },
+}
+
 local function englishTable()
     package.loaded['crimson-hitman.locales.en'] = nil
     return require('crimson-hitman.locales.en')
@@ -161,24 +191,54 @@ describe('Translations: the language files', function()
     end)
 
     it('every key the pages ask for is in locales/en.json, and their tables came out of the code', function()
-        local text = read_file('crimson-hitman/locales/en.json')
-        local function hasKey(section, key)
-            local body = text:match('"' .. section .. '"%s*:%s*(%b{})')
-            return body ~= nil and body:find('"' .. key:gsub('%p', '%%%0') .. '"%s*:') ~= nil
-        end
+        local words = englishPages()
+        local asked = 0
         for _, page in ipairs({ 'ui/app.js', 'ui/admin.js' }) do
             local js = src(page)
-            for key in js:gmatch("Text%.t%('([%w_]+%.[%w_]+)'%)") do
-                local section, name = key:match('^([%w_]+)%.(.+)$')
-                truthy(hasKey(section, name), page .. ' asks for ' .. key)
+            for key, line in pairs(PageScan.keysUsed(js)) do
+                asked = asked + 1
+                truthy(pageKey(words, key), page .. ':' .. line .. ' asks for ' .. key)
             end
             for section in js:gmatch("Text%.section%('([%w_]+)'%)") do
-                truthy(text:find('"' .. section .. '"%s*:%s*{'), page .. ' reads section ' .. section)
+                truthy(type(words[section]) == 'table', page .. ' reads section ' .. section)
             end
         end
+        truthy(asked >= 1500, asked .. ' keys asked for')
         falsy(src('ui/app.js'):find('var ERRORS = {', 1, true), 'the phone\'s refusals are in en.json')
         falsy(src('ui/admin.js'):find('var WORDS = {', 1, true), 'the panel\'s refusals are in en.json')
-        truthy(hasKey('errors', 'rate_limited') and hasKey('panel_errors', 'not_allowed'))
+        truthy(pageKey(words, 'errors.rate_limited') and pageKey(words, 'panel_errors.not_allowed'))
+    end)
+
+    it('no page holds a sentence of its own', function()
+        local classes = PageScan.classes({ src('ui/app.css'), src('ui/kit.css'), src('ui/admin.css') })
+        local left = {}
+        for _, page in ipairs(MOVED_PAGES) do
+            for _, lit in ipairs(PageScan.hardCoded(src(page), classes, PAGE_ALLOW[page])) do
+                left[#left + 1] = ('%s:%d %q'):format(page, lit.line, lit.text)
+            end
+        end
+        eq(table.concat(left, ', '), '', 'words still written into a page')
+    end)
+
+    it('the page scan finds a sentence written back, and not a key, a class or a console line', function()
+        local found = PageScan.hardCoded("el('div', 'notice gold', 'Nothing is out on you.');\n"
+            .. "console.warn('a console line'); t('app.cancel'); if (x === 'Some words') {}\n"
+            .. "var o = { 'Not this': 1 }; say(t('app.done'), 'ok');\n", { notice = true, gold = true })
+        eq(#found, 1, 'the sentence only')
+        eq(found[1].text, 'Nothing is out on you.')
+    end)
+
+    it('the pages\' own HTML reads its words by key too', function()
+        local words = englishPages()
+        for _, html in ipairs({ 'ui/index.html' }) do
+            local text = src(html)
+            local n = 0
+            for key in text:gmatch('data%-t[%w%-]*="([%w_]+%.[%w_]+)"') do
+                n = n + 1
+                truthy(pageKey(words, key), html .. ' asks for ' .. key)
+            end
+            truthy(n >= 5, html .. ': ' .. n .. ' keys')
+        end
     end)
 
     it('both pages and the game load them, and an escrowed build leaves them readable', function()

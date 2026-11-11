@@ -553,6 +553,36 @@ async function main() {
     });
   })();
 
+  /* Translations 4: every word the phone shows is read by key from
+     locales/<lang>.json. A copy of en.json with every app text marked,
+     named on the page's address (?lang=, as client/main.lua does), is what
+     the board, the tabs and the buttons then read. */
+  await (async function phoneInAnotherLanguage() {
+    const qq = JSON.parse(JSON.stringify(LOCALE_EN));
+    Object.keys(qq.app).forEach(function (k) { qq.app[k] = '\u00ab' + qq.app[k]; });
+    require('./dom.js').localeXhr.extra['qq.json'] = qq;
+    const app = boot({ list: BOARD, mine: MINE, ledger: LEDGER },
+      { location: { hostname: 'cfx-nui-renamed-by-the-operator', search: '?lang=qq' } });
+    await settle(); await settle(); await settle();
+    delete require('./dom.js').localeXhr.extra['qq.json'];
+    it('Translations: the phone reads its words in the language its address names', function () {
+      const text = app.view.textContent;
+      truthy(text.indexOf('\u00ab') !== -1, 'a marked word on the board: ' + text.slice(0, 300));
+      truthy(text.indexOf('Dana Reyes') !== -1, 'the data is the data');
+    });
+    it('Translations: every key the phone asks for is in en.json', function () {
+      const src = fs.readFileSync(APP, 'utf8');
+      const missing = [];
+      (src.match(/\bt\('[\w]+\.[\w]+'\)/g) || []).forEach(function (call) {
+        const key = call.slice(3, -2), at = key.indexOf('.');
+        if (key === 'section.key') return;  // the comment that says how
+        const sec = LOCALE_EN[key.slice(0, at)];
+        if (!sec || typeof sec[key.slice(at + 1)] !== 'string') missing.push(key);
+      });
+      eq(missing.join(', '), '');
+    });
+  })();
+
   /* Step 4b: plain words. Every refusal either page can show (this page's
      ERRORS, the staff panel's WORDS) is a sentence a player or a staff
      member reads without knowing the code: no internal code, no snake_case,

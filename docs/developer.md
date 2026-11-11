@@ -246,6 +246,12 @@ server, `CrimsonLocale.t` on the client), which reads
 call `Text.t('section.key')` or read a whole `Text.section(name)` from
 `locales/<lang>.json`, loaded synchronously as the page starts (the phone is
 told the language by `?lang=` on its address, the panel by its open message).
+A page reads every word through its one helper, `t('section.key')` (`var t
+= Text.t`; the phone's keys are `app.*`), and its own HTML by attribute:
+`data-t` (the text), `data-t-title`, `data-t-placeholder`,
+`data-t-aria-label`, applied as the page starts. `Text.later(fn)` runs `fn`
+now and again once a language is applied, for what a page builds from its
+words while it loads. A local variable is never called `t`.
 Texts keep their `%s`/`%d` and are formatted by the caller, so the wording is
 the same. Keys are `<file area>.<first words>`: `admin.*` server/admin.lua,
 `bridges.*` server/bridges.lua, `settings.*` and `settings_group.*`
@@ -272,7 +278,12 @@ data (the old placer alias), patterns of other software's errors, a date
 format. `tests/locale_spec.lua` checks that every key used exists in English
 and scans every server file and the game's (`tests/harness/textscan.lua`) for
 a sentence written back into code; `NAMES` and `ALLOW` list what it reads as
-words and is not, each with why. Console lines (`Log.*`, `print`, `error`,
+words and is not, each with why. The pages are scanned the same way
+(`tests/harness/pagescan.lua`, a small JavaScript lexer: an object key, a
+comparison, an index, CSS classes and icons, key prefixes and console lines
+are not words; `PAGE_ALLOW` lists the rest, with why), and every key a page
+or its HTML asks for must be in `locales/en.json` (tests/ui/run.js also
+boots the phone in a made-up language and reads its words on the board). Console lines (`Log.*`, `print`, `error`,
 `Db.try`, `Lifecycle.run`) are never scanned: they stay English, and so do
 the files that only print to the console (`CONSOLE_FILES`: the stores,
 server/boot.lua, server/versioncheck.lua).

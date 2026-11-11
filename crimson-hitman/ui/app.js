@@ -73,8 +73,13 @@
       }
       return sections[name];
     }
+    /* What the page builds from its words as it loads (a table of labels),
+       run now and again once a language is applied: the panel learns its
+       language from its first open message, after it has loaded. */
+    var laters = [], applied = 'en';
+    function later(fn) { laters.push(fn); fn(); }
     function use(lang) {
-      if (typeof lang !== 'string' || !/^[A-Za-z_-]+$/.test(lang) || lang === 'en') { return; }
+      if (typeof lang !== 'string' || !/^[A-Za-z_-]+$/.test(lang) || lang === 'en' || lang === applied) { return; }
       var chosen = load(lang);
       if (!chosen) { warn('there is no locales/' + lang + '.json (Config.Locale); English is used.'); return; }
       var missing = 0;
@@ -85,16 +90,35 @@
         });
       });
       if (missing > 0) { warn(lang + ' lacks ' + missing + ' text(s); those read in English.'); }
+      applied = lang;
+      laters.forEach(function (fn) { fn(); });
     }
-    function t(key) {
+    function tv(key) {
       var at = String(key).indexOf('.');
       var value = at > 0 ? section(key.slice(0, at))[key.slice(at + 1)] : undefined;
       if (typeof value === 'string') { return value; }
       warn('no text for ' + key + '; the key is shown.');
       return String(key);
     }
-    return { t: t, section: section, use: use };
+    return { t: tv, section: section, use: use, later: later };
   })();
+  /* The one way this page reads a word: t('section.key'). */
+  var t = Text.t;
+  /* The words the page's own HTML shows, by key like the rest: data-t (the
+     text), data-t-title, data-t-placeholder and data-t-aria-label. */
+  Text.later(function () {
+    try {
+      var root = document.body || document;
+      Array.prototype.forEach.call(root.querySelectorAll('[data-t]'), function (node) {
+        node.textContent = t(node.getAttribute('data-t'));
+      });
+      ['title', 'placeholder', 'aria-label'].forEach(function (name) {
+        Array.prototype.forEach.call(root.querySelectorAll('[data-t-' + name + ']'), function (node) {
+          node.setAttribute(name, t(node.getAttribute('data-t-' + name)));
+        });
+      });
+    } catch (err) { /* a page with no document of its own */ }
+  });
   Text.use(((String((window.location && window.location.search) || '')).match(/[?&]lang=([^&]+)/) || [])[1]);
   var state = {
     tab: 'board', board: null, mine: null, ledger: null,
@@ -284,7 +308,7 @@
         var reason = event && event.reason;
         var message = (reason && reason.message) || String(reason);
         note('reject', message, reason && reason.stack);
-        report(message, 'unhandled rejection', reason && reason.stack);
+        report(message, t('app.unhandled_rejection'), reason && reason.stack);
       });
 
       note('boot', 'build ' + (window.CH_BUILD || 'dev'));
@@ -298,9 +322,9 @@
     var taps = 0, lastTap = 0;
 
     function tapped() {
-      var t = now();
-      taps = (t - lastTap < 1200) ? taps + 1 : 1;
-      lastTap = t;
+      var tv = now();
+      taps = (tv - lastTap < 1200) ? taps + 1 : 1;
+      lastTap = tv;
       if (taps >= 5) { taps = 0; toggle(); }
     }
 
@@ -342,12 +366,12 @@
       head.className = 'diag-head';
 
       var title = document.createElement('strong');
-      title.textContent = 'Diagnostics · ' + (window.CH_BUILD || 'dev');
+      title.textContent = t('app.diagnostics') + (window.CH_BUILD || 'dev');
       head.appendChild(title);
 
       var close = make('button');
       close.className = 'btn ghost';
-      close.textContent = 'Close';
+      close.textContent = t('app.close');
       close.onclick = toggle;
       head.appendChild(close);
       panel.appendChild(head);
@@ -368,7 +392,7 @@
 
       var copy = make('button');
       copy.className = 'btn ghost diag-copy';
-      copy.textContent = 'Send this to the server log';
+      copy.textContent = t('app.send_this_to_the_server_log');
       // Built as dump() builds the log staff ask for: lines joined with the
       // marker the server splits on, and the newest 900 characters, which
       // is all the server keeps. Sent whole and oldest first, the server
@@ -377,7 +401,7 @@
         var flat = asText().split('\n').join(' || ');
         send({ what: 'diagnostics requested by the player', where: 'panel',
                stack: flat.slice(-900), build: window.CH_BUILD || 'dev' });
-        note('sent', 'diagnostics sent to the server log');
+        note('sent', t('app.diagnostics_sent_to_the_server_log'));
       };
       panel.appendChild(copy);
 
@@ -462,7 +486,7 @@
       // A body that is not JSON, or a bridge that answered nothing. Both
       // used to arrive as a bare 'unreachable' with no way to tell them
       // apart from a client that never replied.
-      Diag.note('unreachable', name + ' -> ' + ((err && err.message) || 'no reply'));
+      Diag.note('unreachable', name + ' -> ' + ((err && err.message) || t('app.no_reply')));
       return done({ ok: false, err: 'unreachable' });
     });
   }
@@ -485,34 +509,34 @@
   };
 
   /* What each reward source is called when a refusal names it. */
-  var SOURCE_WORDS = { cash: 'cash', bank: 'bank money', dirty: 'dirty money',
+  var SOURCE_WORDS = { cash: 'cash', bank: t('app.bank_money'), dirty: t('app.dirty_money'),
                        item: 'items', weapon: 'weapons' };
 
   /* A reason refused for what it says, by the rule it broke (the server's
      reason_refused). The Place form and Edit say the same. */
   function reasonRefusedText(data) {
     var rule = data && data.rule;
-    if (rule === 'empty') { return 'Give a reason for the contract.'; }
-    if (rule === 'length') { return 'That reason is too long. Make it shorter.'; }
+    if (rule === 'empty') { return t('app.give_a_reason_for_the_contract'); }
+    if (rule === 'length') { return t('app.that_reason_is_too_long_make'); }
     if (rule === 'digits') {
-      return 'That reason has more digits in it than this server takes. Write amounts '
-        + 'in words, or leave them out.';
+      return t('app.that_reason_has_more_digits_in')
+        + t('app.in_words_or_leave_them_out');
     }
     if (rule === 'pattern') {
-      return 'This server will not take a link or an @handle in a reason. Word it differently.';
+      return t('app.this_server_will_not_take_a');
     }
     if (rule === 'phone') {
-      return 'A word in that reason is not allowed here. Word it differently.';
+      return t('app.a_word_in_that_reason_is');
     }
     // The roleplay reason rules (Config.Roleplay.ReasonQuality).
     if (rule === 'short') {
-      return 'Give a real reason: at least ' + (Number(data.min) || 0) + ' characters.';
+      return t('app.give_a_real_reason_at_least') + (Number(data.min) || 0) + t('app.characters');
     }
     if (rule === 'words') {
-      return 'Give a real reason: at least ' + (Number(data.min) || 0) + ' words.';
+      return t('app.give_a_real_reason_at_least') + (Number(data.min) || 0) + t('app.words');
     }
     if (rule === 'low_effort') {
-      return 'That reads as no reason at all. Say what they did.';
+      return t('app.that_reads_as_no_reason_at');
     }
     return ERRORS.reason_refused;
   }
@@ -524,10 +548,10 @@
      seconds". */
   function retryIn(seconds) {
     var s = Math.ceil(Number(seconds) || 0);
-    if (!(s > 0)) { return 'in a moment'; }
+    if (!(s > 0)) { return t('app.in_a_moment'); }
     if (s < 60) { return 'in ' + s + ' second' + (s === 1 ? '' : 's'); }
     var m = Math.ceil(s / 60);
-    return 'in about ' + m + ' minute' + (m === 1 ? '' : 's');
+    return t('app.in_about') + m + ' minute' + (m === 1 ? '' : 's');
   }
 
   /* ---------- dialogs ----------
@@ -595,7 +619,7 @@
   function askPick(question, detail, options, onPick, payLabel) {
     var open = (options || []).filter(function (o) { return !o.disabled; });
     state.dialog = { kind: 'pick', question: question, detail: detail,
-                     options: options || [], onPick: onPick, payLabel: payLabel || 'Pay',
+                     options: options || [], onPick: onPick, payLabel: payLabel || t('app.pay'),
                      chosen: open.length === 1 ? open[0].pick : null, armed: false };
     render();
   }
@@ -644,7 +668,7 @@
     panel.appendChild(list);
 
     var row = el('div', 'row');
-    var armedLabel = 'Tap again to ' + d.payLabel.charAt(0).toLowerCase() + d.payLabel.slice(1);
+    var armedLabel = t('app.tap_again_to') + d.payLabel.charAt(0).toLowerCase() + d.payLabel.slice(1);
     var pay = el('button', d.armed ? 'danger' : 'primary', d.armed ? armedLabel : d.payLabel);
     if (!d.chosen) { pay.disabled = true; }
     pay.onclick = function () {
@@ -659,12 +683,12 @@
       render();
       if (handler) { handler(pick); }
     };
-    var no = el('button', 'ghost', 'Cancel');
+    var no = el('button', 'ghost', t('app.cancel'));
     no.onclick = closeDialog;
     row.appendChild(pay);
     row.appendChild(no);
     panel.appendChild(row);
-    if (!d.chosen) { panel.appendChild(el('div', 'hint', 'Pick who to ask about first.')); }
+    if (!d.chosen) { panel.appendChild(el('div', 'hint', t('app.pick_who_to_ask_about_first'))); }
     view.appendChild(panel);
   }
 
@@ -730,7 +754,7 @@
     });
 
     var row = el('div', 'row');
-    var yes = el('button', 'primary', d.confirmLabel || 'Save');
+    var yes = el('button', 'primary', d.confirmLabel || t('app.save'));
     yes.onclick = function () {
       var values = {};
       d.fields.forEach(function (spec) {
@@ -750,7 +774,7 @@
       render();
       if (handler) handler(values, touched);
     };
-    var no = el('button', 'ghost', 'Cancel');
+    var no = el('button', 'ghost', t('app.cancel'));
     no.onclick = closeDialog;
     row.appendChild(yes);
     row.appendChild(no);
@@ -790,7 +814,7 @@
 
       // Named, because a bare box in a dialog is the player guessing what
       // the number is measured in.
-      panel.appendChild(labelled(opts.label || 'Amount', input));
+      panel.appendChild(labelled(opts.label || t('app.amount'), input));
 
       /* Always there, hint or not. It is also where a figure Confirm will
          not take is explained, and a dialog opened without a hint had
@@ -813,7 +837,7 @@
     var row = el('div', 'row');
     var named = d.labels || {};
     var yes = el('button', 'primary', d.kind === 'number'
-      ? ((d.opts && d.opts.confirm) || 'Confirm') : (named.yes || 'Yes'));
+      ? ((d.opts && d.opts.confirm) || t('app.confirm')) : (named.yes || t('app.yes')));
     yes.onclick = function () {
       var handler = d.onYes, valueHandler = d.onValue;
       var value = input ? parseInt(input.value, 10) : null;
@@ -827,8 +851,8 @@
         if (!value || value < floor
             || (bounds.max !== undefined && value > bounds.max)) {
           consequence.textContent = bounds.max !== undefined
-            ? ('Enter something between ' + floor + ' and ' + bounds.max + '.')
-            : ('Enter ' + floor + ' or more.');
+            ? (t('app.enter_something_between') + floor + ' and ' + bounds.max + '.')
+            : ('Enter ' + floor + t('app.or_more'));
           return;
         }
       }
@@ -838,7 +862,7 @@
       if (handler) handler();
       if (valueHandler && value && value > 0) valueHandler(value);
     };
-    var no = el('button', 'ghost', named.no || 'Cancel');
+    var no = el('button', 'ghost', named.no || t('app.cancel'));
     no.onclick = closeDialog;
     row.appendChild(yes);
     row.appendChild(no);
@@ -876,11 +900,11 @@
 
   // What the client's Ledger row says once the photo is no longer waiting.
   var PROOF_WORDS = {
-    saved: 'Photo saved to your phone',
-    deleted: 'Photo deleted',
+    saved: t('app.photo_saved_to_your_phone'),
+    deleted: t('app.photo_deleted'),
     // Opened and never answered for: this page was closed while it was up.
     // The server deletes it when the time to decide runs out.
-    open: 'Photo opened and not saved. It is being deleted.'
+    open: t('app.photo_opened_and_not_saved_it')
   };
 
   /* Set the photo's state here as well as on the server, so the Ledger says
@@ -1035,7 +1059,7 @@
         clearTimeout(timer);
         probe.onload = probe.onerror = null;
         if (loaded) { return resolve(); }
-        Diag.note('refused', 'photo link did not load from '
+        Diag.note('refused', t('app.photo_link_did_not_load_from')
           + ((/^https?:\/\/([^\/]+)/.exec(url) || [])[1] || '?'));
         reject({ err: 'save_unavailable' });
       }
@@ -1101,7 +1125,7 @@
       });
     } else {
       saving = new Promise(function (resolve) {
-        resolve(window.components.uploadMedia('Image', blobOf(d.src)));
+        resolve(window.components.uploadMedia(t('app.image'), blobOf(d.src)));
       }).then(function (url) {
         if (typeof url !== 'string' || !url) { throw { err: 'save_unavailable' }; }
         return toGallery(d.handle, url);
@@ -1109,7 +1133,7 @@
     }
     return saving.then(function () {
       return decideProof(d.handle, 'save').then(function (r) {
-        if (r.ok) { say('Saved to your Photos.', 'ok'); }
+        if (r.ok) { say(t('app.saved_to_your_photos'), 'ok'); }
       });
     }, function (r) {
       // Left open too long while the phone was busy: it is gone, and
@@ -1132,7 +1156,7 @@
 
   function keepProof(d) {
     return decideProof(d.handle, 'keep').then(function (r) {
-      if (r.ok) { say('Kept in this app. Open it again from your Ledger.', 'ok'); }
+      if (r.ok) { say(t('app.kept_in_this_app_open_it'), 'ok'); }
     });
   }
 
@@ -1153,50 +1177,50 @@
     var d = state.dialog;
     var route = d.kept || d.failed ? null : saveRoute(d);
     var panel = el('div', 'card dialog photo-view');
-    panel.appendChild(el('div', 'target', 'Proof of the kill'));
+    panel.appendChild(el('div', 'target', t('app.proof_of_the_kill')));
     panel.appendChild(el('div', 'reason', d.kept
-      ? 'Kept for you in this app. Open it again from your Ledger whenever you like, '
-        + 'until you delete it.'
+      ? t('app.kept_for_you_in_this_app')
+        + t('app.until_you_delete_it')
       : d.failed
-        ? 'Your phone could not save it to Photos. Keep it in this app instead, or '
-          + 'delete it \u2014 it is deleted when you close this.'
+        ? t('app.your_phone_could_not_save_it')
+          + t('app.delete_it_it_is_deleted_when')
         : route
-          ? 'You can see this once. Save it to Photos to keep it \u2014 it is deleted '
-            + 'when you close this.'
+          ? t('app.you_can_see_this_once_save')
+            + t('app.when_you_close_this')
           : d.photosOff
-            ? 'You can see this once. Kill photos are off on this server, so it can only be '
-              + 'kept for you in this app. Tap Save to keep it \u2014 it is deleted when you '
-              + 'close this.'
-            : 'You can see this once. Your phone can\u2019t take it, so it is kept for you '
-              + 'in this app. Tap Save to keep it \u2014 it is deleted when you close this.'));
+            ? t('app.you_can_see_this_once_kill')
+              + t('app.kept_for_you_in_this_app_2')
+              + t('app.close_this')
+            : t('app.you_can_see_this_once_your')
+              + t('app.in_this_app_tap_save_to')));
 
     var frame = el('div', 'photo-frame');
     var img = document.createElement('img');
     img.src = d.src;
-    img.alt = 'Verification photograph';
+    img.alt = t('app.verification_photograph');
     frame.appendChild(img);
     panel.appendChild(frame);
 
     var row = el('div', 'row');
     if (d.kept) {
-      row.appendChild(actionButton('ghost is-destructive', 'Delete', 'proof-delete:' + d.handle,
-        'Deleting\u2026', function () { return decideProof(d.handle, 'delete'); }));
-      var close = el('button', 'ghost', 'Close');
+      row.appendChild(actionButton('ghost is-destructive', t('app.delete'), 'proof-delete:' + d.handle,
+        t('app.deleting'), function () { return decideProof(d.handle, 'delete'); }));
+      var close = el('button', 'ghost', t('app.close'));
       close.onclick = closeDialog;
       row.appendChild(close);
     } else {
       if (d.failed) {
-        row.appendChild(actionButton('primary', 'Keep it in the app instead',
-          'proof-keep:' + d.handle, 'Keeping\u2026', function () { return keepProof(d); }));
+        row.appendChild(actionButton('primary', t('app.keep_it_in_the_app_instead'),
+          'proof-keep:' + d.handle, t('app.keeping'), function () { return keepProof(d); }));
       } else if (route) {
-        row.appendChild(actionButton('primary', 'Save to Photos', 'proof-save:' + d.handle,
-          'Saving\u2026', function () { return saveProof(d, route); }));
+        row.appendChild(actionButton('primary', t('app.save_to_photos'), 'proof-save:' + d.handle,
+          t('app.saving'), function () { return saveProof(d, route); }));
       } else {
-        row.appendChild(actionButton('primary', 'Save', 'proof-keep:' + d.handle,
-          'Saving\u2026', function () { return keepProof(d); }));
+        row.appendChild(actionButton('primary', t('app.save'), 'proof-keep:' + d.handle,
+          t('app.saving'), function () { return keepProof(d); }));
       }
-      row.appendChild(actionButton('ghost is-destructive', 'Delete', 'proof-delete:' + d.handle,
-        'Deleting\u2026', function () { return decideProof(d.handle, 'delete'); }));
+      row.appendChild(actionButton('ghost is-destructive', t('app.delete'), 'proof-delete:' + d.handle,
+        t('app.deleting'), function () { return decideProof(d.handle, 'delete'); }));
     }
     panel.appendChild(row);
     view.appendChild(panel);
@@ -1243,7 +1267,7 @@
 
     // "Close", not "Cancel": one of the choices this dismisses is "Cancel
     // the contract", and the two sat a thumb apart with the same word.
-    var cancel = el('button', 'ghost', 'Close');
+    var cancel = el('button', 'ghost', t('app.close'));
     cancel.onclick = closeDialog;
     if (annotated) {
       var cancelBlock = el('div', 'choice');
@@ -1419,13 +1443,13 @@
     // A request that can move money, out of time: it may still go through,
     // and "Try again" paid twice. Anything else that timed out moved nothing.
     if (result.err === 'timeout' && MONEY_EVENTS[result.event] === true) {
-      return 'No answer yet. It may still go through: look before you try again.';
+      return t('app.no_answer_yet_it_may_still');
     }
 
     // A wait the player can act on. "Slow down" alone reads as a broken
     // button, because tapping again says exactly the same thing.
     if (result.err === 'rate_limited' && result.data && result.data.retryAfter) {
-      return 'Slow down \u2014 try again ' + retryIn(result.data.retryAfter) + '.';
+      return t('app.slow_down_try_again') + retryIn(result.data.retryAfter) + '.';
     }
 
     // A reason refused for what it says, by the rule it broke: a form full
@@ -1440,55 +1464,55 @@
 
     // A reward source staff switched off while the form was open, by name.
     if (result.err === 'source_disabled' && result.data && SOURCE_WORDS[result.data.source]) {
-      return 'This server no longer takes ' + SOURCE_WORDS[result.data.source]
-        + ' in a reward. Nothing was taken.';
+      return t('app.this_server_no_longer_takes') + SOURCE_WORDS[result.data.source]
+        + t('app.in_a_reward_nothing_was_taken');
     }
     // And the payout ceiling, lowered the same way.
     if (result.err === 'slots_over' && result.data && Number(result.data.max) > 0) {
       var most = Number(result.data.max);
       return most === 1
-        ? 'This server now takes one payout per contract. Nothing was taken.'
-        : 'This server now takes at most ' + most + ' payouts per contract. Nothing was taken.';
+        ? t('app.this_server_now_takes_one_payout')
+        : t('app.this_server_now_takes_at_most') + most + t('app.payouts_per_contract_nothing_was_taken');
     }
 
     // A message that was not sent for what it says, with the draft kept.
     if (result.err === 'message_refused' && result.data && result.data.empty) {
-      return 'There is nothing in that message to send.';
+      return t('app.there_is_nothing_in_that_message');
     }
 
     // Whose number a call would show, said the right way round: "they are
     // staying anonymous" was said to a named caller whose own number it was.
     if (result.err === 'call_unmasked' && result.data && result.data.anonymous === 'you') {
-      return 'You are staying anonymous, and a call from this phone would show your '
-        + 'number. Send a message instead.';
+      return t('app.you_are_staying_anonymous_and_a')
+        + t('app.number_send_a_message_instead');
     }
 
     // Held for seconds: the same request is still being worked on, waiting
     // on the server, and tapping again at once meets it again. Under ten
     // seconds it is the moment the plain words say.
     if (result.err === 'busy' && result.data && Number(result.data.heldMs) >= 10000) {
-      return 'This is still being worked on. Look again in a minute before you try again.';
+      return t('app.this_is_still_being_worked_on');
     }
 
     // How long until a hitman who walked away may take it back.
     if (result.err === 'retake_too_soon' && result.data && Number(result.data.retryAfter) > 0) {
       var back = Math.ceil(Number(result.data.retryAfter) / 60);
-      return 'You walked away from this contract a moment ago. You can take it again in '
-        + durationText(back) + '; until then it is open to everybody else.';
+      return t('app.you_walked_away_from_this_contract')
+        + durationText(back) + t('app.until_then_it_is_open_to');
     }
 
     // How long until the meeting point may change again: once every half
     // minute, whoever taps.
     if (result.err === 'meeting_too_soon' && result.data && Number(result.data.retryAfter) > 0) {
-      return 'The meeting point was changed a moment ago. Try again '
+      return t('app.the_meeting_point_was_changed_a')
         + retryIn(result.data.retryAfter) + '.';
     }
 
     // How long until the placer's informant asks again.
     if (result.err === 'informant_cooldown' && result.data && Number(result.data.minutes) > 0) {
       var minutes = Math.ceil(Number(result.data.minutes));
-      return 'Your informant can ask again in ' + minutes + ' minute'
-        + (minutes === 1 ? '' : 's') + '. Nothing was taken.';
+      return t('app.your_informant_can_ask_again_in') + minutes + ' minute'
+        + (minutes === 1 ? '' : 's') + t('app.nothing_was_taken');
     }
 
     // Worth too little in money: the least is sent with the refusal, and
@@ -1498,8 +1522,8 @@
       var least = Number(result.data && result.data.min)
         || Number(state.wallet && state.wallet.caps && state.wallet.caps.minValue) || 0;
       if (least > 0) { return minRewardText(least); }
-      return 'A contract here has to be worth more in money than that: ' + moneyCounted()
-        + ' Items and weapons do not count towards it.';
+      return t('app.a_contract_here_has_to_be') + moneyCounted()
+        + t('app.items_and_weapons_do_not_count');
     }
 
     // The cooling-off after a completed contract
@@ -1507,13 +1531,13 @@
     // hours, and nothing else.
     if (result.err === 'target_recently_on' && result.data && Number(result.data.hours) > 0) {
       var hours = Math.ceil(Number(result.data.hours));
-      return 'There is a cooling-off period on them. You can place a contract on them again in '
+      return t('app.there_is_a_cooling_off_period')
         + hours + ' hour' + (hours === 1 ? '' : 's') + '.';
     }
     // Too far from the placer to hand over a proof item, by the server's distance.
     if (result.err === 'proof_too_far' && result.data && Number(result.data.radius) > 0) {
-      return 'Stand within ' + Number(result.data.radius) + ' m of the person who placed this '
-        + 'contract to hand it over. Nothing was taken.';
+      return t('app.stand_within') + Number(result.data.radius) + t('app.m_of_the_person_who_placed')
+        + t('app.contract_to_hand_it_over_nothing');
     }
 
     // A kill on a contract only a live handover completes: what to do
@@ -1523,8 +1547,8 @@
     // A buyout charged, then put on hold by staff before it closed the
     // contract: the premium came back, and is said.
     if (result.err === 'contract_frozen' && result.data && result.data.refunded) {
-      return 'This contract is on hold by staff, so your buyout did not go through. '
-        + 'Your payment was returned.';
+      return t('app.this_contract_is_on_hold_by')
+        + t('app.your_payment_was_returned');
     }
 
     // A fee or a price that moved while it was on screen: the figure now.
@@ -1535,15 +1559,15 @@
     // And the rule a contract is placed under, which way it went.
     if (result.err === 'rule_changed' && result.data
         && typeof result.data.fulfilment === 'string') {
-      return 'This server now places contracts differently: '
+      return t('app.this_server_now_places_contracts_differently')
         + (result.data.fulfilment === 'either'
-          ? 'a kill completes one as well as a live handover.'
-          : 'they only pay when the target is brought to you alive, and a kill does '
-            + 'not complete one.')
-        + ' Nothing was taken. Check the form and place it again.';
+          ? t('app.a_kill_completes_one_as_well')
+          : t('app.they_only_pay_when_the_target')
+            + t('app.not_complete_one'))
+        + t('app.nothing_was_taken_check_the_form');
     }
 
-    return ERRORS[result.err] || 'Something went wrong.';
+    return ERRORS[result.err] || t('app.something_went_wrong');
   }
 
   /* What a charge is now, when a refusal says it moved while it was on
@@ -1552,19 +1576,19 @@
      just set, without ever being shown; now it is refused, and said. */
   function feeMovedText(data) {
     var d = data || {};
-    function from(account) { return account === 'cash' ? 'your cash' : 'your bank'; }
+    function from(account) { return account === 'cash' ? t('app.your_cash') : t('app.your_bank'); }
     if (typeof d.creatorFee === 'number') {
-      return 'Placing anonymously now costs ' + money(d.creatorFee) + ' from '
-        + from(d.feeAccount) + '. Nothing was taken. The form shows the new figure; '
-        + 'place it again if that is fine.';
+      return t('app.placing_anonymously_now_costs') + money(d.creatorFee) + ' from '
+        + from(d.feeAccount) + t('app.nothing_was_taken_the_form_shows')
+        + t('app.place_it_again_if_that_is');
     }
     if (typeof d.fee === 'number') {
-      return 'Taking it anonymously now costs ' + money(d.fee) + ' from '
-        + from(d.feeAccount) + '. Nothing was taken. Check the new figure before you take it.';
+      return t('app.taking_it_anonymously_now_costs') + money(d.fee) + ' from '
+        + from(d.feeAccount) + t('app.nothing_was_taken_check_the_new');
     }
     if (typeof d.cost === 'number') {
-      return 'The informant now costs ' + money(d.cost) + ' from ' + from(d.account)
-        + '. Nothing was taken. Ask again if that is fine.';
+      return t('app.the_informant_now_costs') + money(d.cost) + ' from ' + from(d.account)
+        + t('app.nothing_was_taken_ask_again_if');
     }
     return null;
   }
@@ -1573,8 +1597,8 @@
      that says it uses: the Place form's hint, its own check, and a refusal
      for placing under it or taking a reward back out below it. */
   function minRewardText(least) {
-    return 'A contract here has to be worth at least ' + money(least) + ' in money: '
-      + moneyCounted() + ' Items and weapons do not count towards it.';
+    return t('app.a_contract_here_has_to_be_2') + money(least) + t('app.in_money')
+      + moneyCounted() + t('app.items_and_weapons_do_not_count');
   }
 
   /* What counts as money in a reward. "Across every payout" only where a
@@ -1582,7 +1606,7 @@
      at 1, as shipped, the form says nothing about further collections. */
   function moneyCounted() {
     return moneyTaken() + ' '
-      + (slotCeiling() > 1 ? 'across every payout.' : 'in the reward.');
+      + (slotCeiling() > 1 ? t('app.across_every_payout') : t('app.in_the_reward'));
   }
 
   /* The money sources this server takes, as words: "cash, bank and dirty
@@ -1594,7 +1618,7 @@
     var names = [];
     if (caps.cashEnabled !== false) { names.push('cash'); }
     if (caps.bankEnabled !== false) { names.push('bank'); }
-    if (caps.dirtyEnabled !== false) { names.push('dirty money'); }
+    if (caps.dirtyEnabled !== false) { names.push(t('app.dirty_money')); }
     if (!names.length) { return 'money'; }
     return names.length === 1 ? names[0]
       : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
@@ -1826,7 +1850,7 @@
     var reasonLine = el('div', 'reason', contract.staffEdited ? null : (contract.reason || '—'));
     if (contract.staffEdited) {
       reasonLine.appendChild(el('span', null, contract.reason || '—'));
-      reasonLine.appendChild(el('span', 'edited-mark', 'edited by staff'));
+      reasonLine.appendChild(el('span', 'edited-mark', t('app.edited_by_staff')));
     }
     who.appendChild(reasonLine);
     left.appendChild(who);
@@ -1847,14 +1871,14 @@
     var stamp = money(paid.baseline);
     var g = paid.goods || {};
     if (!(Number(paid.baseline) > 0) && (Number(g.items) || 0) + (Number(g.weapons) || 0) > 0) {
-      stamp = Number(g.weapons) > 0 ? 'Weapons' : 'Goods';
+      stamp = Number(g.weapons) > 0 ? t('app.weapons') : t('app.goods');
     }
     reward.appendChild(el('div', 'amount' + (stamp.charAt(0) === '$' ? '' : ' is-goods'), stamp));
     // A contract that pays only for a live delivery pays all of it for one,
     // so nothing on it is "if alive": the server places it with no bonus,
     // and one it somehow held would be paid on the same delivery as the
     // rest. The card says the rule once, as a chip, instead.
-    var ifAlive = aliveOnly(contract) ? '' : ' if alive';
+    var ifAlive = aliveOnly(contract) ? '' : t('app.if_alive');
     if (paid.bonus > 0) {
       // "If alive", not "alive": "+$75,000 alive" read as a figure with a
       // stray word after it. Not "if delivered alive", which is too long to
@@ -1873,7 +1897,7 @@
     // which the chip cannot, and which is the half nobody guessed.
     if (context === 'board' && aliveOnly(contract)) {
       notes.appendChild(el('div', 'hint ico i-usercheck',
-        'Bring the target alive to the person who placed this contract.'));
+        t('app.bring_the_target_alive_to_the')));
     }
 
     // How much of that is dirty money, when any of it is. "Dirty money",
@@ -1892,10 +1916,10 @@
     var dirtyBase = Number(paid.sources && paid.sources.dirty) || 0;
     var dirtyBonus = Number(paid.bonusSources && paid.bonusSources.dirty) || 0;
     var dirtyText = dirtyBase > 0 && dirtyBonus > 0
-      ? money(dirtyBase) + ' of this is dirty money, and ' + money(dirtyBonus)
-        + ' of the kidnapping bonus'
-      : dirtyBase > 0 ? money(dirtyBase) + ' of this is dirty money'
-      : dirtyBonus > 0 ? money(dirtyBonus) + ' of the kidnapping bonus is dirty money'
+      ? money(dirtyBase) + t('app.of_this_is_dirty_money_and') + money(dirtyBonus)
+        + t('app.of_the_kidnapping_bonus')
+      : dirtyBase > 0 ? money(dirtyBase) + t('app.of_this_is_dirty_money')
+      : dirtyBonus > 0 ? money(dirtyBonus) + t('app.of_the_kidnapping_bonus_is_dirty')
       : null;
     if (dirtyText) { notes.appendChild(el('div', 'hint ico i-coin', dirtyText)); }
 
@@ -1923,7 +1947,7 @@
       var full = contract.mode === 'competitive'
         && contract.hitmenMax
         && contract.hitmenActive >= contract.hitmenMax;
-      return chip(full ? crowd + ' — full' : crowd, full ? 'is-warn' : 'hot', 'i-users');
+      return chip(full ? crowd + t('app.full') : crowd, full ? 'is-warn' : 'hot', 'i-users');
     }
 
     // What a client opens Mine to find out, first: is anyone on it. An
@@ -1932,7 +1956,7 @@
     // absence.
     if (mine) {
       meta.appendChild(contract.hitmenActive > 0 ? crowdChip()
-        : chip((collected > 0 ? 'Open again' : 'Open') + ' — no hitman yet', null, 'i-users'));
+        : chip((collected > 0 ? t('app.open_again') : t('app.open')) + t('app.no_hitman_yet'), null, 'i-users'));
     }
 
     // How long is left, on every card. It was only ever said inside a
@@ -1947,24 +1971,24 @@
     // under the card says what it means for them. The same for every party,
     // never which of them or why. Chip, clock and note said it three times.
     if (contract.onHold && !clock) {
-      meta.appendChild(chip('On hold', 'is-warn', 'i-lock'));
+      meta.appendChild(chip(t('app.on_hold'), 'is-warn', 'i-lock'));
     }
 
-    meta.appendChild(chip(contract.mode === 'competitive' ? 'Competitive' : 'Exclusive',
+    meta.appendChild(chip(contract.mode === 'competitive' ? t('app.competitive') : t('app.exclusive'),
       null, contract.mode === 'competitive' ? 'i-flag' : 'i-lock'));
 
     // How it can be finished, beside how it is shared: a term of the
     // contract every party is shown, the target too. Only where a kill does
     // not pay. A card without it is finished either way, as every card was.
     if (aliveOnly(contract)) {
-      meta.appendChild(chip('Alive only', null, 'i-usercheck'));
+      meta.appendChild(chip(t('app.alive_only'), null, 'i-usercheck'));
     }
 
     // "Payout", the Place form's word for it. "Slot 1 of 3" told the
     // client nothing about how many had been collected.
     if (contract.slots > 1) {
       meta.appendChild(chip(mine
-        ? collected + ' of ' + contract.slots + ' payouts collected'
+        ? collected + ' of ' + contract.slots + t('app.payouts_collected')
         : 'Payout ' + contract.currentSlot + ' of ' + contract.slots, 'slots', 'i-layers'));
     }
 
@@ -1975,8 +1999,8 @@
       // The cap is left off — it only matters before accepting.
       // "Under your name", the accept dialog's own words for it: "client
       // sees your name" named a client nobody had been introduced to.
-      meta.appendChild(chip('You' + (contract.myAlias ? ': ' + contract.myAlias : '')
-        + (contract.myAnonymous ? ' · anonymous' : ' · under your name'),
+      meta.appendChild(chip(t('app.you') + (contract.myAlias ? ': ' + contract.myAlias : '')
+        + (contract.myAnonymous ? t('app.anonymous') : t('app.under_your_name')),
         null, 'i-user'));
       var rivals = (Number(contract.hitmenActive) || 0) - 1;
       if (rivals > 0) {
@@ -1997,7 +2021,7 @@
       // client to guess which of their named operatives was which.
       asList(contract.hitmen).forEach(function (h) {
         if (!h || (!h.record && !h.name)) { return; }
-        var label = (h.alias || 'An operative') + (h.name ? ': ' + h.name : '');
+        var label = (h.alias || t('app.an_operative')) + (h.name ? ': ' + h.name : '');
         meta.appendChild(chip(h.record ? label + ' · ' + h.record.standing : label,
           null, 'i-user'));
       });
@@ -2007,7 +2031,7 @@
       // who took it anonymously is never listed, and stays an alias.
       asList(contract.operatives).forEach(function (o) {
         if (o && o.name) {
-          meta.appendChild(chip((o.alias || 'An operative') + ': ' + o.name, 'hot', 'i-user'));
+          meta.appendChild(chip((o.alias || t('app.an_operative')) + ': ' + o.name, 'hot', 'i-user'));
         }
       });
     }
@@ -2024,20 +2048,20 @@
     // let them off cheaply had no way to see that they had not.
     if (mine && settings().buyouts !== false) {
       var buyout = Number(contract.bailoutAmount) || 0;
-      meta.appendChild(chip(buyout > 0 ? 'Buyout ' + money(buyout) : 'No buyout', null, 'i-exit'));
+      meta.appendChild(chip(buyout > 0 ? 'Buyout ' + money(buyout) : t('app.no_buyout'), null, 'i-exit'));
     }
     // Only when there is something to say: a row carrying neither drew an
     // empty pill. On the client's own card their own name is noise, but
     // whether they placed it anonymously is the one confirmation they get
     // of that choice.
     if (mine) {
-      meta.appendChild(chip(contract.creatorAnonymous ? 'Placed anonymously'
-        : 'Placed under your name', null, 'i-briefcase'));
+      meta.appendChild(chip(contract.creatorAnonymous ? t('app.placed_anonymously')
+        : t('app.placed_under_your_name'), null, 'i-briefcase'));
     } else if (contract.creatorAnonymous || contract.creatorName) {
       // Who placed it, said as that: "Anonymous client", or a bare name
       // beside the target's, left a hitman to guess who either one was.
-      meta.appendChild(chip(contract.creatorAnonymous ? 'Placed anonymously'
-        : 'Placed by ' + contract.creatorName, null, 'i-briefcase'));
+      meta.appendChild(chip(contract.creatorAnonymous ? t('app.placed_anonymously')
+        : t('app.placed_by') + contract.creatorName, null, 'i-briefcase'));
     }
     if (flagged) {
       meta.appendChild(chip(protectedWords(contract.targetProtectedAs).chip, 'is-warn', 'i-shield'));
@@ -2051,20 +2075,20 @@
     // On hold by staff: plain, and nothing about which party or why. What
     // still works is said, and only that is drawn (actionsFor).
     if (contract.onHold) {
-      node.appendChild(el('div', 'notice hold', 'This contract is on hold by staff.'
-        + (context === 'board' ? '' : ' You can still message and report; the rest waits.')));
+      node.appendChild(el('div', 'notice hold', t('app.this_contract_is_on_hold_by_2')
+        + (context === 'board' ? '' : t('app.you_can_still_message_and_report'))));
     }
 
     // A payout of theirs held for proof of intent: what is still missing.
     if (contract.intentHold) {
       node.appendChild(el('div', 'notice gold intent-hold',
-        intentHoldText(contract.intentHold, 'Your payout here is held.')));
+        intentHoldText(contract.intentHold, t('app.your_payout_here_is_held'))));
     } else if (contract.intentRule && Number(contract.intentRule.messages) > 0) {
       // The rule while it can still be met, before a payout is held by it.
       var times = Number(contract.intentRule.messages);
       node.appendChild(el('div', 'hint intent-rule ico i-message',
-        'Payouts here are held unless you message the person who placed it ' + times
-        + (times === 1 ? ' time' : ' times') + ', do a live handover, or a meeting point is set.'));
+        t('app.payouts_here_are_held_unless_you') + times
+        + (times === 1 ? ' time' : ' times') + t('app.do_a_live_handover_or_a')));
     }
 
     // What this player's informant found out, kept by the server with the
@@ -2077,9 +2101,9 @@
     // this contract, and was said of medics and lawyers, whose departments
     // nobody tells.
     if (flagged && context === 'board') {
-      node.appendChild(el('div', 'notice gold', 'This target '
+      node.appendChild(el('div', 'notice gold', t('app.this_target')
         + protectedWords(contract.targetProtectedAs).is + '.'
-        + (advised('accepted') ? ' Accepting it alerts every officer in the city.' : '')));
+        + (advised('accepted') ? t('app.accepting_it_alerts_every_officer_in') : '')));
     }
 
     // A member of the hitman organisation is told its cut of their payout on
@@ -2140,28 +2164,28 @@
     var box = el('div', 'meeting');
     var set = contract.meetingSet === true;
     box.appendChild(el('div', 'meeting-state ico i-pin', set
-      ? 'Meeting point set. The hitman can follow it on their GPS.'
-      : 'No meeting point set.'));
-    box.appendChild(el('div', 'hint', 'Set meeting point here shows the hitman on this '
-      + 'contract the spot where you are standing'
-      + (contract.creatorAnonymous ? ', not who you are.' : '.')));
+      ? t('app.meeting_point_set_the_hitman_can')
+      : t('app.no_meeting_point_set')));
+    box.appendChild(el('div', 'hint', t('app.set_meeting_point_here_shows_the')
+      + t('app.contract_the_spot_where_you_are')
+      + (contract.creatorAnonymous ? t('app.not_who_you_are') : '.')));
     if (set) { appendMeetingSteps(box, contract); }
     var row = el('div', 'row meeting-actions');
     var key = 'meeting:' + contract.id;
     if (isBusy(key)) {
-      row.appendChild(actionButton('ghost ico i-pin', 'Set meeting point here', key, 'Setting\u2026'));
+      row.appendChild(actionButton('ghost ico i-pin', t('app.set_meeting_point_here'), key, t('app.setting')));
     } else {
-      var here = el('button', 'ghost ico i-pin', 'Set meeting point here');
+      var here = el('button', 'ghost ico i-pin', t('app.set_meeting_point_here'));
       here.onclick = function () { setMeetingHere(contract); };
       row.appendChild(here);
     }
     if (set) {
       // Asked first, as Set is: the spot goes from every hitman's GPS.
-      row.appendChild(actionButton('ghost ico i-xcircle', 'Clear', 'meetingClear:' + contract.id,
-        'Clearing\u2026', function () { return clearMeeting(contract); },
-        { question: 'Clear the meeting point?',
-          detail: 'Every hitman on this contract loses the spot from their GPS.',
-          yes: 'Clear it', no: 'Keep it' }));
+      row.appendChild(actionButton('ghost ico i-xcircle', t('app.clear'), 'meetingClear:' + contract.id,
+        t('app.clearing'), function () { return clearMeeting(contract); },
+        { question: t('app.clear_the_meeting_point'),
+          detail: t('app.every_hitman_on_this_contract_loses'),
+          yes: t('app.clear_it'), no: t('app.keep_it') }));
     }
     box.appendChild(row);
     return box;
@@ -2169,20 +2193,20 @@
 
   /* Asked first: the spot goes to every hitman on the contract. */
   function setMeetingHere(contract) {
-    ask('Set the meeting point where you are standing?',
-      'Every hitman on this contract will see this spot on their GPS'
-        + (contract.creatorAnonymous ? ', but not who you are' : '')
-        + '. Stand where you want to meet them, then tap Set.',
+    ask(t('app.set_the_meeting_point_where_you'),
+      t('app.every_hitman_on_this_contract_will')
+        + (contract.creatorAnonymous ? t('app.but_not_who_you_are') : '')
+        + t('app.stand_where_you_want_to_meet'),
       function () {
         once('meeting:' + contract.id, function () {
           return post('setMeeting', { id: contract.id }).then(function (r) {
             if (!r.ok) { return fail(r); }
-            say(r.data && r.data.moved ? 'Meeting point moved to where you are standing.'
-              : 'Meeting point set where you are standing.', 'ok');
+            say(r.data && r.data.moved ? t('app.meeting_point_moved_to_where_you')
+              : t('app.meeting_point_set_where_you_are'), 'ok');
             refresh();
           });
         });
-      }, { yes: 'Set', no: 'Not now' });
+      }, { yes: t('app.set'), no: t('app.not_now') });
   }
 
   function clearMeeting(contract) {
@@ -2192,7 +2216,7 @@
         if (r.err === 'no_meeting') { refresh(); }
         return;
       }
-      say('Meeting point cleared.', 'ok');
+      say(t('app.meeting_point_cleared'), 'ok');
       refresh();
     });
   }
@@ -2202,17 +2226,17 @@
      side of the handover. Absent from an older server: nothing drawn. */
   function appendMeetingSteps(box, contract) {
     if (typeof contract.meetingSteps !== 'string' || !contract.meetingSteps) { return; }
-    box.appendChild(el('div', 'hint meeting-steps', 'What to do: ' + contract.meetingSteps));
+    box.appendChild(el('div', 'hint meeting-steps', t('app.what_to_do') + contract.meetingSteps));
   }
 
   /* The hitman's half: that one is set, what to do, and Set GPS. */
   function hitmanMeeting(contract) {
     var box = el('div', 'meeting');
-    box.appendChild(el('div', 'meeting-state ico i-pin', 'Meeting point set'));
+    box.appendChild(el('div', 'meeting-state ico i-pin', t('app.meeting_point_set')));
     appendMeetingSteps(box, contract);
     var row = el('div', 'row meeting-actions');
-    row.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'gps:' + contract.id,
-      'Setting GPS\u2026', function () {
+    row.appendChild(actionButton('ghost ico i-pin', t('app.set_gps'), 'gps:' + contract.id,
+      t('app.setting_gps'), function () {
         return post('gps', { kind: 'meeting', id: contract.id }).then(function (r) {
           if (!r.ok) {
             fail(r);
@@ -2220,7 +2244,7 @@
             if (r.err === 'no_meeting' || r.err === 'not_found') { refresh(); }
             return;
           }
-          say('The meeting point is marked on your GPS.', 'ok');
+          say(t('app.the_meeting_point_is_marked_on'), 'ok');
         });
       }));
     box.appendChild(row);
@@ -2269,46 +2293,46 @@
 
   /* Why a tip cannot be bought now, in a sentence, or null when it can. */
   function tipBlocked(rules, own, contract) {
-    if (rules.enabled !== true) { return 'Informant tips are turned off on this server.'; }
+    if (rules.enabled !== true) { return t('app.informant_tips_are_turned_off_on'); }
     // Informant fairness (Config.Improvements), off as shipped: held too
     // briefly, or their one tip on it had.
     if (own && Number(own.holdSeconds) > 0) {
       var held = secondsLeftOf({ secondsLeft: own.holdSeconds, clockReadAt: contract.clockReadAt });
       if (held > 0) {
-        return 'Your informant will talk once you have held this contract a while longer: from '
+        return t('app.your_informant_will_talk_once_you')
           + clockAt(held) + '.';
       }
     }
-    if (own && own.mineUsed === true) { return 'You have had your one informant tip on this contract.'; }
+    if (own && own.mineUsed === true) { return t('app.you_have_had_your_one_informant'); }
     if (own && Number(own.left) <= 0) {
-      return 'The most informant tips allowed on this contract, by all its hitmen, have been bought ('
+      return t('app.the_most_informant_tips_allowed_on')
         + (Number(rules.maxPerContract) || 0) + ').';
     }
     if (own && Number(own.cooldownSeconds) > 0) {
       var wait = secondsLeftOf({ secondsLeft: own.cooldownSeconds,
         clockReadAt: contract.clockReadAt });
       if (wait > 0) {
-        return 'You can buy another tip at ' + clockAt(wait) + '.';
+        return t('app.you_can_buy_another_tip_at') + clockAt(wait) + '.';
       }
     }
     if (own && own.targetAway) {
-      return 'The target is not in the city right now, so there is nobody to place.';
+      return t('app.the_target_is_not_in_the');
     }
     return null;
   }
 
   function tipLabel(rules) {
     return Number(rules.cost) > 0
-      ? 'Buy informant tip \u2014 ' + money(rules.cost) : 'Get informant tip \u2014 free';
+      ? t('app.buy_informant_tip') + money(rules.cost) : t('app.get_informant_tip_free');
   }
 
   /* What the tip is, said beside the button before anything is paid. */
   function tipTerms(rules) {
-    return 'You get the rough area the target was in when you buy it, about '
-      + tipAcross(rules).toLocaleString('en-US') + ' m across, on your map for '
-      + durationText(Number(rules.showMinutes) || 0) + '. You still have to search it.'
+    return t('app.you_get_the_rough_area_the')
+      + tipAcross(rules).toLocaleString('en-US') + t('app.m_across_on_your_map_for')
+      + durationText(Number(rules.showMinutes) || 0) + t('app.you_still_have_to_search_it')
       + (rules.tellsTarget !== false
-        ? ' The target will be told someone knows their rough area.' : '');
+        ? t('app.the_target_will_be_told_someone') : '');
   }
 
   function hitmanTip(contract) {
@@ -2326,20 +2350,20 @@
     var showing = own && Number(own.secondsLeft) > 0
       ? secondsLeftOf({ secondsLeft: own.secondsLeft, clockReadAt: contract.clockReadAt }) : 0;
     if (showing > 0) {
-      box.appendChild(el('div', 'tip-state ico i-pin', 'Informant tip on your map until '
+      box.appendChild(el('div', 'tip-state ico i-pin', t('app.informant_tip_on_your_map_until')
         + clockAt(showing) + '.'));
-      box.appendChild(el('div', 'hint', 'The target was somewhere in the red circle when you '
-        + 'bought it. It does not follow them.'));
+      box.appendChild(el('div', 'hint', t('app.the_target_was_somewhere_in_the')
+        + t('app.bought_it_it_does_not_follow')));
       var gps = el('div', 'row tip-actions');
-      gps.appendChild(actionButton('ghost ico i-pin', 'Set GPS', 'tipgps:' + contract.id,
-        'Setting GPS\u2026', function () {
+      gps.appendChild(actionButton('ghost ico i-pin', t('app.set_gps'), 'tipgps:' + contract.id,
+        t('app.setting_gps'), function () {
           return post('gps', { kind: 'tip', id: contract.id }).then(function (r) {
             if (!r.ok) {
               fail(r);
               if (r.err === 'no_tip') { refresh(); }
               return;
             }
-            say('The middle of the area is marked on your GPS.', 'ok');
+            say(t('app.the_middle_of_the_area_is'), 'ok');
           });
         }));
       box.appendChild(gps);
@@ -2359,12 +2383,12 @@
       buy = el('button', 'ghost ico i-search', tipLabel(rules));
       buy.disabled = true;
     } else if (isBusy(key)) {
-      buy = actionButton('ghost ico i-search', tipLabel(rules), key, 'Buying\u2026');
+      buy = actionButton('ghost ico i-search', tipLabel(rules), key, t('app.buying'));
     } else {
       var armed = tipArmed && tipArmed.id === contract.id;
       buy = el('button', 'ghost ico i-search' + (armed ? ' is-armed' : ''),
-        armed ? (Number(rules.cost) > 0 ? 'Tap again to pay ' + money(rules.cost)
-          : 'Tap again to get it') : tipLabel(rules));
+        armed ? (Number(rules.cost) > 0 ? t('app.tap_again_to_pay') + money(rules.cost)
+          : t('app.tap_again_to_get_it')) : tipLabel(rules));
       buy.onclick = function () {
         if (tipArmed && tipArmed.id === contract.id) {
           disarmTip();
@@ -2385,45 +2409,45 @@
   /* A refusal of a tip, in words about the tip: every one charged nothing. */
   function tipRefusal(r) {
     var d = r.data || {};
-    function from(account) { return account === 'cash' ? 'your cash' : 'your bank'; }
+    function from(account) { return account === 'cash' ? t('app.your_cash') : t('app.your_bank'); }
     if (r.err === 'terms_changed' && typeof d.cost === 'number') {
-      return 'An informant tip now costs ' + money(d.cost) + ' from ' + from(d.account)
-        + '. Nothing was taken. Tap it twice again if that is fine.';
+      return t('app.an_informant_tip_now_costs') + money(d.cost) + ' from ' + from(d.account)
+        + t('app.nothing_was_taken_tap_it_twice');
     }
     if (r.err === 'tip_cooldown' && Number(d.retryAfter) > 0) {
-      return 'A tip on this contract was bought a moment ago. The next one is sold at '
-        + clockAt(d.retryAfter) + '. Nothing was taken.';
+      return t('app.a_tip_on_this_contract_was')
+        + clockAt(d.retryAfter) + t('app.nothing_was_taken');
     }
     if (r.err === 'limit_reached' && d.perHitman) {
-      return 'You have had your one informant tip on this contract. Nothing was taken.';
+      return t('app.you_have_had_your_one_informant_2');
     }
     if (r.err === 'limit_reached') {
-      return 'The most informant tips allowed on this contract, by all its hitmen, have been '
-        + 'bought. Nothing was taken.';
+      return t('app.the_most_informant_tips_allowed_on_2')
+        + t('app.bought_nothing_was_taken');
     }
     if (r.err === 'tip_hold' && Number(d.retryAfter) > 0) {
-      return 'Your informant will not talk yet. You can buy a tip on this contract at '
-        + clockAt(d.retryAfter) + '. Nothing was taken.';
+      return t('app.your_informant_will_not_talk_yet')
+        + clockAt(d.retryAfter) + t('app.nothing_was_taken');
     }
     if (r.err === 'tip_cant_place') {
-      return 'Your informant can\'t place them right now. Nothing was taken.';
+      return t('app.your_informant_cant_place_them_right');
     }
     if (r.err === 'tip_not_found') {
       return d.refunded === false
-        ? 'Your informant couldn\'t find them. Your money could not be given back yet; staff have it.'
-        : 'Your informant couldn\'t find them. Your money was given back.';
+        ? t('app.your_informant_couldnt_find_them_your')
+        : t('app.your_informant_couldnt_find_them_your_2');
     }
     if (r.err === 'insufficient_funds' && typeof d.cost === 'number') {
-      return 'You cannot afford the tip: it costs ' + money(d.cost) + ' from '
-        + from(d.account) + '. Nothing was taken.';
+      return t('app.you_cannot_afford_the_tip_it') + money(d.cost) + ' from '
+        + from(d.account) + t('app.nothing_was_taken');
     }
     if (r.err === 'already_settled') {
-      return 'This contract has ended, so there is no tip to buy. You were not charged.';
+      return t('app.this_contract_has_ended_so_there');
     }
     if (r.err === 'not_participant') {
-      return 'You are no longer on this contract. You were not charged.';
+      return t('app.you_are_no_longer_on_this');
     }
-    if (r.err === 'feature_off') { return 'Informant tips are turned off on this server.'; }
+    if (r.err === 'feature_off') { return t('app.informant_tips_are_turned_off_on'); }
     return failText(r);
   }
 
@@ -2437,8 +2461,8 @@
           if (r.err !== 'busy' && r.err !== 'rate_limited' && r.err !== 'timeout') { refresh(); }
           return;
         }
-        say('Informant tip bought. The rough area is on your map: the target was somewhere '
-          + 'in the red circle. Set GPS takes you to its middle.', 'ok');
+        say(t('app.informant_tip_bought_the_rough_area')
+          + t('app.in_the_red_circle_set_gps'), 'ok');
         refresh();
       });
     });
@@ -2448,11 +2472,11 @@
      on On me and on the whitelisted-job view alike. Never who, never where. */
   function tipToldNotice(at) {
     var box = el('div', 'tip-told');
-    box.appendChild(el('div', 'tip-state ico i-eye', 'Someone has been tipped off about your '
-      + 'rough location. They know the area you were in, not exactly where you are.'));
+    box.appendChild(el('div', 'tip-state ico i-eye', t('app.someone_has_been_tipped_off_about')
+      + t('app.rough_location_they_know_the_area')));
     var when = agoText(at);
     if (when) {
-      box.appendChild(el('div', 'hint', 'Tipped off ' + when.charAt(0).toLowerCase()
+      box.appendChild(el('div', 'hint', t('app.tipped_off') + when.charAt(0).toLowerCase()
         + when.slice(1) + '.'));
     }
     return box;
@@ -2468,21 +2492,21 @@
     box.id = 'dark-' + contract.id;
     if (Number(terms.untilAt) > 0) {
       var left = Math.max(0, Number(terms.untilAt) - Math.floor(Date.now() / 1000));
-      box.appendChild(el('div', 'tip-state ico i-eye', 'You have gone dark until '
-        + clockAt(left) + '. Tips bought on you meanwhile find nothing.'));
+      box.appendChild(el('div', 'tip-state ico i-eye', t('app.you_have_gone_dark_until')
+        + clockAt(left) + t('app.tips_bought_on_you_meanwhile_find')));
       return box;
     }
     var cost = Number(terms.cost) || 0;
     var account = terms.account === 'cash' ? 'cash' : 'bank';
     var key = 'dark:' + contract.id;
     var armed = darkArmed === contract.id;
-    var label = cost > 0 ? 'Go dark \u2014 ' + money(cost) : 'Go dark \u2014 free';
+    var label = cost > 0 ? t('app.go_dark') + money(cost) : t('app.go_dark_free');
     var buy;
     if (isBusy(key)) {
-      buy = actionButton('ghost ico i-eye', label, key, 'Going dark\u2026');
+      buy = actionButton('ghost ico i-eye', label, key, t('app.going_dark'));
     } else {
       buy = el('button', 'ghost ico i-eye' + (armed ? ' is-armed' : ''),
-        armed ? (cost > 0 ? 'Tap again to pay ' + money(cost) : 'Tap again to go dark') : label);
+        armed ? (cost > 0 ? t('app.tap_again_to_pay') + money(cost) : t('app.tap_again_to_go_dark')) : label);
       buy.onclick = function () {
         if (darkArmed !== contract.id) {
           darkArmed = contract.id;
@@ -2498,14 +2522,14 @@
               if (!r.ok) {
                 var d = r.data || {};
                 if (r.err === 'terms_changed' && typeof d.cost === 'number') {
-                  say('Going dark now costs ' + money(d.cost) + '. Nothing was taken.');
+                  say(t('app.going_dark_now_costs') + money(d.cost) + t('app.nothing_was_taken'));
                 } else if (r.err === 'insufficient_funds') {
-                  say('You cannot afford to go dark. Nothing was taken.');
+                  say(t('app.you_cannot_afford_to_go_dark'));
                 } else { fail(r); }
                 return refresh();
               }
-              say('You have gone dark. Tips bought on you for the next '
-                + (Number(r.data && r.data.minutes) || 0) + ' minutes find nothing.', 'ok');
+              say(t('app.you_have_gone_dark_tips_bought')
+                + (Number(r.data && r.data.minutes) || 0) + t('app.minutes_find_nothing'), 'ok');
               refresh();
             });
         });
@@ -2515,8 +2539,8 @@
     var actions = el('div', 'row tip-actions');
     actions.appendChild(buy);
     box.appendChild(actions);
-    box.appendChild(el('div', 'hint', 'Lie low: for ' + (Number(terms.minutes) || 0)
-      + ' minutes any informant asked about you finds nothing. Paid from your ' + account + '.'));
+    box.appendChild(el('div', 'hint', t('app.lie_low_for') + (Number(terms.minutes) || 0)
+      + t('app.minutes_any_informant_asked_about_you') + account + '.'));
     return box;
   }
 
@@ -2531,7 +2555,7 @@
 
   // Said once under a list of referenced cards rather than on every card.
   function refHint() {
-    return el('div', 'hint ref-hint', 'Quote the Ref to staff if something goes wrong.');
+    return el('div', 'hint ref-hint', t('app.quote_the_ref_to_staff_if'));
   }
 
   // "2 items and a weapon", or nothing when a payout is money only.
@@ -2554,33 +2578,33 @@
   /* Why this card cannot be accepted by this viewer, or nothing if it can. */
   function boardHint(contract) {
     if (contract.role === 'creator') {
-      return 'Yours \u2014 manage it under Mine.';
+      return t('app.yours_manage_it_under_mine');
     }
     if (contract.barred === 'hold_released') {
-      return 'You were taken off this one for not working it. It is not yours '
-        + 'to take again.';
+      return t('app.you_were_taken_off_this_one')
+        + t('app.to_take_again');
     }
     if (contract.barred === 'staff_removed') {
-      return 'Staff removed you from this one. It is not yours to take again.';
+      return t('app.staff_removed_you_from_this_one');
     }
     if (contract.barred === 'same_account') {
-      return 'This one involves another of your own characters.';
+      return t('app.this_one_involves_another_of_your');
     }
     // Above this player's level (Config.Record.Tiers).
     if (contract.tierLocked) {
       return tierLockedText(contract.tierLocked);
     }
     if (contract.role === 'hitman') {
-      return 'You are already on this one \u2014 it is under Mine.';
+      return t('app.you_are_already_on_this_one');
     }
     var active = Number(contract.hitmenActive) || 0;
     if (contract.mode === 'exclusive' && active > 0) {
-      return 'Taken. Somebody has this one to themselves \u2014 it comes back '
-        + 'on the board if they walk away.';
+      return t('app.taken_somebody_has_this_one_to')
+        + t('app.on_the_board_if_they_walk');
     }
     var cap = Number(contract.hitmenMax) || 0;
     if (contract.mode !== 'exclusive' && cap > 0 && active >= cap) {
-      return 'Full. It comes back open if an operative drops out.';
+      return t('app.full_it_comes_back_open_if');
     }
     /* Staked, with less time left than the server lets a stake be taken
        with (Penalty.MinWindowMinutes): Accept was drawn and refused every
@@ -2594,7 +2618,7 @@
       : TIME_BANDS[TIME_BANDS.indexOf(band) - 1].least - 1) : null;
     if (Number(contract.penaltyAmount) > 0 && stakeWindow > 0 && bandMost !== null
         && bandMost < stakeWindow) {
-      return 'Too little time left to stake on this one.';
+      return t('app.too_little_time_left_to_stake');
     }
     return null;
   }
@@ -2638,7 +2662,7 @@
       // server refuses every acceptance, so Accept is drawn and not live,
       // and the banner at the top says why and until when.
       if (takingPaused()) {
-        var paused = el('button', 'primary', 'Accept contract');
+        var paused = el('button', 'primary', t('app.accept_contract'));
         paused.disabled = true;
         row.appendChild(paused);
         more.appendChild(reportButton(contract, null));
@@ -2651,10 +2675,10 @@
       // accepted" and then "You are already on this contract".
       var acceptKey = 'accept:' + contract.id;
       if (isBusy(acceptKey)) {
-        row.appendChild(actionButton('primary', 'Accept contract', acceptKey, 'Accepting\u2026'));
+        row.appendChild(actionButton('primary', t('app.accept_contract'), acceptKey, t('app.accepting')));
         return row;
       }
-      var take = el('button', 'primary', 'Accept contract');
+      var take = el('button', 'primary', t('app.accept_contract'));
       take.onclick = function () { acceptContract(contract); };
       row.appendChild(take);
       more.appendChild(reportButton(contract, null));
@@ -2682,20 +2706,20 @@
       // a way to finish. Delivering is the one way, and the card's primary.
       var killPays = !aliveOnly(contract);
       if (killPays) {
-        row.appendChild(restartWaits(actionButton('primary', 'Verify kill',
-          'photo:' + contract.id, 'Verifying\u2026',
+        row.appendChild(restartWaits(actionButton('primary', t('app.verify_kill'),
+          'photo:' + contract.id, t('app.verifying'),
           function () { return verifyKill(contract); })));
       }
 
-      row.appendChild(restartWaits(actionButton(killPays ? null : 'primary', 'Deliver alive',
-        'kidnap:' + contract.id, 'Starting handover\u2026',
+      row.appendChild(restartWaits(actionButton(killPays ? null : 'primary', t('app.deliver_alive'),
+        'kidnap:' + contract.id, t('app.starting_handover'),
         function () { return armKidnap(contract); })));
 
       // Proof items (Config.Improvements.ProofItems, off as shipped): where
       // a kill pays, handing the placer an item taken from the target.
       if (killPays && settings().proofItem) {
-        row.appendChild(restartWaits(actionButton(null, 'Hand over proof',
-          'proof:' + contract.id, 'Handing over\u2026',
+        row.appendChild(restartWaits(actionButton(null, t('app.hand_over_proof'),
+          'proof:' + contract.id, t('app.handing_over'),
           function () { return handOverProof(contract); })));
       }
 
@@ -2729,11 +2753,11 @@
       if (Number(contract.buyoutClosesIn) > 0) {
         var closesIn = secondsLeftOf({ secondsLeft: contract.buyoutClosesIn,
           clockReadAt: contract.clockReadAt });
-        row.appendChild(el('div', 'hint is-warn', 'Buyout paid: it closes in '
-          + (!(closesIn > 0) ? 'a moment'
-            : closesIn < 60 ? 'under a minute'
+        row.appendChild(el('div', 'hint is-warn', t('app.buyout_paid_it_closes_in')
+          + (!(closesIn > 0) ? t('app.a_moment')
+            : closesIn < 60 ? t('app.under_a_minute')
               : 'under ' + durationText(Math.ceil(closesIn / 60)))
-          + ' unless you finish it first.'));
+          + t('app.unless_you_finish_it_first')));
       }
 
       // Opening a thread is a round trip that changes nothing on screen
@@ -2742,8 +2766,8 @@
       // Not drawn at all on a server with the relay switched off: every
       // message sent from it would be refused.
       if (settings().relay !== false) {
-        var message = actionButton('ghost ico i-message', 'Message',
-          'thread:' + contract.id, 'Opening\u2026',
+        var message = actionButton('ghost ico i-message', t('app.message'),
+          'thread:' + contract.id, t('app.opening'),
           function () { return openThread(contract, null); });
         // A dot for a message newer than this phone last read.
         message.classList.toggle('has-unread',
@@ -2752,13 +2776,13 @@
         more.appendChild(message);
       }
 
-      var quit = el('button', 'ghost ico i-exit is-destructive', 'Abandon');
+      var quit = el('button', 'ghost ico i-exit is-destructive', t('app.abandon'));
       quit.onclick = function () {
-        ask('Walk away from this contract?',
+        ask(t('app.walk_away_from_this_contract'),
             contract.penaltyAmount > 0
-              ? 'The person who placed it keeps the ' + money(contract.penaltyAmount)
-                + ' you staked.'
-              : 'You staked nothing on this one, so it costs you nothing.',
+              ? t('app.the_person_who_placed_it_keeps') + money(contract.penaltyAmount)
+                + t('app.you_staked')
+              : t('app.you_staked_nothing_on_this_one'),
             function () {
               post('abandon', { id: contract.id }).then(function (r) {
                 if (!r.ok) return fail(r);
@@ -2767,7 +2791,7 @@
                 // a hitman who had just walked away to get the target back
                 // to the client and try again.
                 endCountdown(contract.id);
-                say('You are off the contract.', 'ok');
+                say(t('app.you_are_off_the_contract'), 'ok');
                 refresh();
               });
             });
@@ -2777,7 +2801,7 @@
       // Not on a server with amendments switched off, where every proposal
       // is refused.
       if (settings().amendments !== false) {
-        var propose = el('button', 'ghost ico i-swap', 'Propose change');
+        var propose = el('button', 'ghost ico i-swap', t('app.propose_change'));
         propose.onclick = function () { proposeChange(contract); };
         more.appendChild(propose);
       }
@@ -2821,7 +2845,7 @@
       // and five dialogs did it a piece at a time. Once taken, changes are
       // proposed, and the reward can still be raised.
       var untaken = !contract.hitmenActive;
-      var top = el('button', 'primary', untaken ? 'Edit' : 'Change reward');
+      var top = el('button', 'primary', untaken ? t('app.edit') : t('app.change_reward'));
       top.onclick = function () {
         if (untaken) { editSheet(contract); } else { editReward(contract); }
       };
@@ -2836,8 +2860,8 @@
       // Same shape, same reason: {} has no .length, so this read as "no
       // hitmen" whether or not there were any.
       if (asList(contract.hitmen).length && settings().relay !== false) {
-        var threadsButton = actionButton('ghost ico i-message', 'Threads',
-          'threads:' + contract.id, 'Opening\u2026',
+        var threadsButton = actionButton('ghost ico i-message', t('app.threads'),
+          'threads:' + contract.id, t('app.opening'),
           function () { return openThreads(contract); });
         // A dot when any operative's thread has a message newer than this
         // phone last read of it.
@@ -2849,14 +2873,14 @@
       }
 
       if (!untaken) {
-        var extend = el('button', 'ghost ico i-clock', 'Extend deadline');
+        var extend = el('button', 'ghost ico i-clock', t('app.extend_deadline'));
         extend.onclick = function () { improveContract(contract); };
         more.appendChild(extend);
 
         // Not on a server with amendments switched off, where every proposal
         // is refused.
         if (settings().amendments !== false) {
-          var change = el('button', 'ghost ico i-swap', 'Propose change');
+          var change = el('button', 'ghost ico i-swap', t('app.propose_change'));
           change.onclick = function () { proposeChange(contract); };
           more.appendChild(change);
         }
@@ -2864,7 +2888,7 @@
         // Only while nobody is holding it. Once a hitman has accepted they
         // accepted it as written, and the server refuses it — so offering it
         // would be offering a guaranteed refusal.
-        var scrap = el('button', 'danger ico i-xcircle', 'Withdraw');
+        var scrap = el('button', 'danger ico i-xcircle', t('app.withdraw'));
         scrap.onclick = function () { cancelContract(contract); };
         more.appendChild(scrap);
       }
@@ -2920,7 +2944,7 @@
         }
         var label = child.textContent;
         var keeps = (child.classList && child.classList.contains('keeps-on-hold'))
-          || (child.tagName === 'BUTTON' && (label === 'Report' || label === 'Sending\u2026'));
+          || (child.tagName === 'BUTTON' && (label === t('app.report') || label === t('app.sending')));
         if (!keeps) { parent.removeChild(child); }
       });
     }
@@ -2951,15 +2975,15 @@
      (server: the 'list' handler's orgTerms): a member's only, none while
      the organisation is off. */
   function orgTermsNow() {
-    var t = state.board && state.board.orgTerms;
-    return t && typeof t.orgPercent === 'number' ? t : null;
+    var tv = state.board && state.board.orgTerms;
+    return tv && typeof tv.orgPercent === 'number' ? tv : null;
   }
 
   /* One short line: what of a payout goes to the organisation's funds. */
-  function orgCutText(t) {
-    var pct = Number(t.orgPercent) || 0;
-    if (pct <= 0) { return 'Organisation cut: none — you keep all of your payout.'; }
-    return 'Organisation cut: ' + pct + '% of your payout goes to its funds; you keep '
+  function orgCutText(tv) {
+    var pct = Number(tv.orgPercent) || 0;
+    if (pct <= 0) { return t('app.organisation_cut_none_you_keep_all'); }
+    return t('app.organisation_cut') + pct + t('app.of_your_payout_goes_to_its')
       + (100 - pct) + '%.';
   }
 
@@ -2972,20 +2996,20 @@
     if (!inv || typeof inv.id !== 'string') { return null; }
     var box = el('div', 'notice gold org-invite');
     var minutes = Math.max(1, Math.ceil((Number(inv.expiresIn) || 0) / 60));
-    box.appendChild(el('div', null, 'You are invited to join ' + (inv.label || 'the organisation')
-      + (inv.role ? ' as ' + inv.role : '') + '. It runs out in about '
+    box.appendChild(el('div', null, t('app.you_are_invited_to_join') + (inv.label || t('app.the_organisation'))
+      + (inv.role ? ' as ' + inv.role : '') + t('app.it_runs_out_in_about')
       + durationText(minutes) + '.'));
     var row = el('div', 'row org-invite-actions');
     var key = 'orgInvite:' + inv.id;
     function answer(accept) {
       var which = accept ? 'accept' : 'decline';
-      var label = accept ? 'Accept' : 'Decline';
+      var label = accept ? t('app.accept') : t('app.decline');
       if (isBusy(key)) {
-        return actionButton(accept ? 'primary' : 'ghost', label, key, accept ? 'Joining\u2026' : 'Declining\u2026');
+        return actionButton(accept ? 'primary' : 'ghost', label, key, accept ? t('app.joining') : t('app.declining'));
       }
       var armed = inviteArmed === which;
       var b = el('button', (accept ? 'primary' : 'ghost') + (armed ? ' is-armed' : ''),
-        armed ? 'Tap again to ' + which : label);
+        armed ? t('app.tap_again_to') + which : label);
       b.onclick = function () {
         if (inviteArmed !== which) {
           inviteArmed = which;
@@ -2998,11 +3022,11 @@
         once(key, function () {
           return post('orgInviteAnswer', { id: inv.id, accept: accept }).then(function (r) {
             if (!r.ok) {
-              say((r.data && r.data.message) || 'That invite is no longer open.');
+              say((r.data && r.data.message) || t('app.that_invite_is_no_longer_open'));
               return refresh();
             }
-            say(accept ? 'You have joined ' + (inv.label || 'the organisation') + '.'
-              : 'Invite declined.', 'ok');
+            say(accept ? t('app.you_have_joined') + (inv.label || t('app.the_organisation')) + '.'
+              : t('app.invite_declined'), 'ok');
             return refresh();
           });
         });
@@ -3038,34 +3062,34 @@
   /* The boss menu's screens, the powers each is for, and the layout tab
      (Org.layout, S2) that renames or hides it. */
   var ORG_SCREENS = [
-    { id: 'members', label: 'Members', layout: 'members',
+    { id: 'members', label: t('app.members'), layout: 'members',
       powers: ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'D2'] },
-    { id: 'roles', label: 'Roles', layout: 'roles', powers: ['R1', 'R2', 'R3', 'R4', 'P1', 'P3'] },
-    { id: 'money', label: 'Money', layout: 'funds',
+    { id: 'roles', label: t('app.roles'), layout: 'roles', powers: ['R1', 'R2', 'R3', 'R4', 'P1', 'P3'] },
+    { id: 'money', label: t('app.money'), layout: 'funds',
       powers: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'P2'] },
-    { id: 'contracts', label: 'Contracts', layout: 'contracts', powers: ['K1', 'K2', 'K3'] },
-    { id: 'work', label: 'Assignments', layout: 'contracts', powers: ['K4', 'K5', 'K6', 'K7'] },
-    { id: 'places', label: 'Places', layout: 'locations', powers: ['L1', 'L2', 'L3'] },
-    { id: 'notices', label: 'Notices', layout: 'notices', powers: ['N1'] },
-    { id: 'applications', label: 'Applications', layout: 'notices', powers: ['N2'] },
-    { id: 'recruiting', label: 'Application form', layout: 'notices', powers: ['N4'] },
-    { id: 'settings', label: 'Settings', layout: 'settings', powers: ['S1', 'S2', 'S3'] },
+    { id: 'contracts', label: t('app.contracts'), layout: 'contracts', powers: ['K1', 'K2', 'K3'] },
+    { id: 'work', label: t('app.assignments'), layout: 'contracts', powers: ['K4', 'K5', 'K6', 'K7'] },
+    { id: 'places', label: t('app.places'), layout: 'locations', powers: ['L1', 'L2', 'L3'] },
+    { id: 'notices', label: t('app.notices'), layout: 'notices', powers: ['N1'] },
+    { id: 'applications', label: t('app.applications'), layout: 'notices', powers: ['N2'] },
+    { id: 'recruiting', label: t('app.application_form'), layout: 'notices', powers: ['N4'] },
+    { id: 'settings', label: t('app.settings'), layout: 'settings', powers: ['S1', 'S2', 'S3'] },
     /* Not on the boss menu: every member's, each from its own card (the
        flag on orgMine that says its switch is on). */
-    { id: 'channel', label: 'Channel', layout: 'notices', powers: [], member: 'channel' },
-    { id: 'armory', label: 'Armory', layout: 'members', powers: [], member: 'armory' },
-    { id: 'stats', label: 'Leaderboard', layout: 'members', powers: [], member: 'statsOn' },
-    { id: 'garage', label: 'Garage', layout: 'members', powers: [], member: 'garage' },
+    { id: 'channel', label: t('app.channel'), layout: 'notices', powers: [], member: 'channel' },
+    { id: 'armory', label: t('app.armory'), layout: 'members', powers: [], member: 'armory' },
+    { id: 'stats', label: t('app.leaderboard'), layout: 'members', powers: [], member: 'statsOn' },
+    { id: 'garage', label: t('app.garage'), layout: 'members', powers: [], member: 'garage' },
     /* Organisation extras 3: the activity log on the boss menu (M12). */
-    { id: 'activity', label: 'Activity log', layout: 'members', powers: ['M12'] }
+    { id: 'activity', label: t('app.activity_log'), layout: 'members', powers: ['M12'] }
   ];
   /* The extras' powers, each only while its switch is on (orgMine says). */
   var ORG_POWER_SWITCH = { M7: 'codenames', P3: 'payroll', K4: 'orgContracts', K5: 'orgContracts',
     K6: 'approval', K7: 'dossiers', M8: 'probationOn', M9: 'dutyOn', N3: 'channel',
     A1: 'armory', A2: 'armory', M10: 'statsOn', M11: 'discipline', N4: 'recruitment',
     M12: 'activity', P4: 'deadDrops', K8: 'internal', V1: 'garage' };
-  var ORG_SPOT_WORDS = { office: 'Boss office', signup: 'Sign-up spot', meeting: 'Meeting spot',
-    npc: 'Contact', place: 'Place' };
+  var ORG_SPOT_WORDS = { office: t('app.boss_office'), signup: t('app.sign_up_spot'), meeting: t('app.meeting_spot'),
+    npc: t('app.contact'), place: t('app.place') };
 
   function orgTabWanted() {
     var b = state.board;
@@ -3076,10 +3100,10 @@
      not, so a player outside the organisation has the same five tabs. */
   function syncOrgTab() {
     var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
-    var mine = tabs.filter(function (t) { return t.dataset.tab === 'org'; })[0];
+    var mine = tabs.filter(function (tv) { return tv.dataset.tab === 'org'; })[0];
     var want = orgTabWanted();
     if (want && !mine && tabs.length) {
-      var tab = el('button', 'tab', 'Org');
+      var tab = el('button', 'tab', t('app.org'));
       tab.dataset.tab = 'org';
       tab.setAttribute('role', 'tab');
       tabs[0].parentNode.appendChild(tab);
@@ -3092,7 +3116,7 @@
 
   function orgWords(r) {
     return (r && r.data && typeof r.data.message === 'string' && r.data.message)
-      || (r && ERRORS[r.err]) || 'Not done. Try again.';
+      || (r && ERRORS[r.err]) || t('app.not_done_try_again');
   }
 
   function orgHolds(code) {
@@ -3187,7 +3211,7 @@
         if (!r || !r.ok) {
           say(orgWords(r));
         } else {
-          say(typeof okText === 'function' ? okText(r) : (okText || 'Done.'), 'ok');
+          say(typeof okText === 'function' ? okText(r) : (okText || t('app.done')), 'ok');
         }
         return loadOrg();
       });
@@ -3204,7 +3228,7 @@
      why under it, while an office-only power is away from the office. */
   function orgTwoTap(className, label, key, armedLabel, run, office) {
     if (isBusy('org:' + key)) {
-      var busy = el('button', className, 'Working…');
+      var busy = el('button', className, t('app.working'));
       busy.disabled = true;
       busy.classList.toggle('is-busy', true);
       return busy;
@@ -3233,8 +3257,8 @@
   function orgOfficeNote(code) {
     if (!orgAway(code)) { return null; }
     var note = el('div', 'hint org-office ico i-briefcase', state.org.mine.hasOffice
-      ? 'This needs the boss office. Go there, then tap Refresh.'
-      : 'This needs the boss office, and staff have not set one yet.');
+      ? t('app.this_needs_the_boss_office_go')
+      : t('app.this_needs_the_boss_office_and'));
     return note;
   }
 
@@ -3289,7 +3313,7 @@
       return true;
     }
     if (!state.org.data[key]) {
-      view.appendChild(el('div', 'empty is-pending', 'Asking the server…'));
+      view.appendChild(el('div', 'empty is-pending', t('app.asking_the_server')));
       return true;
     }
     return false;
@@ -3305,7 +3329,7 @@
   }
 
   function orgMemberOptions() {
-    return orgMembers().map(function (m) { return { value: m.ref, label: String(m.name || 'A member') }; });
+    return orgMembers().map(function (m) { return { value: m.ref, label: String(m.name || t('app.a_member')) }; });
   }
 
   function viewOrg(view) {
@@ -3313,14 +3337,14 @@
     if (o.failed && !o.mine) {
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', o.failed));
-      var again = el('button', 'ghost ico i-refresh', 'Try again');
+      var again = el('button', 'ghost ico i-refresh', t('app.try_again'));
       again.onclick = function () { o.failed = null; loadOrg(); render(); };
       failed.appendChild(again);
       view.appendChild(failed);
       return;
     }
     if (!o.mine) {
-      view.appendChild(el('div', 'empty is-pending', 'Asking the server…'));
+      view.appendChild(el('div', 'empty is-pending', t('app.asking_the_server')));
       return;
     }
     var m = o.mine;
@@ -3343,7 +3367,7 @@
     if (invite) { view.appendChild(invite); return; }
     // Several organisations: which one to look at and apply to.
     if (Array.isArray(m.choices) && m.choices.length > 1) {
-      var pick = orgCard('Organisations', 'i-briefcase');
+      var pick = orgCard(t('app.organisations'), 'i-briefcase');
       var chips = orgRow();
       m.choices.forEach(function (c) {
         var b = el('button', 'btn' + (c.id === m.id ? ' primary' : ''), String(c.label || c.id));
@@ -3359,76 +3383,76 @@
       pick.appendChild(chips);
       view.appendChild(pick);
     }
-    var box = orgCard(m.label || 'The organisation', 'i-briefcase');
+    var box = orgCard(m.label || t('app.the_organisation_2'), 'i-briefcase');
     if (m.applied) {
-      box.appendChild(el('div', 'hint', 'Your application is waiting for an answer. You will be told.'));
+      box.appendChild(el('div', 'hint', t('app.your_application_is_waiting_for_an')));
       view.appendChild(box);
       return;
     }
     box.appendChild(el('div', 'hint', m.signupOnly && !m.atSignup
-      ? 'Applications are taken only at a sign-up spot. Stand at one, then apply.'
-      : 'Ask to join. A boss reads it and answers.'));
+      ? t('app.applications_are_taken_only_at_a')
+      : t('app.ask_to_join_a_boss_reads')));
     if (m.cooldownUntil) {
-      box.appendChild(el('div', 'hint org-warn', 'Your last application was declined. You may apply again in about '
+      box.appendChild(el('div', 'hint org-warn', t('app.your_last_application_was_declined_you')
         + durationText(Math.max(1, Math.ceil((Number(m.cooldownUntil) - Date.now() / 1000) / 60))) + '.'));
     }
     var questions = asList(m.form);
     questions.forEach(function (q, i) {
-      box.appendChild(orgField('apply.a' + i, String(q), 'area', 'Your answer', Number(m.answerMax) || 300));
+      box.appendChild(orgField('apply.a' + i, String(q), 'area', t('app.your_answer'), Number(m.answerMax) || 300));
     });
-    box.appendChild(orgField('apply.text', 'A few words (optional)', 'area', 'Why you', 255));
+    box.appendChild(orgField('apply.text', t('app.a_few_words_optional'), 'area', t('app.why_you'), 255));
     var row = orgRow();
-    row.appendChild(orgTwoTap('primary', 'Apply', 'apply', 'Tap again to apply', function () {
+    row.appendChild(orgTwoTap('primary', t('app.apply'), 'apply', t('app.tap_again_to_apply'), function () {
       var text = orgText('apply.text');
       var data = text ? { text: text } : {};
       if (m.id) { data.org = m.id; }
       if (questions.length) {
         data.answers = questions.map(function (q, i) { return orgText('apply.a' + i); });
-        if (data.answers.some(function (x) { return !x; })) { redraw(); return say('Answer every question first.'); }
+        if (data.answers.some(function (x) { return !x; })) { redraw(); return say(t('app.answer_every_question_first')); }
       }
       orgWrite('apply', function () {
         return post('orgApply', data);
-      }, 'Applied. You will be told the answer.');
+      }, t('app.applied_you_will_be_told_the'));
     }));
     box.appendChild(row);
     view.appendChild(box);
   }
 
   function viewOrgHome(view, m) {
-    var head = orgCard(m.label || 'The organisation', 'i-briefcase');
-    head.appendChild(el('div', 'target', m.codename ? m.codename + ' (codename)' : (m.role || 'Member')));
-    head.appendChild(el('div', 'hint', 'Your role: ' + (m.role || 'Member')));
+    var head = orgCard(m.label || t('app.the_organisation_2'), 'i-briefcase');
+    head.appendChild(el('div', 'target', m.codename ? m.codename + ' (codename)' : (m.role || t('app.member'))));
+    head.appendChild(el('div', 'hint', t('app.your_role') + (m.role || t('app.member'))));
     if (m.suspendedUntil) {
       head.appendChild(el('div', 'hint org-warn', suspendedText({ untilAt: m.suspendedUntil,
-        reason: 'by the organisation' })));
+        reason: t('app.by_the_organisation') })));
     }
     if (m.terms) {
       head.appendChild(el('div', 'hint', orgCutText(m.terms)));
       if (Number(m.terms.stakePercent) > 0) {
-        head.appendChild(el('div', 'hint', 'Of a stake you win, ' + m.terms.stakePercent + '% goes to the funds.'));
+        head.appendChild(el('div', 'hint', t('app.of_a_stake_you_win') + m.terms.stakePercent + t('app.goes_to_the_funds')));
       }
       if (Number(m.terms.buyoutPercent) > 0) {
-        head.appendChild(el('div', 'hint', 'Of a buyout paid to you, ' + m.terms.buyoutPercent
-          + '% goes to the funds.'));
+        head.appendChild(el('div', 'hint', t('app.of_a_buyout_paid_to_you') + m.terms.buyoutPercent
+          + t('app.goes_to_the_funds')));
       }
     }
     if (m.payroll) {
       var pay = Number(m.payroll.salary) || 0;
       head.appendChild(el('div', 'hint', pay > 0
-        ? 'Salary: ' + money(pay) + ' every pay day' + (m.payroll.nextIn
-          ? ', the next in about ' + durationText(Math.max(1, Math.ceil(Number(m.payroll.nextIn) / 60))) : '') + '.'
-        : 'Your role has no salary.'));
+        ? 'Salary: ' + money(pay) + t('app.every_pay_day') + (m.payroll.nextIn
+          ? t('app.the_next_in_about') + durationText(Math.max(1, Math.ceil(Number(m.payroll.nextIn) / 60))) : '') + '.'
+        : t('app.your_role_has_no_salary')));
     }
     var limits = m.limits || {};
     if (limits.maxAtOnce || limits.cooldownMinutes) {
-      head.appendChild(el('div', 'hint', 'Your limits: ' + (limits.maxAtOnce ? limits.maxAtOnce + ' at once' : '')
+      head.appendChild(el('div', 'hint', t('app.your_limits') + (limits.maxAtOnce ? limits.maxAtOnce + t('app.at_once') : '')
         + (limits.maxAtOnce && limits.cooldownMinutes ? ', ' : '')
-        + (limits.cooldownMinutes ? limits.cooldownMinutes + ' min between accepts' : '') + '.'));
+        + (limits.cooldownMinutes ? limits.cooldownMinutes + t('app.min_between_accepts') : '') + '.'));
     }
     view.appendChild(head);
 
-    var notice = orgCard('Notice board', 'i-flag');
-    notice.appendChild(el('div', m.notice ? 'org-notice' : 'hint', m.notice || 'No notice posted.'));
+    var notice = orgCard(t('app.notice_board'), 'i-flag');
+    notice.appendChild(el('div', m.notice ? 'org-notice' : 'hint', m.notice || t('app.no_notice_posted')));
     view.appendChild(notice);
 
     if (m.codenames) { view.appendChild(orgCodenameCard(m)); }
@@ -3437,21 +3461,21 @@
     // said, rather than left out, while it is off, so the place is known.
     view.appendChild(orgRecordCard(m));
     if (m.discipline) { view.appendChild(orgDisciplineCard(m.discipline)); }
-    if (m.armory) { view.appendChild(orgOpenCard('Armory', 'i-box', m.armoryReady
-      ? 'The organisation\'s stash: put in what staff allow, take out your role\'s share a day.'
-      : 'The armory needs an inventory script the server does not have.', 'Open armory', 'armory')); }
+    if (m.armory) { view.appendChild(orgOpenCard(t('app.armory'), 'i-box', m.armoryReady
+      ? t('app.the_organisations_stash_put_in_what')
+      : t('app.the_armory_needs_an_inventory_script'), t('app.open_armory'), 'armory')); }
     viewOrgExtras3(view, m);
 
     viewOrgExtras(view, m);
 
     var screens = ORG_SCREENS.filter(function (s) { return !s.member && orgScreenShown(s); });
     if (screens.length) {
-      var menu = orgCard('Boss menu', 'i-users');
+      var menu = orgCard(t('app.boss_menu'), 'i-users');
       var away = Object.keys(m.officeOnly || {}).some(orgAway);
       if (away) {
         menu.appendChild(el('div', 'hint org-office', m.hasOffice
-          ? 'Some of your powers work only at the boss office. Go there, then tap Refresh.'
-          : 'Some of your powers need the boss office, and staff have not set one yet.'));
+          ? t('app.some_of_your_powers_work_only')
+          : t('app.some_of_your_powers_need_the')));
       }
       var row = el('div', 'row org-menu');
       screens.forEach(function (s) {
@@ -3467,7 +3491,7 @@
       menu.appendChild(row);
       view.appendChild(menu);
     }
-    var refresh = el('button', 'ghost ico i-refresh', 'Refresh');
+    var refresh = el('button', 'ghost ico i-refresh', t('app.refresh'));
     refresh.onclick = function () { loadOrg(); };
     var foot = orgRow();
     foot.appendChild(refresh);
@@ -3475,27 +3499,27 @@
   }
 
   function orgCodenameCard(m) {
-    var box = orgCard('Codename', 'i-user');
+    var box = orgCard(t('app.codename'), 'i-user');
     if (m.codenameGiven) {
-      box.appendChild(el('div', 'hint', 'Given to you: ' + (m.codename || '') + '. Only whoever gave it changes it.'));
+      box.appendChild(el('div', 'hint', t('app.given_to_you') + (m.codename || '') + t('app.only_whoever_gave_it_changes_it')));
       return box;
     }
     box.appendChild(el('div', 'hint', m.codename
-      ? 'Shown in the organisation, and to a placer where your name would be shown, marked as a codename: '
-        + m.codename + ' (codename). A contract keeps the one shown when you took it.'
-      : 'Pick one. It is shown in the organisation, and to a placer where your name would be shown, marked '
-        + 'as a codename. It may not read as any character\'s name.'));
-    box.appendChild(orgField('codename.own', 'Codename', 'text', 'Letters and digits', 32));
+      ? t('app.shown_in_the_organisation_and_to')
+        + m.codename + t('app.codename_a_contract_keeps_the_one')
+      : t('app.pick_one_it_is_shown_in')
+        + t('app.as_a_codename_it_may_not')));
+    box.appendChild(orgField('codename.own', t('app.codename'), 'text', t('app.letters_and_digits'), 32));
     var row = orgRow();
-    row.appendChild(orgTwoTap('primary', 'Set codename', 'codename', 'Tap again to set it', function () {
+    row.appendChild(orgTwoTap('primary', t('app.set_codename'), 'codename', t('app.tap_again_to_set_it'), function () {
       var name = orgText('codename.own');
-      if (!name) { return say('Write the codename first.'); }
-      orgWrite('codename', function () { return post('orgCodename', { codename: name }); }, 'Codename set.');
+      if (!name) { return say(t('app.write_the_codename_first')); }
+      orgWrite('codename', function () { return post('orgCodename', { codename: name }); }, t('app.codename_set'));
     }));
     if (m.codename) {
-      row.appendChild(orgTwoTap('ghost', 'Clear', 'codename:clear', 'Tap again to clear', function () {
+      row.appendChild(orgTwoTap('ghost', t('app.clear'), 'codename:clear', t('app.tap_again_to_clear'), function () {
         orgWrite('codename:clear', function () { return post('orgCodename', { codename: false }); },
-          'Codename cleared.');
+          t('app.codename_cleared'));
       }));
     }
     box.appendChild(row);
@@ -3504,10 +3528,10 @@
 
   function viewOrgScreen(view, screen) {
     var bar = el('div', 'row org-back');
-    var back = el('button', 'ghost', 'Back');
+    var back = el('button', 'ghost', t('app.back'));
     back.onclick = function () { state.org.screen = null; state.org.armed = null; render(); };
     bar.appendChild(back);
-    var refresh = el('button', 'ghost ico i-refresh', 'Refresh');
+    var refresh = el('button', 'ghost ico i-refresh', t('app.refresh'));
     refresh.onclick = function () { loadOrg(); };
     bar.appendChild(refresh);
     view.appendChild(bar);
@@ -3533,72 +3557,72 @@
 
   function viewOrgExtras3(view, m) {
     if (m.reputation) {
-      var rep = orgCard('Reputation', 'i-shield');
+      var rep = orgCard(t('app.reputation'), 'i-shield');
       var r = m.reputation;
-      rep.appendChild(el('div', 'target', (r.tier || 'No tier yet') + ' · ' + (Number(r.points) || 0) + ' points'));
+      rep.appendChild(el('div', 'target', (r.tier || t('app.no_tier_yet')) + ' · ' + (Number(r.points) || 0) + ' points'));
       rep.appendChild(el('div', 'hint', Number(r.max) > 0
-        ? 'Members may take contracts worth up to ' + money(Number(r.max)) + '.'
-        : 'No cap on what members may take.'));
+        ? t('app.members_may_take_contracts_worth_up') + money(Number(r.max)) + '.'
+        : t('app.no_cap_on_what_members_may')));
       if (r.next) {
-        rep.appendChild(el('div', 'hint', (Number(r.toNext) || 0) + ' more points to ' + r.next + '.'));
+        rep.appendChild(el('div', 'hint', (Number(r.toNext) || 0) + t('app.more_points_to') + r.next + '.'));
       }
       view.appendChild(rep);
     }
     if (m.deadDrops) {
       var d = m.deadDrops;
-      var drop = orgCard('Payouts', 'i-box');
+      var drop = orgCard(t('app.payouts'), 'i-box');
       drop.appendChild(el('div', 'hint', d.method === 'deaddrop'
-        ? 'Payouts are left at the dead drop' + (d.spot ? ' (' + d.spot + ')' : '') + ': collect them there.'
-        : 'Payouts are handed over the usual way.'));
+        ? t('app.payouts_are_left_at_the_dead') + (d.spot ? ' (' + d.spot + ')' : '') + t('app.collect_them_there')
+        : t('app.payouts_are_handed_over_the_usual')));
       if (Number(d.waiting) > 0) {
-        drop.appendChild(el('div', 'hint org-warn', Number(d.waiting) + ' payout(s) wait for you at the dead drop.'));
+        drop.appendChild(el('div', 'hint org-warn', Number(d.waiting) + t('app.payout_wait_for_you_at_the')));
       }
       if (d.choose) {
         var other = d.method === 'deaddrop' ? 'bank' : 'deaddrop';
         var row = orgRow();
-        row.appendChild(orgTwoTap('ghost', other === 'bank' ? 'Pay the usual way' : 'Pay at the dead drop',
-          'paymethod', 'Tap again to change it', function () {
+        row.appendChild(orgTwoTap('ghost', other === 'bank' ? t('app.pay_the_usual_way') : t('app.pay_at_the_dead_drop'),
+          'paymethod', t('app.tap_again_to_change_it'), function () {
             orgWrite('paymethod', function () { return post('orgPayoutMethod', { method: other }); },
-              'Payout method changed.');
+              t('app.payout_method_changed'));
           }, 'P4'));
         drop.appendChild(row);
       }
       view.appendChild(drop);
     }
     if (m.garage) {
-      view.appendChild(orgOpenCard('Garage', 'i-pin', 'Vehicles staff approved, taken out at the garage spot.',
-        'Open garage', 'garage'));
+      view.appendChild(orgOpenCard(t('app.garage'), 'i-pin', t('app.vehicles_staff_approved_taken_out_at'),
+        t('app.open_garage'), 'garage'));
     }
     if (m.internal) { view.appendChild(orgInternalCard(m.internal)); }
   }
 
   function orgInternalCard(info) {
-    var box = orgCard('Internal contract', 'i-flag');
-    box.appendChild(el('div', 'hint', 'Ask staff for a contract on a member below you who went rogue. Only staff '
-      + 'approve it; it is then placed in your name, with your money, as any contract.'));
+    var box = orgCard(t('app.internal_contract'), 'i-flag');
+    box.appendChild(el('div', 'hint', t('app.ask_staff_for_a_contract_on')
+      + t('app.approve_it_it_is_then_placed')));
     var targets = asList(info.targets);
     if (!targets.length) {
-      box.appendChild(el('div', 'hint', 'Nobody below you.'));
+      box.appendChild(el('div', 'hint', t('app.nobody_below_you')));
     } else {
-      box.appendChild(orgChoice('ic.member', targets.map(function (t) {
-        return { value: String(t.ref), label: String(t.name) };
+      box.appendChild(orgChoice('ic.member', targets.map(function (tv) {
+        return { value: String(tv.ref), label: String(tv.name) };
       }), String(targets[0].ref)));
-      box.appendChild(orgField('ic.reason', 'Why', 'area', 'What they did', 200));
-      box.appendChild(orgField('ic.amount', 'Reward ($, cash)', 'number', '5000'));
+      box.appendChild(orgField('ic.reason', t('app.why'), 'area', t('app.what_they_did'), 200));
+      box.appendChild(orgField('ic.amount', t('app.reward_cash'), 'number', '5000'));
       var row = orgRow();
-      row.appendChild(orgTwoTap('primary', 'Ask staff', 'ic:ask', 'Tap again to ask staff', function () {
+      row.appendChild(orgTwoTap('primary', t('app.ask_staff'), 'ic:ask', t('app.tap_again_to_ask_staff'), function () {
         var reason = orgText('ic.reason'), amount = orgNumber('ic.amount');
-        if (!reason || !amount) { redraw(); return say('Write why, and the reward.'); }
+        if (!reason || !amount) { redraw(); return say(t('app.write_why_and_the_reward')); }
         orgWrite('ic:ask', function () {
           return post('orgInternalRequest', { member: orgChosen('ic.member', String(targets[0].ref)),
             reason: reason, amount: amount });
-        }, 'Sent to staff. You are told the answer.');
+        }, t('app.sent_to_staff_you_are_told'));
       }, 'K8'));
       box.appendChild(row);
     }
     asList(info.rows).forEach(function (q) {
-      box.appendChild(el('div', 'hint', String(q.name) + ': ' + ({ pending: 'waiting for staff',
-        placed: 'placed', declined: 'declined', expired: 'ran out' }[q.state] || String(q.state))));
+      box.appendChild(el('div', 'hint', String(q.name) + ': ' + ({ pending: t('app.waiting_for_staff'),
+        placed: 'placed', declined: 'declined', expired: t('app.ran_out') }[q.state] || String(q.state))));
     });
     return box;
   }
@@ -3606,38 +3630,38 @@
   function orgGarageScreen(view) {
     if (orgPending(view, 'garage')) { return; }
     var g = state.org.data.garage;
-    if (!g.ready) { view.appendChild(el('div', 'hint', 'The garage needs a vehicle adapter the server does not have.')); }
-    if (!g.hasSpot) { view.appendChild(el('div', 'hint', 'Staff have not set a garage spot yet.')); }
-    var mine = orgCard('Yours', 'i-pin');
+    if (!g.ready) { view.appendChild(el('div', 'hint', t('app.the_garage_needs_a_vehicle_adapter'))); }
+    if (!g.hasSpot) { view.appendChild(el('div', 'hint', t('app.staff_have_not_set_a_garage'))); }
+    var mine = orgCard(t('app.yours'), 'i-pin');
     if (g.mine) {
       mine.appendChild(el('div', 'target', String(g.mine.model) + ' · ' + String(g.mine.plate || '')));
       var back = orgRow();
-      back.appendChild(orgTwoTap('ghost', 'Return it', 'garage:return', 'Tap again to return it', function () {
-        orgWrite('garage:return', function () { return post('orgGarageReturn', {}); }, 'Returned.');
+      back.appendChild(orgTwoTap('ghost', t('app.return_it'), 'garage:return', t('app.tap_again_to_return_it'), function () {
+        orgWrite('garage:return', function () { return post('orgGarageReturn', {}); }, t('app.returned'));
         orgRead('garage', function () { return post('orgGarage', {}); });
       }));
       mine.appendChild(back);
-      mine.appendChild(el('div', 'hint', 'Bring it back to the garage spot first.'));
+      mine.appendChild(el('div', 'hint', t('app.bring_it_back_to_the_garage')));
     } else {
-      mine.appendChild(el('div', 'hint', 'None out. Stand at the garage spot to take one.'));
+      mine.appendChild(el('div', 'hint', t('app.none_out_stand_at_the_garage')));
       asList(g.models).forEach(function (model) {
         var row = orgRow();
         row.appendChild(el('span', 'target', String(model)));
-        row.appendChild(orgTwoTap('ghost', 'Take out', 'garage:take:' + model, 'Tap again to take it', function () {
+        row.appendChild(orgTwoTap('ghost', t('app.take_out'), 'garage:take:' + model, t('app.tap_again_to_take_it'), function () {
           orgWrite('garage:take:' + model, function () { return post('orgGarageTake', { model: model }); },
-            'It is yours: the keys too.');
+            t('app.it_is_yours_the_keys_too'));
           orgRead('garage', function () { return post('orgGarage', {}); });
         }));
         mine.appendChild(row);
       });
     }
     view.appendChild(mine);
-    var out = orgCard('Out now', 'i-layers');
-    out.appendChild(el('div', 'hint', asList(g.out).length + ' of ' + (Number(g.max) || 0) + ' out.'));
+    var out = orgCard(t('app.out_now'), 'i-layers');
+    out.appendChild(el('div', 'hint', asList(g.out).length + ' of ' + (Number(g.max) || 0) + t('app.out')));
     asList(g.out).forEach(function (o) { out.appendChild(el('div', 'hint', String(o.name) + ': ' + String(o.model))); });
     view.appendChild(out);
     if (g.manage) {
-      var offer = orgCard('Offered to members', 'i-lock');
+      var offer = orgCard(t('app.offered_to_members'), 'i-lock');
       asList(g.all).forEach(function (a) {
         var key = 'garage.offer.' + a.model;
         var on = state.org.form[key] !== undefined ? state.org.form[key] === true : a.offered === true;
@@ -3647,12 +3671,12 @@
         offer.appendChild(b);
       });
       var save = orgRow();
-      save.appendChild(orgTwoTap('primary', 'Save', 'garage:offer', 'Tap again to save it', function () {
+      save.appendChild(orgTwoTap('primary', t('app.save'), 'garage:offer', t('app.tap_again_to_save_it'), function () {
         var models = asList(g.all).filter(function (a) {
           var key = 'garage.offer.' + a.model;
           return state.org.form[key] !== undefined ? state.org.form[key] === true : a.offered === true;
         }).map(function (a) { return a.model; });
-        orgWrite('garage:offer', function () { return post('orgGarageOffer', { models: models }); }, 'Saved.');
+        orgWrite('garage:offer', function () { return post('orgGarageOffer', { models: models }); }, t('app.saved'));
         orgRead('garage', function () { return post('orgGarage', {}); });
       }, 'V1'));
       offer.appendChild(save);
@@ -3663,8 +3687,8 @@
   function orgActivityScreen(view) {
     if (orgPending(view, 'activity')) { return; }
     var rows = asList(state.org.data.activity.rows);
-    var box = orgCard('What happened', 'i-layers');
-    if (!rows.length) { box.appendChild(el('div', 'hint', 'Nothing yet.')); }
+    var box = orgCard(t('app.what_happened'), 'i-layers');
+    if (!rows.length) { box.appendChild(el('div', 'hint', t('app.nothing_yet'))); }
     rows.forEach(function (r) {
       var line = String(r.what) + ' · ' + String(r.by || '') + (r.member ? ' → ' + String(r.member) : '')
         + (Number(r.amount) > 0 ? ' · ' + money(Number(r.amount)) : '') + (r.model ? ' · ' + String(r.model) : '');
@@ -3692,20 +3716,20 @@
   function orgRecordCard(m) {
     var s = m.stats;
     if (!s) {
-      var none = orgCard('Your record', 'i-pencil');
-      none.appendChild(el('div', 'hint', 'Not kept yet.'));
+      var none = orgCard(t('app.your_record'), 'i-pencil');
+      none.appendChild(el('div', 'hint', t('app.not_kept_yet')));
       return none;
     }
-    var box = orgCard('Your record', 'i-pencil');
-    box.appendChild(el('div', 'target', (Number(s.completed) || 0) + ' completed · ' + (Number(s.failed) || 0)
+    var box = orgCard(t('app.your_record'), 'i-pencil');
+    box.appendChild(el('div', 'target', (Number(s.completed) || 0) + t('app.completed') + (Number(s.failed) || 0)
       + ' failed'));
-    box.appendChild(el('div', 'hint', 'Earned in the organisation: ' + money(Number(s.earned) || 0) + '.'));
+    box.appendChild(el('div', 'hint', t('app.earned_in_the_organisation') + money(Number(s.earned) || 0) + '.'));
     box.appendChild(el('div', 'hint', s.rate !== undefined && s.rate !== null
-      ? 'Reliability: ' + s.rate + '%.' : 'Reliability: too early to say.'));
-    if (s.band) { box.appendChild(el('div', 'hint', 'You usually finish in ' + String(s.band) + '.')); }
+      ? 'Reliability: ' + s.rate + '%.' : t('app.reliability_too_early_to_say')));
+    if (s.band) { box.appendChild(el('div', 'hint', t('app.you_usually_finish_in') + String(s.band) + '.')); }
     if (s.rank) { box.appendChild(el('div', 'hint', 'Rank ' + s.rank + (s.of ? ' of ' + s.of : '') + '.')); }
     if (s.leaderboard) {
-      var open = el('button', 'ghost', 'Leaderboard');
+      var open = el('button', 'ghost', t('app.leaderboard'));
       open.onclick = function () {
         state.org.screen = 'stats';
         state.org.armed = null;
@@ -3720,22 +3744,22 @@
   }
 
   function orgDisciplineCard(d) {
-    var box = orgCard('Discipline', 'i-shield');
+    var box = orgCard(t('app.discipline'), 'i-shield');
     var strikes = Number(d.strikes) || 0;
     var warnings = Number(d.warnings) || 0;
     box.appendChild(el('div', 'hint', (strikes || warnings)
-      ? strikes + ' strike' + (strikes === 1 ? '' : 's') + ' standing, ' + warnings + ' written warning'
-        + (warnings === 1 ? '' : 's') + '. A strike counts for ' + (Number(d.decayDays) || 30) + ' days.'
-      : 'A clean record.'));
+      ? strikes + ' strike' + (strikes === 1 ? '' : 's') + ' standing, ' + warnings + t('app.written_warning')
+        + (warnings === 1 ? '' : 's') + t('app.a_strike_counts_for') + (Number(d.decayDays) || 30) + t('app.days')
+      : t('app.a_clean_record')));
     asList(d.rows).slice(0, 5).forEach(function (r) { box.appendChild(orgDisciplineLine(r)); });
     return box;
   }
 
   function orgDisciplineLine(r) {
     var line = el('div', 'org-discipline' + (r.overturned ? ' is-overturned' : ''));
-    line.appendChild(el('div', 'target', (r.kind === 'strike' ? 'Strike' : 'Written warning')
-      + (r.at ? ' · ' + agoText(r.at) : '') + (r.overturned ? ' · overturned' : r.kind === 'strike' && !r.active
-        ? ' · no longer counts' : '')));
+    line.appendChild(el('div', 'target', (r.kind === 'strike' ? t('app.strike') : t('app.written_warning_2'))
+      + (r.at ? ' · ' + agoText(r.at) : '') + (r.overturned ? t('app.overturned') : r.kind === 'strike' && !r.active
+        ? t('app.no_longer_counts') : '')));
     line.appendChild(el('div', 'hint', String(r.reason || '')));
     if (r.consequence) { line.appendChild(el('div', 'hint org-warn', 'Then: ' + String(r.consequence))); }
     return line;
@@ -3746,16 +3770,16 @@
     if (orgPending(view, 'stats')) { return; }
     var d = state.org.data.stats;
     var rows = asList(d.rows);
-    var box = orgCard('Leaderboard', 'i-users');
-    box.appendChild(el('div', 'hint', 'By completions, then reliability. Times are shown as bands.'));
-    if (!rows.length) { box.appendChild(el('div', 'hint', 'Nobody is counted yet.')); }
+    var box = orgCard(t('app.leaderboard'), 'i-users');
+    box.appendChild(el('div', 'hint', t('app.by_completions_then_reliability_times_are')));
+    if (!rows.length) { box.appendChild(el('div', 'hint', t('app.nobody_is_counted_yet'))); }
     rows.forEach(function (r) {
       var line = el('div', 'org-rank' + (r.mine ? ' is-mine' : ''));
-      line.appendChild(el('div', 'target', '#' + (Number(r.rank) || 0) + ' ' + String(r.name || 'A member')
+      line.appendChild(el('div', 'target', '#' + (Number(r.rank) || 0) + ' ' + String(r.name || t('app.a_member'))
         + (r.role ? ' · ' + String(r.role) : '')));
       var bits = [(Number(r.completed) || 0) + ' completed'];
       if (d.full) { bits.push((Number(r.failed) || 0) + ' failed', money(Number(r.earned) || 0) + ' earned'); }
-      bits.push(r.rate !== undefined && r.rate !== null ? r.rate + '% reliable' : 'too early to say');
+      bits.push(r.rate !== undefined && r.rate !== null ? r.rate + '% reliable' : t('app.too_early_to_say'));
       if (r.band) { bits.push(String(r.band)); }
       line.appendChild(el('div', 'hint', bits.join(' · ')));
       box.appendChild(line);
@@ -3768,61 +3792,61 @@
     if (orgPending(view, 'armory')) { return; }
     var a = state.org.data.armory;
     if (a.atOffice && !a.here) {
-      view.appendChild(el('div', 'hint org-office ico i-briefcase', 'Items go in and out at the boss office. Go '
-        + 'there, then tap Refresh.'));
+      view.appendChild(el('div', 'hint org-office ico i-briefcase', t('app.items_go_in_and_out_at')
+        + t('app.there_then_tap_refresh')));
     }
-    var take = orgCard('In the armory', 'i-box');
-    take.appendChild(el('div', 'hint', 'You may take ' + (Number(a.left) || 0) + ' more today'
-      + (Number(a.manageLeft) > 0 ? ', and ' + a.manageLeft + ' beyond that as a boss' : '') + '.'));
+    var take = orgCard(t('app.in_the_armory'), 'i-box');
+    take.appendChild(el('div', 'hint', t('app.you_may_take') + (Number(a.left) || 0) + t('app.more_today')
+      + (Number(a.manageLeft) > 0 ? ', and ' + a.manageLeft + t('app.beyond_that_as_a_boss') : '') + '.'));
     var items = asList(a.items);
-    if (!items.length) { take.appendChild(el('div', 'hint', 'Empty.')); }
+    if (!items.length) { take.appendChild(el('div', 'hint', t('app.empty'))); }
     items.forEach(function (it) {
       var key = 'arm:out:' + it.slot;
       take.appendChild(el('div', 'target', String(it.label || it.name) + ' × ' + (Number(it.count) || 0)));
-      take.appendChild(orgField(key, 'How many', 'number', '1'));
+      take.appendChild(orgField(key, t('app.how_many'), 'number', '1'));
       var r = orgRow();
-      r.appendChild(orgTwoTap('ghost', 'Take', key + ':go', 'Tap again to take it', function () {
+      r.appendChild(orgTwoTap('ghost', t('app.take'), key + ':go', t('app.tap_again_to_take_it'), function () {
         var n = orgNumber(key) || 1;
         orgWrite(key + ':go', function () { return post('orgArmoryTake', { slot: it.slot, count: n }); },
-          'Taken.');
+          t('app.taken'));
         orgRead('armory', function () { return post('orgArmory', {}); });
       }));
       take.appendChild(r);
     });
     view.appendChild(take);
-    var put = orgCard('Put in', 'i-plus');
+    var put = orgCard(t('app.put_in'), 'i-plus');
     var own = asList(a.own);
-    put.appendChild(el('div', 'hint', own.length ? 'Items of yours staff allow in the armory.'
-      : 'You carry nothing staff allow in the armory.'));
+    put.appendChild(el('div', 'hint', own.length ? t('app.items_of_yours_staff_allow_in')
+      : t('app.you_carry_nothing_staff_allow_in')));
     own.forEach(function (it) {
       var key = 'arm:in:' + it.slot;
       put.appendChild(el('div', 'target', String(it.label || it.name) + ' × ' + (Number(it.count) || 0)));
-      put.appendChild(orgField(key, 'How many', 'number', '1'));
+      put.appendChild(orgField(key, t('app.how_many'), 'number', '1'));
       var r = orgRow();
-      r.appendChild(orgTwoTap('ghost', 'Put in', key + ':go', 'Tap again to put it in', function () {
+      r.appendChild(orgTwoTap('ghost', t('app.put_in'), key + ':go', t('app.tap_again_to_put_it_in'), function () {
         var n = orgNumber(key) || 1;
         orgWrite(key + ':go', function () { return post('orgArmoryPut', { slot: it.slot, count: n }); },
-          'Put in the armory.');
+          t('app.put_in_the_armory'));
         orgRead('armory', function () { return post('orgArmory', {}); });
       }));
       put.appendChild(r);
     });
     view.appendChild(put);
     if (orgHolds('A2')) {
-      var lim = orgCard('Limits a day', 'i-lock');
+      var lim = orgCard(t('app.limits_a_day'), 'i-lock');
       var most = Number(a.withdrawMax) || 0;
-      lim.appendChild(el('div', 'hint', 'Items each member of a role below you takes out a day (up to ' + most
-        + '; 0 is none).'));
+      lim.appendChild(el('div', 'hint', t('app.items_each_member_of_a_role') + most
+        + t('app.0_is_none')));
       orgRoles().filter(function (r) { return r.editable; }).forEach(function (r) {
         var key = 'arm:lim:' + r.grade;
         lim.appendChild(orgField(key, String(r.label || r.name) + ' (now ' + (Number((a.limits || {})[String(r.grade)])
           || 0) + ')', 'number', '0'));
         var row = orgRow();
-        row.appendChild(orgTwoTap('ghost', 'Set', key + ':go', 'Tap again to set it', function () {
+        row.appendChild(orgTwoTap('ghost', t('app.set'), key + ':go', t('app.tap_again_to_set_it'), function () {
           var n = orgNumber(key);
-          if (n === null) { redraw(); return say('Write a whole number, 0 for none.'); }
+          if (n === null) { redraw(); return say(t('app.write_a_whole_number_0_for')); }
           orgWrite(key + ':go', function () { return post('orgArmoryLimit', { grade: r.grade, count: n }); },
-            'Limit set.');
+            t('app.limit_set'));
           orgRead('armory', function () { return post('orgArmory', {}); });
         }, 'A2'));
         lim.appendChild(row);
@@ -3830,11 +3854,11 @@
       view.appendChild(lim);
     }
     if (Array.isArray(a.log)) {
-      var log = orgCard('Log', 'i-layers');
-      if (!a.log.length) { log.appendChild(el('div', 'hint', 'Nothing moved yet.')); }
+      var log = orgCard(t('app.log'), 'i-layers');
+      if (!a.log.length) { log.appendChild(el('div', 'hint', t('app.nothing_moved_yet'))); }
       a.log.slice(0, 30).forEach(function (e) {
         log.appendChild(el('div', 'hint', (e.dir === 'in' ? 'In: ' : 'Out: ') + String(e.item) + ' × '
-          + (Number(e.count) || 0) + ' · ' + String(e.who || 'a member') + (e.at ? ' · ' + agoText(e.at) : '')));
+          + (Number(e.count) || 0) + ' · ' + String(e.who || t('app.a_member_2')) + (e.at ? ' · ' + agoText(e.at) : '')));
       });
       view.appendChild(log);
     }
@@ -3845,22 +3869,22 @@
     var m = state.org.mine;
     var current = asList(m.recruitForm);
     var most = Number(m.recruitMax) || 0;
-    var box = orgCard('Questions', 'i-pencil');
-    box.appendChild(el('div', 'hint', 'An applicant answers each one. Up to ' + most + '; leave one empty to drop it.'));
+    var box = orgCard(t('app.questions'), 'i-pencil');
+    box.appendChild(el('div', 'hint', t('app.an_applicant_answers_each_one_up') + most + t('app.leave_one_empty_to_drop_it')));
     for (var i = 0; i < most; i += 1) {
       var key = 'form.q' + i;
       if (state.org.form[key] === undefined && current[i] !== undefined) { state.org.form[key] = String(current[i]); }
-      box.appendChild(orgField(key, 'Question ' + (i + 1), 'text', 'e.g. Who vouches for you?', 200));
+      box.appendChild(orgField(key, 'Question ' + (i + 1), 'text', t('app.e_g_who_vouches_for_you'), 200));
     }
     var row = orgRow();
-    row.appendChild(orgTwoTap('primary', 'Save the form', 'form:save', 'Tap again to save it', function () {
+    row.appendChild(orgTwoTap('primary', t('app.save_the_form'), 'form:save', t('app.tap_again_to_save_it'), function () {
       var list = [];
       for (var j = 0; j < most; j += 1) {
         var q = orgText('form.q' + j);
         if (q) { list.push(q); }
       }
       orgWrite('form:save', function () { return post('orgRecruitForm', { questions: list }); },
-        list.length ? 'Form saved.' : 'Form cleared.');
+        list.length ? t('app.form_saved') : t('app.form_cleared'));
     }));
     box.appendChild(row);
     view.appendChild(box);
@@ -3871,62 +3895,62 @@
 
   function viewOrgExtras(view, m) {
     if (m.duty) {
-      var duty = orgCard('Duty', 'i-clock');
+      var duty = orgCard(t('app.duty'), 'i-clock');
       duty.appendChild(el('div', 'hint', m.duty.on
-        ? 'You are on duty: the organisation may assign you contracts.'
-        : 'You are off duty: the organisation\'s contracts are not shown to you.'
-          + (m.duty.atOffice ? ' You go on duty at the boss office.' : '')));
+        ? t('app.you_are_on_duty_the_organisation')
+        : t('app.you_are_off_duty_the_organisations')
+          + (m.duty.atOffice ? t('app.you_go_on_duty_at_the') : '')));
       var dr = orgRow();
-      dr.appendChild(orgTwoTap(m.duty.on ? 'ghost' : 'primary', m.duty.on ? 'Go off duty' : 'Go on duty', 'duty',
-        m.duty.on ? 'Tap again to go off duty' : 'Tap again to go on duty', function () {
+      dr.appendChild(orgTwoTap(m.duty.on ? 'ghost' : 'primary', m.duty.on ? t('app.go_off_duty') : t('app.go_on_duty'), 'duty',
+        m.duty.on ? t('app.tap_again_to_go_off_duty') : t('app.tap_again_to_go_on_duty'), function () {
           var want = !m.duty.on;
           orgWrite('duty', function () { return post('orgDuty', { on: want }); },
-            want ? 'On duty.' : 'Off duty.');
+            want ? t('app.on_duty') : t('app.off_duty'));
         }));
       duty.appendChild(dr);
       view.appendChild(duty);
     }
     if (m.probation) {
       var p = m.probation;
-      var pro = orgCard('Probation', 'i-shield');
-      pro.appendChild(el('div', 'hint', 'You are on probation: contracts worth up to ' + money(Number(p.maxReward) || 0)
-        + (p.noStake ? ', none with a stake' : '') + '. '
-        + (Number(p.need) > 0 ? (Number(p.done) || 0) + ' of ' + p.need + ' completions done, or a boss signs you off.'
-          : 'A boss signs you off.')));
+      var pro = orgCard(t('app.probation'), 'i-shield');
+      pro.appendChild(el('div', 'hint', t('app.you_are_on_probation_contracts_worth') + money(Number(p.maxReward) || 0)
+        + (p.noStake ? t('app.none_with_a_stake') : '') + '. '
+        + (Number(p.need) > 0 ? (Number(p.done) || 0) + ' of ' + p.need + t('app.completions_done_or_a_boss_signs')
+          : t('app.a_boss_signs_you_off'))));
       view.appendChild(pro);
     }
     asList(m.waiting).forEach(function (w) {
-      var wait = orgCard('Waiting for approval', 'i-clock');
-      wait.appendChild(el('div', 'hint', 'Your accept of ' + String(w.contractId || 'a contract')
-        + ' waits for a boss. Nothing is taken until it is approved; about '
-        + durationText(Math.max(1, Math.ceil((Number(w.expiresIn) || 0) / 60))) + ' left.'));
+      var wait = orgCard(t('app.waiting_for_approval'), 'i-clock');
+      wait.appendChild(el('div', 'hint', t('app.your_accept_of') + String(w.contractId || t('app.a_contract'))
+        + t('app.waits_for_a_boss_nothing_is')
+        + durationText(Math.max(1, Math.ceil((Number(w.expiresIn) || 0) / 60))) + t('app.left')));
       view.appendChild(wait);
     });
     if (m.orgContracts && Array.isArray(m.assigned)) {
-      var mine = orgCard('Assigned to you', 'i-crosshair');
+      var mine = orgCard(t('app.assigned_to_you'), 'i-crosshair');
       if (!m.assigned.length) {
-        mine.appendChild(el('div', 'hint', 'Nothing assigned to you right now.'));
+        mine.appendChild(el('div', 'hint', t('app.nothing_assigned_to_you_right_now')));
       }
       m.assigned.forEach(function (a) {
         var row = el('div', 'org-assigned');
-        row.appendChild(el('div', 'target', String(a.targetName || 'A contract') + ' · ' + String(a.id || '')));
-        row.appendChild(el('div', 'hint', a.state === 'taken' ? 'You hold it.'
-          : 'Take it from the board within about ' + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60)))
-            + ', or it goes on the open board.'));
+        row.appendChild(el('div', 'target', String(a.targetName || t('app.a_contract_2')) + ' · ' + String(a.id || '')));
+        row.appendChild(el('div', 'hint', a.state === 'taken' ? t('app.you_hold_it')
+          : t('app.take_it_from_the_board_within') + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60)))
+            + t('app.or_it_goes_on_the_open')));
         if (a.dossier) { row.appendChild(orgDossierView(a.dossier)); }
         mine.appendChild(row);
       });
       view.appendChild(mine);
     } else if (m.orgContracts && m.dutyOn && m.duty && !m.duty.on) {
-      var off = orgCard('Assigned to you', 'i-crosshair');
-      off.appendChild(el('div', 'hint', 'Go on duty to see what the organisation assigned you.'));
+      var off = orgCard(t('app.assigned_to_you'), 'i-crosshair');
+      off.appendChild(el('div', 'hint', t('app.go_on_duty_to_see_what')));
       view.appendChild(off);
     }
     if (m.channel) {
-      var ch = orgCard('Channel', 'i-flag');
-      ch.appendChild(el('div', 'hint', m.channelMuted ? 'A boss muted you for now: you can read, not write.'
-        : 'The organisation\'s own messages. Plain text only.'));
-      var open = el('button', 'ghost', 'Open channel');
+      var ch = orgCard(t('app.channel'), 'i-flag');
+      ch.appendChild(el('div', 'hint', m.channelMuted ? t('app.a_boss_muted_you_for_now')
+        : t('app.the_organisations_own_messages_plain_text')));
+      var open = el('button', 'ghost', t('app.open_channel'));
       open.onclick = function () {
         state.org.screen = 'channel';
         state.org.armed = null;
@@ -3942,10 +3966,10 @@
 
   function orgDossierView(d) {
     var box = el('div', 'org-dossier');
-    box.appendChild(el('div', 'hint', 'Dossier'));
+    box.appendChild(el('div', 'hint', t('app.dossier')));
     if (d.notes) { box.appendChild(el('div', 'org-notice', String(d.notes))); }
-    if (d.spot) { box.appendChild(el('div', 'hint', 'Meet at: ' + String(d.spot.label || 'a meeting spot'))); }
-    if (d.rulesText) { box.appendChild(el('div', 'hint', 'Rules of engagement: ' + String(d.rulesText))); }
+    if (d.spot) { box.appendChild(el('div', 'hint', t('app.meet_at') + String(d.spot.label || t('app.a_meeting_spot')))); }
+    if (d.rulesText) { box.appendChild(el('div', 'hint', t('app.rules_of_engagement') + String(d.rulesText))); }
     return box;
   }
 
@@ -3954,27 +3978,27 @@
     if (orgPending(view, 'work')) { return; }
     var w = state.org.data.work;
     var members = asList(w.members).map(function (x) {
-      return { value: x.ref, label: String(x.name || 'A member') + (x.onDuty === false ? ' (off duty)' : '')
+      return { value: x.ref, label: String(x.name || t('app.a_member')) + (x.onDuty === false ? t('app.off_duty_2') : '')
         + (x.probation ? ' (probation)' : '') };
     });
     if (Array.isArray(w.approvals) && orgHolds('K6')) {
-      var ap = orgCard('Accepts waiting', 'i-usercheck');
-      if (!w.approvals.length) { ap.appendChild(el('div', 'hint', 'No accept waits for approval.')); }
+      var ap = orgCard(t('app.accepts_waiting'), 'i-usercheck');
+      if (!w.approvals.length) { ap.appendChild(el('div', 'hint', t('app.no_accept_waits_for_approval'))); }
       w.approvals.forEach(function (a) {
         var key = 'ap:' + a.id;
-        ap.appendChild(el('div', 'target', String(a.member && a.member.name || 'A member') + ' · '
+        ap.appendChild(el('div', 'target', String(a.member && a.member.name || t('app.a_member')) + ' · '
           + String(a.contractId || '')));
-        ap.appendChild(el('div', 'hint', 'Worth ' + money(Number(a.worth) || 0) + (a.probation ? ', on probation' : '')
-          + '. About ' + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60))) + ' left.'));
+        ap.appendChild(el('div', 'hint', 'Worth ' + money(Number(a.worth) || 0) + (a.probation ? t('app.on_probation') : '')
+          + '. About ' + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60))) + t('app.left')));
         if (!a.own) {
           var r = orgRow();
-          r.appendChild(orgTwoTap('primary', 'Approve', key + ':yes', 'Tap again to approve', function () {
+          r.appendChild(orgTwoTap('primary', t('app.approve'), key + ':yes', t('app.tap_again_to_approve'), function () {
             orgWrite(key + ':yes', function () { return post('orgApprove', { id: a.id, approve: true }); },
-              'Approved: the accept ran.');
+              t('app.approved_the_accept_ran'));
           }));
-          r.appendChild(orgTwoTap('ghost', 'Refuse', key + ':no', 'Tap again to refuse', function () {
+          r.appendChild(orgTwoTap('ghost', t('app.refuse'), key + ':no', t('app.tap_again_to_refuse'), function () {
             orgWrite(key + ':no', function () { return post('orgApprove', { id: a.id, approve: false }); },
-              'Refused. Nothing was taken.');
+              t('app.refused_nothing_was_taken'));
           }));
           ap.appendChild(r);
         }
@@ -3982,55 +4006,55 @@
       view.appendChild(ap);
     }
     if (!Array.isArray(w.contracts)) { return; }
-    var list = orgCard('Sent to the organisation', 'i-crosshair');
-    list.appendChild(el('div', 'hint', 'Who placed them is never shown. Not taken in time, each goes on the open board.'));
-    if (!w.contracts.length) { list.appendChild(el('div', 'hint', 'None waiting.')); }
+    var list = orgCard(t('app.sent_to_the_organisation'), 'i-crosshair');
+    list.appendChild(el('div', 'hint', t('app.who_placed_them_is_never_shown')));
+    if (!w.contracts.length) { list.appendChild(el('div', 'hint', t('app.none_waiting'))); }
     view.appendChild(list);
     w.contracts.forEach(function (c) {
       var key = 'wc:' + c.id + ':';
-      var box = orgCard(String(c.targetName || 'A contract') + ' · ' + String(c.id), 'i-crosshair');
+      var box = orgCard(String(c.targetName || t('app.a_contract_2')) + ' · ' + String(c.id), 'i-crosshair');
       box.appendChild(el('div', 'hint', 'Worth ' + money(Number(c.worth) || 0)
         + (c.staked ? ', staked' : '') + '. '
-        + (c.state === 'waiting' ? 'Not assigned yet.' : c.state === 'taken'
-          ? 'Taken by ' + String(c.member && c.member.name || 'a member') + '.'
-          : 'Assigned to ' + String(c.member && c.member.name || 'a member') + '.')
-        + (c.expiresIn ? ' About ' + durationText(Math.max(1, Math.ceil(Number(c.expiresIn) / 60))) + ' left.' : '')));
+        + (c.state === 'waiting' ? t('app.not_assigned_yet') : c.state === 'taken'
+          ? t('app.taken_by') + String(c.member && c.member.name || t('app.a_member_2')) + '.'
+          : t('app.assigned_to') + String(c.member && c.member.name || t('app.a_member_2')) + '.')
+        + (c.expiresIn ? ' About ' + durationText(Math.max(1, Math.ceil(Number(c.expiresIn) / 60))) + t('app.left') : '')));
       var canAssign = c.state === 'waiting' ? orgHolds('K4') : c.state === 'assigned' && orgHolds('K5');
       if (canAssign && members.length) {
         box.appendChild(orgChoice(key + 'member', members, undefined));
         var ra = orgRow();
-        ra.appendChild(orgTwoTap('primary', c.state === 'waiting' ? 'Assign' : 'Reassign', key + 'assign',
-          'Tap again to assign it', function () {
+        ra.appendChild(orgTwoTap('primary', c.state === 'waiting' ? t('app.assign') : t('app.reassign'), key + 'assign',
+          t('app.tap_again_to_assign_it'), function () {
             var who = orgChosen(key + 'member', undefined);
-            if (who === undefined) { return say('Pick the member first.'); }
+            if (who === undefined) { return say(t('app.pick_the_member_first')); }
             orgWrite(key + 'assign', function () { return post('orgAssign', { id: c.id, member: who }); },
-              'Assigned.');
+              t('app.assigned'));
           }));
         box.appendChild(ra);
       }
       if (c.state !== 'taken' && orgHolds('K5')) {
         var rr = orgRow();
-        rr.appendChild(orgTwoTap('ghost', 'Send to the open board', key + 'release', 'Tap again to send it',
+        rr.appendChild(orgTwoTap('ghost', t('app.send_to_the_open_board'), key + 'release', t('app.tap_again_to_send_it'),
           function () {
             orgWrite(key + 'release', function () { return post('orgRelease', { id: c.id }); },
-              'On the open board.');
+              t('app.on_the_open_board'));
           }));
         box.appendChild(rr);
       }
       if (c.dossier) { box.appendChild(orgDossierView(c.dossier)); }
       if (c.state !== 'waiting' && orgHolds('K7') && Array.isArray(w.rules)) {
-        box.appendChild(orgField(key + 'notes', 'Dossier notes', 'area', 'Plain text, no citizen ids', 2000));
-        var spots = asList(w.spots).map(function (sp) { return { value: sp.id, label: String(sp.label || 'Spot') }; });
+        box.appendChild(orgField(key + 'notes', t('app.dossier_notes'), 'area', t('app.plain_text_no_citizen_ids'), 2000));
+        var spots = asList(w.spots).map(function (sp) { return { value: sp.id, label: String(sp.label || t('app.spot')) }; });
         if (spots.length) {
-          box.appendChild(el('div', 'hint', 'Meeting spot'));
+          box.appendChild(el('div', 'hint', t('app.meeting_spot')));
           box.appendChild(orgChoice(key + 'spot', spots, undefined));
         }
-        box.appendChild(el('div', 'hint', 'Rules of engagement'));
+        box.appendChild(el('div', 'hint', t('app.rules_of_engagement_2')));
         box.appendChild(orgChoice(key + 'rules', w.rules.map(function (r) {
           return { value: r.value, label: String(r.label) };
         }), undefined));
         var rd = orgRow();
-        rd.appendChild(orgTwoTap('ghost', 'Save dossier', key + 'dossier', 'Tap again to save it', function () {
+        rd.appendChild(orgTwoTap('ghost', t('app.save_dossier'), key + 'dossier', t('app.tap_again_to_save_it'), function () {
           var data = { id: c.id };
           var notes = orgText(key + 'notes');
           var spot = orgChosen(key + 'spot', undefined);
@@ -4039,14 +4063,14 @@
           if (spot !== undefined) { data.spot = spot; }
           if (rules !== undefined) { data.rules = rules; }
           if (!notes && spot === undefined && rules === undefined) {
-            return say('Write notes, or pick a spot or the rules.');
+            return say(t('app.write_notes_or_pick_a_spot'));
           }
-          orgWrite(key + 'dossier', function () { return post('orgDossier', data); }, 'Dossier saved.');
+          orgWrite(key + 'dossier', function () { return post('orgDossier', data); }, t('app.dossier_saved'));
         }));
         if (c.dossier) {
-          rd.appendChild(orgTwoTap('ghost', 'Clear dossier', key + 'dclear', 'Tap again to clear it', function () {
+          rd.appendChild(orgTwoTap('ghost', t('app.clear_dossier'), key + 'dclear', t('app.tap_again_to_clear_it'), function () {
             orgWrite(key + 'dclear', function () { return post('orgDossier', { id: c.id, clear: true }); },
-              'Dossier cleared.');
+              t('app.dossier_cleared'));
           }));
         }
         box.appendChild(rd);
@@ -4059,26 +4083,26 @@
   function orgChannelScreen(view) {
     if (orgPending(view, 'channel')) { return; }
     var c = state.org.data.channel;
-    var box = orgCard('Messages', 'i-flag');
+    var box = orgCard(t('app.messages'), 'i-flag');
     var rows = asList(c.rows);
-    if (!rows.length) { box.appendChild(el('div', 'hint', 'No messages yet.')); }
+    if (!rows.length) { box.appendChild(el('div', 'hint', t('app.no_messages_yet'))); }
     var moderate = orgHolds('N3');
     rows.forEach(function (r) {
       var line = el('div', 'org-message' + (r.mine ? ' is-mine' : ''));
-      line.appendChild(el('div', 'hint', String(r.from || 'A member') + (r.at ? ' · ' + agoText(r.at) : '')));
+      line.appendChild(el('div', 'hint', String(r.from || t('app.a_member')) + (r.at ? ' · ' + agoText(r.at) : '')));
       line.appendChild(el('div', 'org-notice', String(r.body || '')));
       if (moderate && !r.mine) {
         var key = 'msg:' + r.id + ':';
         var mr = orgRow();
-        mr.appendChild(orgTwoTap('ghost', 'Remove', key + 'rm', 'Tap again to remove it', function () {
-          orgWrite(key + 'rm', function () { return post('orgChannelRemove', { id: r.id }); }, 'Removed.');
+        mr.appendChild(orgTwoTap('ghost', t('app.remove'), key + 'rm', t('app.tap_again_to_remove_it'), function () {
+          orgWrite(key + 'rm', function () { return post('orgChannelRemove', { id: r.id }); }, t('app.removed'));
         }));
         if (r.member) {
           mr.appendChild(orgTwoTap('ghost', 'Mute ' + (orgBound('ChannelMuteMaxHours') || 1) + ' h', key + 'mute',
-            'Tap again to mute them', function () {
+            t('app.tap_again_to_mute_them'), function () {
               orgWrite(key + 'mute', function () {
                 return post('orgChannelMute', { member: r.member, hours: orgBound('ChannelMuteMaxHours') || 1 });
-              }, 'Muted.');
+              }, t('app.muted'));
             }));
         }
         line.appendChild(mr);
@@ -4087,21 +4111,21 @@
     });
     view.appendChild(box);
     if (c.muted) {
-      view.appendChild(el('div', 'hint org-warn', 'A boss muted you for now: you can read, not write.'));
+      view.appendChild(el('div', 'hint org-warn', t('app.a_boss_muted_you_for_now')));
       return;
     }
-    var send = orgCard('Write', 'i-pencil');
-    send.appendChild(orgField('channel.text', 'Message', 'area', 'Plain text, no links', Number(c.maxLength) || 300));
+    var send = orgCard(t('app.write'), 'i-pencil');
+    send.appendChild(orgField('channel.text', t('app.message'), 'area', t('app.plain_text_no_links'), Number(c.maxLength) || 300));
     var sr = orgRow();
-    sr.appendChild(orgTwoTap('primary', 'Send', 'channel:send', 'Tap again to send', function () {
+    sr.appendChild(orgTwoTap('primary', t('app.send'), 'channel:send', t('app.tap_again_to_send'), function () {
       var text = orgText('channel.text');
-      if (!text) { return say('Write the message first.'); }
+      if (!text) { return say(t('app.write_the_message_first')); }
       orgWrite('channel:send', function () {
         return post('orgChannelPost', { text: text }).then(function (r) {
           if (r && r.ok) { state.org.form['channel.text'] = ''; }
           return r;
         });
-      }, 'Sent.');
+      }, t('app.sent'));
     }));
     send.appendChild(sr);
     view.appendChild(send);
@@ -4111,55 +4135,55 @@
 
   function orgMembersScreen(view) {
     if (orgHolds('M2')) {
-      var hire = orgCard('Hire', 'i-usercheck');
+      var hire = orgCard(t('app.hire'), 'i-usercheck');
       var radius = orgBound('HireRadius');
-      hire.appendChild(el('div', 'hint', 'Invite a player standing beside you'
-        + (radius ? ' (within ' + radius + ' m)' : '') + ' by the ID over their head. They accept in their own app.'));
+      hire.appendChild(el('div', 'hint', t('app.invite_a_player_standing_beside_you')
+        + (radius ? ' (within ' + radius + ' m)' : '') + t('app.by_the_id_over_their_head')));
       var office = orgOfficeNote('M2');
       if (office) { hire.appendChild(office); }
-      hire.appendChild(orgField('hire.target', 'Their ID', 'number', 'e.g. 42'));
+      hire.appendChild(orgField('hire.target', t('app.their_id'), 'number', 'e.g. 42'));
       var maxGrade = orgBound('HireMaxGrade');
       var options = orgRoleOptions(true, maxGrade);
       if (options.length) {
-        hire.appendChild(el('div', 'hint', 'Role'));
+        hire.appendChild(el('div', 'hint', t('app.role')));
         hire.appendChild(orgChoice('hire.grade', options, options[options.length - 1].value));
       }
       var row = orgRow();
-      row.appendChild(orgTwoTap('primary', 'Invite', 'hire', 'Tap again to invite', function () {
+      row.appendChild(orgTwoTap('primary', t('app.invite'), 'hire', t('app.tap_again_to_invite'), function () {
         var target = orgNumber('hire.target');
-        if (!target) { return say('Write their ID: the number over their head.'); }
+        if (!target) { return say(t('app.write_their_id_the_number_over')); }
         var grade = orgChosen('hire.grade', options.length ? options[options.length - 1].value : undefined);
         orgWrite('hire', function () {
           return post('orgHire', grade === undefined ? { target: target } : { target: target, grade: grade });
-        }, 'Invited. They have a while to accept it in their app.');
+        }, t('app.invited_they_have_a_while_to'));
       }, 'M2'));
       hire.appendChild(row);
       view.appendChild(hire);
     }
     if (!orgHolds('M1')) {
-      view.appendChild(el('div', 'hint', 'The member list needs View members, which staff have not given you.'));
+      view.appendChild(el('div', 'hint', t('app.the_member_list_needs_view_members')));
       return;
     }
     if (orgPending(view, 'members')) { return; }
     var rows = orgMembers();
-    if (!rows.length) { view.appendChild(el('div', 'empty', 'No members.')); return; }
+    if (!rows.length) { view.appendChild(el('div', 'empty', t('app.no_members'))); return; }
     rows.forEach(function (m) { view.appendChild(orgMemberCard(m)); });
   }
 
   function orgMemberCard(m) {
     var open = state.org.open.member === m.ref;
     var box = el('div', 'card org-card org-member');
-    var head = el('button', 'ghost org-row', String(m.name || 'A member') + ' · ' + String(m.role || ''));
+    var head = el('button', 'ghost org-row', String(m.name || t('app.a_member')) + ' · ' + String(m.role || ''));
     head.onclick = function () { state.org.open.member = open ? null : m.ref; state.org.armed = null; render(); };
     box.appendChild(head);
     var meta = el('div', 'meta');
-    meta.appendChild(chip(m.online ? 'In the city' : 'Away', 'plain', 'i-user'));
-    if (m.boss) { meta.appendChild(chip('Boss', 'role', 'i-shield')); }
-    if (m.suspendedUntil) { meta.appendChild(chip('Suspended', 'hot', 'i-clock')); }
-    if (m.locked) { meta.appendChild(chip('Locked by staff', 'plain', 'i-lock')); }
-    if (m.onDuty === true) { meta.appendChild(chip('On duty', 'role', 'i-clock')); }
-    if (m.probation) { meta.appendChild(chip('Probation', 'plain', 'i-shield')); }
-    if (m.channelMuted) { meta.appendChild(chip('Muted', 'plain', 'i-flag')); }
+    meta.appendChild(chip(m.online ? t('app.in_the_city') : t('app.away'), 'plain', 'i-user'));
+    if (m.boss) { meta.appendChild(chip(t('app.boss'), 'role', 'i-shield')); }
+    if (m.suspendedUntil) { meta.appendChild(chip(t('app.suspended'), 'hot', 'i-clock')); }
+    if (m.locked) { meta.appendChild(chip(t('app.locked_by_staff'), 'plain', 'i-lock')); }
+    if (m.onDuty === true) { meta.appendChild(chip(t('app.on_duty_2'), 'role', 'i-clock')); }
+    if (m.probation) { meta.appendChild(chip(t('app.probation'), 'plain', 'i-shield')); }
+    if (m.channelMuted) { meta.appendChild(chip(t('app.muted_2'), 'plain', 'i-flag')); }
     if (Number(m.strikes) > 0) {
       meta.appendChild(chip(m.strikes + ' strike' + (Number(m.strikes) === 1 ? '' : 's'), 'hot', 'i-shield'));
     }
@@ -4168,12 +4192,12 @@
     var key = 'm:' + m.ref + ':';
 
     if (orgHolds('M11')) {
-      box.appendChild(orgField(key + 'dreason', 'Reason for a strike or warning', 'text', 'What they did', 200));
+      box.appendChild(orgField(key + 'dreason', t('app.reason_for_a_strike_or_warning'), 'text', t('app.what_they_did'), 200));
       var r11 = orgRow();
-      [['strike', 'Strike', 'danger'], ['warning', 'Written warning', 'ghost']].forEach(function (k) {
-        r11.appendChild(orgTwoTap(k[2], k[1], key + 'disc:' + k[0], 'Tap again: ' + k[1].toLowerCase(), function () {
+      [['strike', t('app.strike'), 'danger'], ['warning', t('app.written_warning_2'), 'ghost']].forEach(function (k) {
+        r11.appendChild(orgTwoTap(k[2], k[1], key + 'disc:' + k[0], t('app.tap_again') + k[1].toLowerCase(), function () {
           var reason = orgText(key + 'dreason');
-          if (!reason) { redraw(); return say('Give a reason.'); }
+          if (!reason) { redraw(); return say(t('app.give_a_reason')); }
           orgWrite(key + 'disc:' + k[0], function () {
             return post('orgStrike', { member: m.ref, kind: k[0], reason: reason }).then(function (r) {
               if (r && r.ok) { state.org.form[key + 'dreason'] = ''; }
@@ -4181,7 +4205,7 @@
             });
           }, function (r) {
             var c = r && r.data && r.data.consequence;
-            return (k[0] === 'strike' ? 'Strike given.' : 'Warning given.') + (c ? ' Then: ' + c + '.' : '');
+            return (k[0] === 'strike' ? t('app.strike_given') : t('app.warning_given')) + (c ? ' Then: ' + c + '.' : '');
           });
         }, 'M11'));
       });
@@ -4190,90 +4214,90 @@
 
     if (orgHolds('M4')) {
       var roles = orgRoleOptions(true);
-      box.appendChild(el('div', 'hint', 'Role'));
+      box.appendChild(el('div', 'hint', t('app.role')));
       if (roles.length) { box.appendChild(orgChoice(key + 'grade', roles, m.grade)); }
       var r1 = orgRow();
-      r1.appendChild(orgTwoTap('ghost', 'Set role', key + 'role', 'Tap again to set the role', function () {
+      r1.appendChild(orgTwoTap('ghost', t('app.set_role'), key + 'role', t('app.tap_again_to_set_the_role'), function () {
         var grade = orgChosen(key + 'grade', m.grade);
         orgWrite(key + 'role', function () { return post('orgSetRole', { member: m.ref, grade: grade }); },
-          'Role set.');
+          t('app.role_set'));
       }, 'M4'));
       box.appendChild(r1);
       var note4 = orgOfficeNote('M4');
       if (note4) { box.appendChild(note4); }
     }
     if (orgHolds('M7')) {
-      box.appendChild(orgField(key + 'codename', 'Codename', 'text', m.codename || 'Letters and digits', 32));
+      box.appendChild(orgField(key + 'codename', t('app.codename'), 'text', m.codename || t('app.letters_and_digits'), 32));
       var r7 = orgRow();
-      r7.appendChild(orgTwoTap('ghost', 'Give codename', key + 'codename', 'Tap again to give it', function () {
+      r7.appendChild(orgTwoTap('ghost', t('app.give_codename'), key + 'codename', t('app.tap_again_to_give_it'), function () {
         var name = orgText(key + 'codename');
-        if (!name) { return say('Write the codename first.'); }
+        if (!name) { return say(t('app.write_the_codename_first')); }
         orgWrite(key + 'codename', function () {
           return post('orgCodename', { member: m.ref, codename: name });
-        }, 'Codename given.');
+        }, t('app.codename_given'));
       }, 'M7'));
       box.appendChild(r7);
     }
     if (orgHolds('M8') && m.probation) {
-      box.appendChild(el('div', 'hint', 'On probation: ' + (Number(m.probation.done) || 0) + ' of '
-        + (Number(m.probation.need) || 0) + ' completions done.'));
+      box.appendChild(el('div', 'hint', t('app.on_probation_2') + (Number(m.probation.done) || 0) + ' of '
+        + (Number(m.probation.need) || 0) + t('app.completions_done')));
       var r8 = orgRow();
-      r8.appendChild(orgTwoTap('ghost', 'End probation', key + 'probation', 'Tap again to end it', function () {
+      r8.appendChild(orgTwoTap('ghost', t('app.end_probation'), key + 'probation', t('app.tap_again_to_end_it'), function () {
         orgWrite(key + 'probation', function () { return post('orgProbationEnd', { member: m.ref }); },
-          'Probation ended.');
+          t('app.probation_ended'));
       }, 'M8'));
       box.appendChild(r8);
     }
     if (orgHolds('M9') && m.onDuty === true) {
       var r9 = orgRow();
-      r9.appendChild(orgTwoTap('ghost', 'Send off duty', key + 'offduty', 'Tap again to send them off duty',
+      r9.appendChild(orgTwoTap('ghost', t('app.send_off_duty'), key + 'offduty', t('app.tap_again_to_send_them_off'),
         function () {
-          orgWrite(key + 'offduty', function () { return post('orgForceOff', { member: m.ref }); }, 'Off duty.');
+          orgWrite(key + 'offduty', function () { return post('orgForceOff', { member: m.ref }); }, t('app.off_duty'));
         }, 'M9'));
       box.appendChild(r9);
     }
     if (orgHolds('M5')) {
       var maxH = orgBound('SuspendMaxHours');
-      box.appendChild(orgField(key + 'hours', 'Suspend for (hours' + (maxH !== null ? ', up to ' + maxH : '')
-        + '; 0 lifts it)', 'number', '0'));
-      box.appendChild(orgField(key + 'sreason', 'Reason', 'text', 'Why', 160));
+      box.appendChild(orgField(key + 'hours', t('app.suspend_for_hours') + (maxH !== null ? t('app.up_to') + maxH : '')
+        + t('app.0_lifts_it'), 'number', '0'));
+      box.appendChild(orgField(key + 'sreason', t('app.reason'), 'text', t('app.why'), 160));
       var r5 = orgRow();
-      r5.appendChild(orgTwoTap('ghost', 'Suspend', key + 'suspend', 'Tap again to suspend', function () {
+      r5.appendChild(orgTwoTap('ghost', t('app.suspend'), key + 'suspend', t('app.tap_again_to_suspend'), function () {
         var hours = orgNumber(key + 'hours');
-        if (hours === null) { return say('Write the hours: a whole number, 0 to lift it.'); }
+        if (hours === null) { return say(t('app.write_the_hours_a_whole_number')); }
         orgWrite(key + 'suspend', function () {
           return post('orgSuspend', { member: m.ref, hours: hours, reason: orgText(key + 'sreason') });
-        }, hours > 0 ? 'Suspended from contracts.' : 'Suspension lifted.');
+        }, hours > 0 ? t('app.suspended_from_contracts') : t('app.suspension_lifted'));
       }, 'M5'));
       box.appendChild(r5);
     }
     if (orgHolds('M6')) {
-      box.appendChild(orgField(key + 'atonce', 'Contracts at once' + (orgBound('MemberMaxAtOnce') !== null
-        ? ' (up to ' + orgBound('MemberMaxAtOnce') + ')' : ''), 'number', 'no limit'));
-      box.appendChild(orgField(key + 'cooldown', 'Minutes between accepts' + (orgBound('MemberCooldownMaxMinutes')
-        !== null ? ' (up to ' + orgBound('MemberCooldownMaxMinutes') + ')' : ''), 'number', 'none'));
+      box.appendChild(orgField(key + 'atonce', t('app.contracts_at_once') + (orgBound('MemberMaxAtOnce') !== null
+        ? t('app.up_to_2') + orgBound('MemberMaxAtOnce') + ')' : ''), 'number', t('app.no_limit')));
+      box.appendChild(orgField(key + 'cooldown', t('app.minutes_between_accepts') + (orgBound('MemberCooldownMaxMinutes')
+        !== null ? t('app.up_to_2') + orgBound('MemberCooldownMaxMinutes') + ')' : ''), 'number', 'none'));
       var r6 = orgRow();
-      r6.appendChild(orgTwoTap('ghost', 'Set limits', key + 'limits', 'Tap again to set the limits', function () {
+      r6.appendChild(orgTwoTap('ghost', t('app.set_limits'), key + 'limits', t('app.tap_again_to_set_the_limits'), function () {
         var data = { member: m.ref };
         var atOnce = orgNumber(key + 'atonce');
         var cooldown = orgNumber(key + 'cooldown');
         if (atOnce !== null) { data.maxAtOnce = atOnce; }
         if (cooldown !== null) { data.cooldownMinutes = cooldown; }
-        orgWrite(key + 'limits', function () { return post('orgMemberLimits', data); }, 'Limits set.');
+        orgWrite(key + 'limits', function () { return post('orgMemberLimits', data); }, t('app.limits_set'));
       }, 'M6'));
       box.appendChild(r6);
     }
     if (orgHolds('D2')) { box.appendChild(orgGrantsFor(m, key)); }
     if (orgHolds('M3')) {
-      box.appendChild(orgField(key + 'freason', 'Reason for firing', 'text', 'Why', 160));
+      box.appendChild(orgField(key + 'freason', t('app.reason_for_firing'), 'text', t('app.why'), 160));
       var r3 = orgRow();
-      r3.appendChild(orgTwoTap('danger', 'Fire', key + 'fire', 'Tap again to fire ' + String(m.name || 'them'),
+      r3.appendChild(orgTwoTap('danger', t('app.fire'), key + 'fire', t('app.tap_again_to_fire') + String(m.name || 'them'),
         function () {
           var reason = orgText(key + 'freason');
-          if (!reason) { return say('Give a reason for firing them.'); }
+          if (!reason) { return say(t('app.give_a_reason_for_firing_them')); }
           state.org.open.member = null;
           orgWrite(key + 'fire', function () { return post('orgFire', { member: m.ref, reason: reason }); },
-            'Fired.');
+            t('app.fired'));
         }, 'M3'));
       box.appendChild(r3);
       var note3 = orgOfficeNote('M3');
@@ -4299,22 +4323,22 @@
 
   function orgGrantsFor(m, key) {
     var wrap = el('div', 'org-powers');
-    wrap.appendChild(el('div', 'hint', 'Their own powers: grant or deny one you hold.'));
+    wrap.appendChild(el('div', 'hint', t('app.their_own_powers_grant_or_deny')));
     orgPowerList().forEach(function (p) {
       var line = el('div', 'org-power');
       line.appendChild(el('div', p.held ? 'org-power-name' : 'org-power-name org-grey', p.label));
       if (!p.held) {
-        line.appendChild(el('div', 'hint', 'Staff have not given you this.'));
+        line.appendChild(el('div', 'hint', t('app.staff_have_not_given_you_this')));
         wrap.appendChild(line);
         return;
       }
       var row = orgRow();
-      [['grant', 'Grant'], ['deny', 'Deny'], ['clear', 'Clear']].forEach(function (pair) {
-        row.appendChild(orgTwoTap('ghost', pair[1], key + 'g:' + p.code + ':' + pair[0], 'Tap again: ' + pair[0],
+      [['grant', t('app.grant')], ['deny', t('app.deny')], ['clear', t('app.clear')]].forEach(function (pair) {
+        row.appendChild(orgTwoTap('ghost', pair[1], key + 'g:' + p.code + ':' + pair[0], t('app.tap_again') + pair[0],
           function () {
             orgWrite(key + 'g:' + p.code + ':' + pair[0], function () {
               return post('orgMemberGrant', { member: m.ref, power: p.code, state: pair[0] });
-            }, 'Saved.');
+            }, t('app.saved'));
           }));
       });
       line.appendChild(row);
@@ -4328,22 +4352,22 @@
   function orgRolesScreen(view) {
     if (orgPending(view, 'roles')) { return; }
     if (orgHolds('R1')) {
-      var create = orgCard('New role', 'i-plus');
+      var create = orgCard(t('app.new_role'), 'i-plus');
       var noteR1 = orgOfficeNote('R1');
       if (noteR1) { create.appendChild(noteR1); }
-      create.appendChild(orgField('role.grade', 'Rank (a number below yours)', 'number', '1'));
-      create.appendChild(orgField('role.label', 'Name', 'text', 'Runner', 64));
-      create.appendChild(orgField('role.pay', 'Pay per pay-cycle ($' + (orgBound('PayMax') !== null
-        ? ', up to ' + money(orgBound('PayMax')) : '') + ')', 'number', '0'));
+      create.appendChild(orgField('role.grade', t('app.rank_a_number_below_yours'), 'number', '1'));
+      create.appendChild(orgField('role.label', t('app.name'), 'text', t('app.runner'), 64));
+      create.appendChild(orgField('role.pay', t('app.pay_per_pay_cycle') + (orgBound('PayMax') !== null
+        ? t('app.up_to') + money(orgBound('PayMax')) : '') + ')', 'number', '0'));
       var rc = orgRow();
-      rc.appendChild(orgTwoTap('primary', 'Create role', 'role:create', 'Tap again to create it', function () {
+      rc.appendChild(orgTwoTap('primary', t('app.create_role'), 'role:create', t('app.tap_again_to_create_it'), function () {
         var grade = orgNumber('role.grade');
         var label = orgText('role.label');
-        if (grade === null || !label) { return say('Give the role a rank and a name.'); }
+        if (grade === null || !label) { return say(t('app.give_the_role_a_rank_and')); }
         var name = label.toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32) || 'role';
         orgWrite('role:create', function () {
           return post('orgRoleCreate', { grade: grade, name: name, label: label, pay: orgNumber('role.pay') || 0 });
-        }, 'Role created.');
+        }, t('app.role_created'));
       }, 'R1'));
       create.appendChild(rc);
       view.appendChild(create);
@@ -4354,7 +4378,7 @@
   function orgRoleCard(r) {
     var open = state.org.open.role === r.grade;
     var box = el('div', 'card org-card org-role');
-    var head = el('button', 'ghost org-row', String(r.label || r.name) + ' · rank ' + r.grade);
+    var head = el('button', 'ghost org-row', String(r.label || r.name) + t('app.rank') + r.grade);
     head.onclick = function () { state.org.open.role = open ? null : r.grade; state.org.armed = null; render(); };
     box.appendChild(head);
     var meta = el('div', 'meta');
@@ -4364,54 +4388,54 @@
     if (r.salary !== undefined && r.salary !== null) {
       meta.appendChild(chip('Salary ' + money(Number(r.salary) || 0), 'plain', 'i-coin'));
     }
-    if (r.boss) { meta.appendChild(chip('Boss role', 'role', 'i-shield')); }
+    if (r.boss) { meta.appendChild(chip(t('app.boss_role'), 'role', 'i-shield')); }
     box.appendChild(meta);
     if (!open) { return box; }
     if (!r.editable) {
-      box.appendChild(el('div', 'hint', r.locked ? ERRORS.org_locked : 'At or above your rank: only staff change it.'));
+      box.appendChild(el('div', 'hint', r.locked ? ERRORS.org_locked : t('app.at_or_above_your_rank_only')));
       return box;
     }
     var key = 'r:' + r.grade + ':';
     if (orgHolds('R2')) {
-      box.appendChild(orgField(key + 'label', 'Name', 'text', String(r.label || ''), 64));
+      box.appendChild(orgField(key + 'label', t('app.name'), 'text', String(r.label || ''), 64));
       var r2 = orgRow();
-      r2.appendChild(orgTwoTap('ghost', 'Rename', key + 'edit', 'Tap again to rename', function () {
+      r2.appendChild(orgTwoTap('ghost', t('app.rename'), key + 'edit', t('app.tap_again_to_rename'), function () {
         var label = orgText(key + 'label');
-        if (!label) { return say('Write the new name.'); }
+        if (!label) { return say(t('app.write_the_new_name')); }
         orgWrite(key + 'edit', function () { return post('orgRoleEdit', { grade: r.grade, label: label }); },
-          'Renamed.');
+          t('app.renamed'));
       }, 'R2'));
       box.appendChild(r2);
     }
     if (orgHolds('P1')) {
-      box.appendChild(orgField(key + 'pay', 'Pay per pay-cycle ($' + (orgBound('PayMax') !== null
-        ? ', up to ' + money(orgBound('PayMax')) : '') + ')', 'number', String(Number(r.pay) || 0)));
+      box.appendChild(orgField(key + 'pay', t('app.pay_per_pay_cycle') + (orgBound('PayMax') !== null
+        ? t('app.up_to') + money(orgBound('PayMax')) : '') + ')', 'number', String(Number(r.pay) || 0)));
       var rp = orgRow();
-      rp.appendChild(orgTwoTap('ghost', 'Set pay', key + 'pay', 'Tap again to set the pay', function () {
+      rp.appendChild(orgTwoTap('ghost', t('app.set_pay'), key + 'pay', t('app.tap_again_to_set_the_pay'), function () {
         var pay = orgNumber(key + 'pay');
-        if (pay === null) { return say('Write the pay as a whole number of dollars.'); }
-        orgWrite(key + 'pay', function () { return post('orgRolePay', { grade: r.grade, pay: pay }); }, 'Pay set.');
+        if (pay === null) { return say(t('app.write_the_pay_as_a_whole')); }
+        orgWrite(key + 'pay', function () { return post('orgRolePay', { grade: r.grade, pay: pay }); }, t('app.pay_set'));
       }, 'P1'));
       box.appendChild(rp);
     }
     if (orgHolds('P3')) {
-      box.appendChild(orgField(key + 'salary', 'Salary every pay day ($' + (typeof r.salaryMax === 'number'
-        ? ', up to ' + money(r.salaryMax) : '') + ')', 'number', String(Number(r.salary) || 0)));
+      box.appendChild(orgField(key + 'salary', t('app.salary_every_pay_day') + (typeof r.salaryMax === 'number'
+        ? t('app.up_to') + money(r.salaryMax) : '') + ')', 'number', String(Number(r.salary) || 0)));
       if (typeof r.salaryNext === 'number') {
-        box.appendChild(el('div', 'hint', 'Changing to ' + money(r.salaryNext) + ' from the pay day after next.'));
+        box.appendChild(el('div', 'hint', t('app.changing_to') + money(r.salaryNext) + t('app.from_the_pay_day_after_next')));
       }
       var rs = orgRow();
-      rs.appendChild(orgTwoTap('ghost', 'Set salary', key + 'salary', 'Tap again to set the salary', function () {
+      rs.appendChild(orgTwoTap('ghost', t('app.set_salary'), key + 'salary', t('app.tap_again_to_set_the_salary'), function () {
         var amount = orgNumber(key + 'salary');
-        if (amount === null) { return say('Write the salary as a whole number of dollars.'); }
+        if (amount === null) { return say(t('app.write_the_salary_as_a_whole')); }
         orgWrite(key + 'salary', function () { return post('orgSalary', { grade: r.grade, amount: amount }); },
-          'Salary set. A change takes effect from the pay day after next.');
+          t('app.salary_set_a_change_takes_effect'));
       }, 'P3'));
       box.appendChild(rs);
     }
     if (orgHolds('R4')) {
       var powers = el('div', 'org-powers');
-      powers.appendChild(el('div', 'hint', 'Powers of this role: give or take one you hold.'));
+      powers.appendChild(el('div', 'hint', t('app.powers_of_this_role_give_or')));
       var noteR4 = orgOfficeNote('R4');
       if (noteR4) { powers.appendChild(noteR4); }
       var has = r.powers || {};
@@ -4419,16 +4443,16 @@
         var line = el('div', 'org-power');
         var on = !!has[p.code];
         line.appendChild(el('div', p.held ? 'org-power-name' : 'org-power-name org-grey',
-          p.label + (on ? ' — given' : '')));
+          p.label + (on ? t('app.given') : '')));
         if (!p.held) {
-          line.appendChild(el('div', 'hint', 'Staff have not given you this.'));
+          line.appendChild(el('div', 'hint', t('app.staff_have_not_given_you_this')));
         } else {
           var row = orgRow();
-          row.appendChild(orgTwoTap('ghost', on ? 'Take' : 'Give', key + 'p:' + p.code,
-            on ? 'Tap again to take it' : 'Tap again to give it', function () {
+          row.appendChild(orgTwoTap('ghost', on ? t('app.take') : t('app.give'), key + 'p:' + p.code,
+            on ? t('app.tap_again_to_take_it') : t('app.tap_again_to_give_it'), function () {
               orgWrite(key + 'p:' + p.code, function () {
                 return post('orgRolePowers', { grade: r.grade, power: p.code, on: !on });
-              }, on ? 'Taken from the role.' : 'Given to the role.');
+              }, on ? t('app.taken_from_the_role') : t('app.given_to_the_role'));
             }, 'R4'));
           line.appendChild(row);
         }
@@ -4438,12 +4462,12 @@
     }
     if (orgHolds('R3')) {
       var r3 = orgRow();
-      r3.appendChild(orgTwoTap('danger', 'Delete role', key + 'delete', 'Tap again to delete it', function () {
+      r3.appendChild(orgTwoTap('danger', t('app.delete_role'), key + 'delete', t('app.tap_again_to_delete_it'), function () {
         state.org.open.role = null;
-        orgWrite(key + 'delete', function () { return post('orgRoleDelete', { grade: r.grade }); }, 'Role deleted.');
+        orgWrite(key + 'delete', function () { return post('orgRoleDelete', { grade: r.grade }); }, t('app.role_deleted'));
       }, 'R3'));
       box.appendChild(r3);
-      if (Number(r.members) > 0) { box.appendChild(el('div', 'hint', 'Only an empty role can be deleted.')); }
+      if (Number(r.members) > 0) { box.appendChild(el('div', 'hint', t('app.only_an_empty_role_can_be'))); }
     }
     return box;
   }
@@ -4452,13 +4476,13 @@
 
   function orgMoneyScreen(view) {
     if (orgHolds('C8')) {
-      var funds = orgCard('Funds', 'i-coin');
+      var funds = orgCard(t('app.funds'), 'i-coin');
       if (!orgPending(funds, 'funds')) {
         var f = state.org.data.funds;
-        funds.appendChild(el('div', 'target', f.ready === false ? 'Not available right now'
+        funds.appendChild(el('div', 'target', f.ready === false ? t('app.not_available_right_now')
           : money(Number(f.balance) || 0)));
         var rows = asList(f.rows);
-        if (!rows.length) { funds.appendChild(el('div', 'hint', 'Nothing moved yet.')); }
+        if (!rows.length) { funds.appendChild(el('div', 'hint', t('app.nothing_moved_yet'))); }
         rows.slice(0, 20).forEach(function (row) {
           var amount = Number(row.amount) || 0;
           funds.appendChild(el('div', 'hint org-ledger', (amount < 0 ? '−' : '+') + money(Math.abs(amount))
@@ -4469,72 +4493,72 @@
       view.appendChild(funds);
     }
     if (orgHolds('C6')) {
-      var dep = orgCard('Deposit', 'i-coin');
-      dep.appendChild(orgField('dep.amount', 'Amount ($)', 'number', '0'));
-      dep.appendChild(orgChoice('dep.account', [{ value: 'bank', label: 'From bank' },
-        { value: 'cash', label: 'From cash' }], 'bank'));
+      var dep = orgCard(t('app.deposit'), 'i-coin');
+      dep.appendChild(orgField('dep.amount', t('app.amount_2'), 'number', '0'));
+      dep.appendChild(orgChoice('dep.account', [{ value: 'bank', label: t('app.from_bank') },
+        { value: 'cash', label: t('app.from_cash') }], 'bank'));
       var rd = orgRow();
-      rd.appendChild(orgTwoTap('primary', 'Deposit', 'deposit', 'Tap again to deposit', function () {
+      rd.appendChild(orgTwoTap('primary', t('app.deposit'), 'deposit', t('app.tap_again_to_deposit'), function () {
         var amount = orgNumber('dep.amount');
-        if (!amount) { return say('Write an amount above zero.'); }
+        if (!amount) { return say(t('app.write_an_amount_above_zero')); }
         var nonce = orgNonce();
         orgWrite('deposit', function () {
           return post('orgDeposit', { amount: amount, account: orgChosen('dep.account', 'bank'), nonce: nonce });
-        }, 'Deposited into the funds.');
+        }, t('app.deposited_into_the_funds'));
       }));
       dep.appendChild(rd);
       view.appendChild(dep);
     }
     if (orgHolds('C7')) {
-      var wd = orgCard('Withdraw', 'i-coin');
+      var wd = orgCard(t('app.withdraw'), 'i-coin');
       var noteC7 = orgOfficeNote('C7');
       if (noteC7) { wd.appendChild(noteC7); }
-      wd.appendChild(orgField('wd.amount', 'Amount ($' + (orgBound('WithdrawMax') !== null
-        ? ', up to ' + money(orgBound('WithdrawMax')) : '') + ')', 'number', '0'));
-      wd.appendChild(orgField('wd.reason', 'Reason', 'text', 'What it is for', 160));
+      wd.appendChild(orgField('wd.amount', t('app.amount_3') + (orgBound('WithdrawMax') !== null
+        ? t('app.up_to') + money(orgBound('WithdrawMax')) : '') + ')', 'number', '0'));
+      wd.appendChild(orgField('wd.reason', t('app.reason'), 'text', t('app.what_it_is_for'), 160));
       var rw = orgRow();
-      rw.appendChild(orgTwoTap('primary', 'Withdraw', 'withdraw', 'Tap again to withdraw', function () {
+      rw.appendChild(orgTwoTap('primary', t('app.withdraw'), 'withdraw', t('app.tap_again_to_withdraw'), function () {
         var amount = orgNumber('wd.amount');
         var reason = orgText('wd.reason');
-        if (!amount || !reason) { return say('Write an amount above zero and a reason.'); }
+        if (!amount || !reason) { return say(t('app.write_an_amount_above_zero_and')); }
         var nonce = orgNonce();
         orgWrite('withdraw', function () {
           return post('orgWithdraw', { amount: amount, reason: reason, nonce: nonce });
-        }, 'Withdrawn to your cash.');
+        }, t('app.withdrawn_to_your_cash'));
       }, 'C7'));
       wd.appendChild(rw);
       view.appendChild(wd);
     }
     if (orgHolds('P2')) {
-      var bonus = orgCard('Bonus', 'i-coin');
+      var bonus = orgCard(t('app.bonus'), 'i-coin');
       var members = orgMemberOptions();
       if (!orgHolds('M1')) {
-        bonus.appendChild(el('div', 'hint', 'Picking a member needs View members, which staff have not given you.'));
+        bonus.appendChild(el('div', 'hint', t('app.picking_a_member_needs_view_members')));
       } else if (!members.length) {
         orgPending(bonus, 'members');
       } else {
         bonus.appendChild(orgChoice('bonus.member', members, undefined));
-        bonus.appendChild(orgField('bonus.amount', 'Amount ($' + (orgBound('BonusMax') !== null
-          ? ', up to ' + money(orgBound('BonusMax')) : '') + ')', 'number', '0'));
-        bonus.appendChild(orgField('bonus.reason', 'Reason', 'text', 'What it is for', 160));
+        bonus.appendChild(orgField('bonus.amount', t('app.amount_3') + (orgBound('BonusMax') !== null
+          ? t('app.up_to') + money(orgBound('BonusMax')) : '') + ')', 'number', '0'));
+        bonus.appendChild(orgField('bonus.reason', t('app.reason'), 'text', t('app.what_it_is_for'), 160));
         var rb = orgRow();
-        rb.appendChild(orgTwoTap('primary', 'Pay bonus', 'bonus', 'Tap again to pay it', function () {
+        rb.appendChild(orgTwoTap('primary', t('app.pay_bonus'), 'bonus', t('app.tap_again_to_pay_it'), function () {
           var who = orgChosen('bonus.member', undefined);
           var amount = orgNumber('bonus.amount');
           var reason = orgText('bonus.reason');
-          if (!who || !amount || !reason) { return say('Pick a member, write an amount and a reason.'); }
+          if (!who || !amount || !reason) { return say(t('app.pick_a_member_write_an_amount')); }
           var nonce = orgNonce();
           orgWrite('bonus', function () {
             return post('orgBonus', { member: who, amount: amount, reason: reason, nonce: nonce });
-          }, 'Bonus paid to their bank.');
+          }, t('app.bonus_paid_to_their_bank'));
         }));
         bonus.appendChild(rb);
       }
       view.appendChild(bonus);
     }
-    var cutKinds = [['C1', 'payout', 'Organisation cut of every payout', 'CutMaxPercent'],
-      ['C4', 'stake', 'Cut of a stake a member wins', 'StakeCutMaxPercent'],
-      ['C5', 'buyout', 'Cut of a buyout paid to a member', 'BuyoutCutMaxPercent']];
+    var cutKinds = [['C1', 'payout', t('app.organisation_cut_of_every_payout'), 'CutMaxPercent'],
+      ['C4', 'stake', t('app.cut_of_a_stake_a_member'), 'StakeCutMaxPercent'],
+      ['C5', 'buyout', t('app.cut_of_a_buyout_paid_to'), 'BuyoutCutMaxPercent']];
     cutKinds.forEach(function (k) {
       if (!orgHolds(k[0])) { return; }
       var box = orgCard(k[2], 'i-coin');
@@ -4543,13 +4567,13 @@
       var max = orgBound(k[3]);
       var total = orgBound('TotalCutCapPercent');
       var cap = max !== null && total !== null ? Math.min(max, total) : (max !== null ? max : total);
-      box.appendChild(orgField('cut.' + k[1], 'Percent' + (cap !== null ? ' (0 to ' + cap + ')' : ''), 'number', '0'));
-      box.appendChild(el('div', 'hint', 'Contracts already accepted keep the cut they were accepted at.'));
+      box.appendChild(orgField('cut.' + k[1], t('app.percent') + (cap !== null ? ' (0 to ' + cap + ')' : ''), 'number', '0'));
+      box.appendChild(el('div', 'hint', t('app.contracts_already_accepted_keep_the_cut')));
       var row = orgRow();
-      row.appendChild(orgTwoTap('ghost', 'Set cut', 'cut:' + k[1], 'Tap again to set the cut', function () {
+      row.appendChild(orgTwoTap('ghost', t('app.set_cut'), 'cut:' + k[1], t('app.tap_again_to_set_the_cut'), function () {
         var pct = orgNumber('cut.' + k[1]);
-        if (pct === null) { return say('Write a whole percent.'); }
-        orgWrite('cut:' + k[1], function () { return post('orgSetCut', { kind: k[1], percent: pct }); }, 'Cut set.');
+        if (pct === null) { return say(t('app.write_a_whole_percent')); }
+        orgWrite('cut:' + k[1], function () { return post('orgSetCut', { kind: k[1], percent: pct }); }, t('app.cut_set'));
       }, k[0]));
       box.appendChild(row);
       view.appendChild(box);
@@ -4560,37 +4584,37 @@
 
   function orgTargetCut(kind) {
     var code = kind === 'role' ? 'C2' : 'C3';
-    var box = orgCard(kind === 'role' ? 'Cut by role' : 'Cut for one member', 'i-coin');
+    var box = orgCard(kind === 'role' ? t('app.cut_by_role') : t('app.cut_for_one_member'), 'i-coin');
     var note = orgOfficeNote(code);
     if (note) { box.appendChild(note); }
     var options = kind === 'role' ? orgRoleOptions(true) : orgMemberOptions();
     if (kind === 'member' && !orgHolds('M1')) {
-      box.appendChild(el('div', 'hint', 'Picking a member needs View members, which staff have not given you.'));
+      box.appendChild(el('div', 'hint', t('app.picking_a_member_needs_view_members')));
       return box;
     }
     if (!options.length) {
-      box.appendChild(el('div', 'hint', kind === 'role' ? 'No role below yours.' : 'No member to pick yet.'));
+      box.appendChild(el('div', 'hint', kind === 'role' ? t('app.no_role_below_yours') : t('app.no_member_to_pick_yet')));
       return box;
     }
     box.appendChild(orgChoice('tcut.' + kind, options, undefined));
     var cap = orgBound('CutMaxPercent');
-    box.appendChild(orgField('tcut.' + kind + '.pct', 'Percent' + (cap !== null ? ' (0 to ' + cap + ')' : ''),
+    box.appendChild(orgField('tcut.' + kind + '.pct', t('app.percent') + (cap !== null ? ' (0 to ' + cap + ')' : ''),
       'number', '0'));
     var row = orgRow();
     function send(percent, label) {
       var target = orgChosen('tcut.' + kind, undefined);
-      if (target === undefined) { return say(kind === 'role' ? 'Pick a role first.' : 'Pick a member first.'); }
+      if (target === undefined) { return say(kind === 'role' ? t('app.pick_a_role_first') : t('app.pick_a_member_first')); }
       var data = kind === 'role' ? { kind: 'role', grade: target, percent: percent }
         : { kind: 'member', member: target, percent: percent };
       orgWrite('tcut:' + kind, function () { return post('orgSetCut', data); }, label);
     }
-    row.appendChild(orgTwoTap('ghost', 'Set cut', 'tcut:' + kind + ':set', 'Tap again to set the cut', function () {
+    row.appendChild(orgTwoTap('ghost', t('app.set_cut'), 'tcut:' + kind + ':set', t('app.tap_again_to_set_the_cut'), function () {
       var pct = orgNumber('tcut.' + kind + '.pct');
-      if (pct === null) { return say('Write a whole percent.'); }
-      send(pct, 'Cut set.');
+      if (pct === null) { return say(t('app.write_a_whole_percent')); }
+      send(pct, t('app.cut_set'));
     }, code));
-    row.appendChild(orgTwoTap('ghost', 'Use the default', 'tcut:' + kind + ':clear', 'Tap again to clear it',
-      function () { send(false, 'Their own cut cleared.'); }, code));
+    row.appendChild(orgTwoTap('ghost', t('app.use_the_default'), 'tcut:' + kind + ':clear', t('app.tap_again_to_clear_it'),
+      function () { send(false, t('app.their_own_cut_cleared')); }, code));
     box.appendChild(row);
     return box;
   }
@@ -4603,22 +4627,22 @@
     }
     var roles = orgRoleOptions(true);
     if (orgHolds('K1')) {
-      var box = orgCard('Who may take what', 'i-flag');
-      box.appendChild(el('div', 'hint', 'Only ever stricter than the server\'s own rules, which still apply first.'));
+      var box = orgCard(t('app.who_may_take_what'), 'i-flag');
+      box.appendChild(el('div', 'hint', t('app.only_ever_stricter_than_the_servers')));
       if (!roles.length) {
-        box.appendChild(el('div', 'hint', 'No role below yours.'));
+        box.appendChild(el('div', 'hint', t('app.no_role_below_yours')));
       } else {
         box.appendChild(orgChoice('acc.grade', roles, roles[0].value));
-        box.appendChild(orgField('acc.maxReward', 'Most a contract may pay ($, blank for no limit)', 'number', ''));
-        box.appendChild(orgField('acc.maxAtOnce', 'Contracts at once (blank for no limit)', 'number', ''));
-        box.appendChild(el('div', 'hint', 'How they may be finished'));
-        box.appendChild(orgChoice('acc.rule', [{ value: '', label: 'Any' }, { value: 'alive', label: 'Alive only' },
-          { value: 'either', label: 'Either' }], ''));
-        box.appendChild(el('div', 'hint', 'Targets on whitelisted jobs'));
-        box.appendChild(orgChoice('acc.whitelisted', [{ value: true, label: 'Allowed' },
-          { value: false, label: 'Not allowed' }], true));
+        box.appendChild(orgField('acc.maxReward', t('app.most_a_contract_may_pay_blank'), 'number', ''));
+        box.appendChild(orgField('acc.maxAtOnce', t('app.contracts_at_once_blank_for_no'), 'number', ''));
+        box.appendChild(el('div', 'hint', t('app.how_they_may_be_finished')));
+        box.appendChild(orgChoice('acc.rule', [{ value: '', label: t('app.any') }, { value: 'alive', label: t('app.alive_only') },
+          { value: 'either', label: t('app.either') }], ''));
+        box.appendChild(el('div', 'hint', t('app.targets_on_whitelisted_jobs')));
+        box.appendChild(orgChoice('acc.whitelisted', [{ value: true, label: t('app.allowed') },
+          { value: false, label: t('app.not_allowed') }], true));
         var row = orgRow();
-        row.appendChild(orgTwoTap('primary', 'Save rules', 'access', 'Tap again to save the rules', function () {
+        row.appendChild(orgTwoTap('primary', t('app.save_rules'), 'access', t('app.tap_again_to_save_the_rules'), function () {
           var rules = {};
           var maxReward = orgNumber('acc.maxReward');
           var atOnce = orgNumber('acc.maxAtOnce');
@@ -4629,48 +4653,48 @@
           rules.whitelisted = orgChosen('acc.whitelisted', true) === true;
           var grade = orgChosen('acc.grade', roles[0].value);
           orgWrite('access', function () { return post('orgAccess', { grade: grade, rules: rules }); },
-            'Rules saved.');
+            t('app.rules_saved'));
         }));
         box.appendChild(row);
       }
       view.appendChild(box);
     }
     if (orgHolds('K3')) {
-      var cd = orgCard('Cooldown between accepts', 'i-clock');
+      var cd = orgCard(t('app.cooldown_between_accepts'), 'i-clock');
       if (!roles.length) {
-        cd.appendChild(el('div', 'hint', 'No role below yours.'));
+        cd.appendChild(el('div', 'hint', t('app.no_role_below_yours')));
       } else {
         cd.appendChild(orgChoice('cd.grade', roles, roles[0].value));
         var cap = orgBound('MemberCooldownMaxMinutes');
-        cd.appendChild(orgField('cd.minutes', 'Minutes' + (cap !== null ? ' (up to ' + cap + ')' : '')
-          + ', blank for none', 'number', ''));
+        cd.appendChild(orgField('cd.minutes', t('app.minutes') + (cap !== null ? t('app.up_to_2') + cap + ')' : '')
+          + t('app.blank_for_none'), 'number', ''));
         var rc = orgRow();
-        rc.appendChild(orgTwoTap('ghost', 'Set cooldown', 'cooldown', 'Tap again to set it', function () {
+        rc.appendChild(orgTwoTap('ghost', t('app.set_cooldown'), 'cooldown', t('app.tap_again_to_set_it'), function () {
           var minutes = orgNumber('cd.minutes');
           var grade = orgChosen('cd.grade', roles[0].value);
           orgWrite('cooldown', function () {
             return post('orgRoleCooldown', { grade: grade, minutes: minutes === null ? false : minutes });
-          }, 'Cooldown set.');
+          }, t('app.cooldown_set'));
         }));
         cd.appendChild(rc);
       }
       view.appendChild(cd);
     }
     if (orgHolds('K2')) {
-      var pick = orgCard('Boss pick', 'i-crosshair');
-      pick.appendChild(el('div', 'hint', 'Pin a contract on the board to a member. It is a recommendation: they '
-        + 'still take it themselves.'));
-      pick.appendChild(orgField('pick.id', 'Contract id', 'text', 'ct00000001', 64));
+      var pick = orgCard(t('app.boss_pick'), 'i-crosshair');
+      pick.appendChild(el('div', 'hint', t('app.pin_a_contract_on_the_board')
+        + t('app.still_take_it_themselves')));
+      pick.appendChild(orgField('pick.id', t('app.contract_id'), 'text', 'ct00000001', 64));
       var members = orgMemberOptions();
       if (members.length) { pick.appendChild(orgChoice('pick.member', members, undefined)); }
       var rp = orgRow();
-      rp.appendChild(orgTwoTap('ghost', 'Pin it', 'pick', 'Tap again to pin it', function () {
+      rp.appendChild(orgTwoTap('ghost', t('app.pin_it'), 'pick', t('app.tap_again_to_pin_it'), function () {
         var id = orgText('pick.id');
         var who = orgChosen('pick.member', undefined);
-        if (!id) { return say('Write the contract\'s id.'); }
+        if (!id) { return say(t('app.write_the_contracts_id')); }
         orgWrite('pick', function () {
           return post('orgPick', who === undefined ? { id: id } : { id: id, member: who });
-        }, who === undefined ? 'Pick cleared.' : 'Pinned.');
+        }, who === undefined ? t('app.pick_cleared') : t('app.pinned'));
       }));
       pick.appendChild(rp);
       view.appendChild(pick);
@@ -4680,16 +4704,16 @@
   /* ---- Places: the office, sign-up and meeting spots, set where they stand ---- */
 
   function orgPlacesScreen(view) {
-    view.appendChild(el('div', 'hint', 'Places are set where you stand: the server reads your position, and the '
-      + 'phone sends none.'));
-    [['L1', 'office', 'Move the office here', 'Tap again to move it here'],
-      ['L2', 'signup', 'Put a sign-up spot here', 'Tap again to put it here'],
-      ['L3', 'meeting', 'Add a meeting spot here', 'Tap again to add it here']].forEach(function (k) {
+    view.appendChild(el('div', 'hint', t('app.places_are_set_where_you_stand')
+      + t('app.phone_sends_none')));
+    [['L1', 'office', t('app.move_the_office_here'), t('app.tap_again_to_move_it_here')],
+      ['L2', 'signup', t('app.put_a_sign_up_spot_here'), t('app.tap_again_to_put_it_here')],
+      ['L3', 'meeting', t('app.add_a_meeting_spot_here'), t('app.tap_again_to_add_it_here')]].forEach(function (k) {
       if (!orgHolds(k[0])) { return; }
       var box = orgCard(ORG_SPOT_WORDS[k[1]], 'i-pin');
-      if (k[1] !== 'office') { box.appendChild(orgField('spot.' + k[1], 'Name', 'text', ORG_SPOT_WORDS[k[1]], 64)); }
+      if (k[1] !== 'office') { box.appendChild(orgField('spot.' + k[1], t('app.name'), 'text', ORG_SPOT_WORDS[k[1]], 64)); }
       if (k[1] === 'office' && orgBound('OfficeMoveMetres') !== null) {
-        box.appendChild(el('div', 'hint', 'Within ' + orgBound('OfficeMoveMetres') + ' m of where staff put it.'));
+        box.appendChild(el('div', 'hint', 'Within ' + orgBound('OfficeMoveMetres') + t('app.m_of_where_staff_put_it')));
       }
       var note = orgOfficeNote(k[0]);
       if (note) { box.appendChild(note); }
@@ -4698,7 +4722,7 @@
         var label = orgText('spot.' + k[1]);
         orgWrite('spot:' + k[1], function () {
           return post('orgPlaceHere', label ? { kind: k[1], label: label } : { kind: k[1] });
-        }, 'Placed where you stand.');
+        }, t('app.placed_where_you_stand'));
         orgRead('spots', function () { return post('orgSpots', {}); });
       }, k[0]));
       box.appendChild(row);
@@ -4706,16 +4730,16 @@
     });
     if (orgPending(view, 'spots')) { return; }
     var rows = asList(state.org.data.spots.rows);
-    if (!rows.length) { view.appendChild(el('div', 'empty', 'No places set.')); return; }
+    if (!rows.length) { view.appendChild(el('div', 'empty', t('app.no_places_set'))); return; }
     rows.forEach(function (s) {
       var box = el('div', 'card org-card');
-      box.appendChild(el('div', 'org-card-title ico i-pin', String(s.label || ORG_SPOT_WORDS[s.kind] || 'Place')));
-      box.appendChild(el('div', 'hint', ORG_SPOT_WORDS[s.kind] || 'Place'));
+      box.appendChild(el('div', 'org-card-title ico i-pin', String(s.label || ORG_SPOT_WORDS[s.kind] || t('app.place'))));
+      box.appendChild(el('div', 'hint', ORG_SPOT_WORDS[s.kind] || t('app.place')));
       var power = s.kind === 'signup' ? 'L2' : s.kind === 'meeting' ? 'L3' : null;
       if (power && orgHolds(power)) {
         var row = orgRow();
-        row.appendChild(orgTwoTap('danger', 'Remove', 'spot:rm:' + s.id, 'Tap again to remove it', function () {
-          orgWrite('spot:rm:' + s.id, function () { return post('orgRemoveSpot', { id: s.id }); }, 'Removed.');
+        row.appendChild(orgTwoTap('danger', t('app.remove'), 'spot:rm:' + s.id, t('app.tap_again_to_remove_it'), function () {
+          orgWrite('spot:rm:' + s.id, function () { return post('orgRemoveSpot', { id: s.id }); }, t('app.removed'));
           orgRead('spots', function () { return post('orgSpots', {}); });
         }, power));
         box.appendChild(row);
@@ -4727,23 +4751,23 @@
   /* ---- Notices ---- */
 
   function orgNoticesScreen(view) {
-    var box = orgCard('Board notice', 'i-flag');
+    var box = orgCard(t('app.board_notice'), 'i-flag');
     var cap = orgBound('NoticeMaxLength');
-    box.appendChild(orgField('notice.text', 'Notice' + (cap !== null ? ' (up to ' + cap + ' characters)' : ''),
-      'area', state.org.mine.notice || 'Write the notice', cap || 500));
-    box.appendChild(orgChoice('notice.broadcast', [{ value: false, label: 'Board only' },
-      { value: true, label: 'Also message every member' }], false));
+    box.appendChild(orgField('notice.text', t('app.notice') + (cap !== null ? t('app.up_to_2') + cap + ' characters)' : ''),
+      'area', state.org.mine.notice || t('app.write_the_notice'), cap || 500));
+    box.appendChild(orgChoice('notice.broadcast', [{ value: false, label: t('app.board_only') },
+      { value: true, label: t('app.also_message_every_member') }], false));
     var row = orgRow();
-    row.appendChild(orgTwoTap('primary', 'Post', 'notice', 'Tap again to post it', function () {
+    row.appendChild(orgTwoTap('primary', t('app.post'), 'notice', t('app.tap_again_to_post_it'), function () {
       var text = orgText('notice.text');
-      if (!text) { return say('Write the notice first.'); }
+      if (!text) { return say(t('app.write_the_notice_first')); }
       orgWrite('notice', function () {
         return post('orgNotice', { text: text, broadcast: orgChosen('notice.broadcast', false) === true });
-      }, 'Notice posted.');
+      }, t('app.notice_posted'));
     }));
     if (state.org.mine.notice) {
-      row.appendChild(orgTwoTap('ghost', 'Take it down', 'notice:clear', 'Tap again to take it down', function () {
-        orgWrite('notice:clear', function () { return post('orgNotice', { text: false }); }, 'Notice taken down.');
+      row.appendChild(orgTwoTap('ghost', t('app.take_it_down'), 'notice:clear', t('app.tap_again_to_take_it_down'), function () {
+        orgWrite('notice:clear', function () { return post('orgNotice', { text: false }); }, t('app.notice_taken_down'));
       }));
     }
     box.appendChild(row);
@@ -4755,37 +4779,37 @@
   function orgApplicationsScreen(view) {
     if (orgPending(view, 'applications')) { return; }
     var rows = asList(state.org.data.applications.rows);
-    if (!rows.length) { view.appendChild(el('div', 'empty', 'No applications waiting.')); return; }
+    if (!rows.length) { view.appendChild(el('div', 'empty', t('app.no_applications_waiting'))); return; }
     rows.forEach(function (a) {
-      var box = orgCard(String(a.name || 'A player'), 'i-user');
-      box.appendChild(el('div', 'hint', a.body ? String(a.body) : 'No words given.'));
+      var box = orgCard(String(a.name || t('app.a_player')), 'i-user');
+      box.appendChild(el('div', 'hint', a.body ? String(a.body) : t('app.no_words_given')));
       asList(a.form).forEach(function (f) {
         box.appendChild(el('div', 'target', String(f.q || '')));
         box.appendChild(el('div', 'org-notice', String(f.a || '')));
       });
       if (state.org.mine && state.org.mine.recruitment) {
-        if (a.note) { box.appendChild(el('div', 'hint', 'Interview note: ' + String(a.note.text || ''))); }
+        if (a.note) { box.appendChild(el('div', 'hint', t('app.interview_note') + String(a.note.text || ''))); }
         var nkey = 'app:' + a.id + ':note';
-        box.appendChild(orgField(nkey, 'Interview note', 'area', 'What you made of them', 500));
+        box.appendChild(orgField(nkey, t('app.interview_note_2'), 'area', t('app.what_you_made_of_them'), 500));
         var nr = orgRow();
-        nr.appendChild(orgTwoTap('ghost', 'Save note', nkey + ':save', 'Tap again to save the note', function () {
+        nr.appendChild(orgTwoTap('ghost', t('app.save_note'), nkey + ':save', t('app.tap_again_to_save_the_note'), function () {
           var text = orgText(nkey);
-          if (!text) { return say('Write the note first.'); }
+          if (!text) { return say(t('app.write_the_note_first')); }
           orgWrite(nkey + ':save', function () { return post('orgInterviewNote', { id: a.id, text: text }); },
-            'Note saved.');
+            t('app.note_saved'));
           orgRead('applications', function () { return post('orgApplications', {}); });
         }));
         box.appendChild(nr);
       }
       var row = orgRow();
-      row.appendChild(orgTwoTap('primary', 'Accept', 'app:' + a.id + ':yes', 'Tap again to accept', function () {
+      row.appendChild(orgTwoTap('primary', t('app.accept'), 'app:' + a.id + ':yes', t('app.tap_again_to_accept'), function () {
         orgWrite('app:' + a.id + ':yes', function () { return post('orgDecide', { id: a.id, accept: true }); },
-          'Accepted: they join in the lowest role.');
+          t('app.accepted_they_join_in_the_lowest'));
         orgRead('applications', function () { return post('orgApplications', {}); });
       }));
-      row.appendChild(orgTwoTap('ghost', 'Reject', 'app:' + a.id + ':no', 'Tap again to reject', function () {
+      row.appendChild(orgTwoTap('ghost', t('app.reject'), 'app:' + a.id + ':no', t('app.tap_again_to_reject'), function () {
         orgWrite('app:' + a.id + ':no', function () { return post('orgDecide', { id: a.id, accept: false }); },
-          'Rejected.');
+          t('app.rejected'));
         orgRead('applications', function () { return post('orgApplications', {}); });
       }));
       box.appendChild(row);
@@ -4795,60 +4819,60 @@
 
   /* ---- Settings: the label, the menu's layout, the office rule ---- */
 
-  var ORG_LAYOUT_TABS = [['members', 'Members'], ['roles', 'Roles'], ['funds', 'Money'],
-    ['contracts', 'Contracts'], ['locations', 'Places'], ['notices', 'Notices'], ['settings', 'Settings']];
+  var ORG_LAYOUT_TABS = [['members', t('app.members')], ['roles', t('app.roles')], ['funds', t('app.money')],
+    ['contracts', t('app.contracts')], ['locations', t('app.places')], ['notices', t('app.notices')], ['settings', t('app.settings')]];
 
   function orgSettingsScreen(view) {
     var m = state.org.mine;
     if (orgHolds('S1')) {
       var box = orgCard('Organisation name', 'i-briefcase');
-      box.appendChild(orgField('rename', 'Name', 'text', m.label || '', 64));
+      box.appendChild(orgField('rename', t('app.name'), 'text', m.label || '', 64));
       var row = orgRow();
-      row.appendChild(orgTwoTap('primary', 'Rename', 'rename', 'Tap again to rename', function () {
+      row.appendChild(orgTwoTap('primary', t('app.rename'), 'rename', t('app.tap_again_to_rename'), function () {
         var label = orgText('rename');
-        if (!label) { return say('Write the new name.'); }
-        orgWrite('rename', function () { return post('orgRename', { label: label }); }, 'Renamed.');
+        if (!label) { return say(t('app.write_the_new_name')); }
+        orgWrite('rename', function () { return post('orgRename', { label: label }); }, t('app.renamed'));
       }));
       box.appendChild(row);
       view.appendChild(box);
     }
     if (orgHolds('S2')) {
-      var lay = orgCard('Boss menu names', 'i-layers');
-      lay.appendChild(el('div', 'hint', 'Rename the menu\'s screens for everybody in the organisation. Blank keeps '
-        + 'the name it has.'));
+      var lay = orgCard(t('app.boss_menu_names'), 'i-layers');
+      lay.appendChild(el('div', 'hint', t('app.rename_the_menus_screens_for_everybody')
+        + t('app.the_name_it_has')));
       var labels = (m.layout && m.layout.labels) || {};
-      ORG_LAYOUT_TABS.forEach(function (t) {
-        lay.appendChild(orgField('layout.' + t[0], t[1], 'text', String(labels[t[0]] || t[1]), 24));
+      ORG_LAYOUT_TABS.forEach(function (tv) {
+        lay.appendChild(orgField('layout.' + tv[0], tv[1], 'text', String(labels[tv[0]] || tv[1]), 24));
       });
       var rl = orgRow();
-      rl.appendChild(orgTwoTap('ghost', 'Save names', 'layout', 'Tap again to save the names', function () {
+      rl.appendChild(orgTwoTap('ghost', t('app.save_names'), 'layout', t('app.tap_again_to_save_the_names'), function () {
         var out = {};
-        ORG_LAYOUT_TABS.forEach(function (t) {
-          var v = orgText('layout.' + t[0]);
-          if (v) { out[t[0]] = v; } else if (labels[t[0]]) { out[t[0]] = labels[t[0]]; }
+        ORG_LAYOUT_TABS.forEach(function (tv) {
+          var v = orgText('layout.' + tv[0]);
+          if (v) { out[tv[0]] = v; } else if (labels[tv[0]]) { out[tv[0]] = labels[tv[0]]; }
         });
         var hidden = (m.layout && m.layout.hidden) || {};
         orgWrite('layout', function () {
           return post('orgLayout', { layout: { labels: out, hidden: hidden } });
-        }, 'Names saved.');
+        }, t('app.names_saved'));
       }));
       lay.appendChild(rl);
       view.appendChild(lay);
     }
     if (orgHolds('S3')) {
-      var office = orgCard('Powers that need the office', 'i-briefcase');
-      office.appendChild(el('div', 'hint', 'Ask for the office for more of your powers. One staff made need it '
-        + 'cannot be lifted here.'));
+      var office = orgCard(t('app.powers_that_need_the_office'), 'i-briefcase');
+      office.appendChild(el('div', 'hint', t('app.ask_for_the_office_for_more')
+        + t('app.cannot_be_lifted_here')));
       orgPowerList().filter(function (p) { return p.held && p.code !== 'TAKE'; }).forEach(function (p) {
         var needs = !!(m.officeOnly && m.officeOnly[p.code]);
         var line = el('div', 'org-power');
-        line.appendChild(el('div', 'org-power-name', p.label + (needs ? ' — office only' : ' — anywhere')));
+        line.appendChild(el('div', 'org-power-name', p.label + (needs ? t('app.office_only') : t('app.anywhere'))));
         var row = orgRow();
-        row.appendChild(orgTwoTap('ghost', needs ? 'Anywhere' : 'Office only', 'office:' + p.code,
-          'Tap again to change it', function () {
+        row.appendChild(orgTwoTap('ghost', needs ? t('app.anywhere_2') : t('app.office_only_2'), 'office:' + p.code,
+          t('app.tap_again_to_change_it'), function () {
             orgWrite('office:' + p.code, function () {
               return post('orgOfficeRule', { power: p.code, on: !needs });
-            }, 'Saved.');
+            }, t('app.saved'));
           }));
         line.appendChild(row);
         office.appendChild(line);
@@ -4871,14 +4895,14 @@
     var h = holdsNow();
     var lines = [];
     if (h.appPaused) {
-      lines.push('Contracts are paused by staff: nothing can be placed or taken until they '
-        + 'switch it back on.');
+      lines.push(t('app.contracts_are_paused_by_staff_nothing')
+        + t('app.switch_it_back_on'));
     }
     if (h.restartHold) {
       var ends = Number(h.restartHold.endsIn) || 0;
-      lines.push('Contracts are paused for the server restart'
-        + (ends > 0 ? ', for at most ' + durationText(Math.max(1, Math.ceil(ends / 60))) + ' more'
-          : '') + ': kills, handovers and buyouts wait, and every clock is stopped.');
+      lines.push(t('app.contracts_are_paused_for_the_server')
+        + (ends > 0 ? t('app.for_at_most') + durationText(Math.max(1, Math.ceil(ends / 60))) + ' more'
+          : '') + t('app.kills_handovers_and_buyouts_wait_and'));
     }
     if (state.board && state.board.suspended) {
       lines.push(suspendedText(state.board.suspended) + '.');
@@ -4887,7 +4911,7 @@
     var box = el('div', 'notice hold hold-banner'
       + (state.board && state.board.suspended ? ' suspended-note' : ''));
     lines.forEach(function (line) { box.appendChild(el('div', null, line)); });
-    box.appendChild(el('div', 'hint', 'You can still message and report.'));
+    box.appendChild(el('div', 'hint', t('app.you_can_still_message_and_report_2')));
     return box;
   }
 
@@ -4909,8 +4933,8 @@
     var left = secondsLeftOf({ secondsLeft: contract.handoverLeft,
       clockReadAt: contract.clockReadAt });
     left = left > 0 ? Math.ceil(left / 5) * 5 : 0;
-    return left > 0 ? 'Hold still \u2014 handover running (' + left + 's)'
-      : 'Hold still \u2014 handover finishing';
+    return left > 0 ? t('app.hold_still_handover_running') + left + 's)'
+      : t('app.hold_still_handover_finishing');
   }
   function placerHandover(contract) {
     var node = el('div', 'notice ok handover-live ico i-usercheck', handoverText(contract));
@@ -4940,11 +4964,11 @@
   var confirmArmed = null;   // 'yes:<id>' | 'no:<id>' waiting on its second tap
   function placerConfirm(contract) {
     var box = el('div', 'notice ok handover-confirm ico i-usercheck');
-    box.appendChild(el('div', null, 'The hold is done. Confirm handover to release the payment ('
-      + Number(contract.handoverConfirm) + 's left). Nothing is paid until you do.'));
+    box.appendChild(el('div', null, t('app.the_hold_is_done_confirm_handover')
+      + Number(contract.handoverConfirm) + t('app.left_nothing_is_paid_until_you')));
     var row = el('div', 'row');
-    [['yes', 'Confirm handover', 'Tap again to confirm and pay', 'Confirming\u2026'],
-     ['no', 'Decline', 'Tap again to decline \u2014 nothing is paid', 'Declining\u2026']]
+    [['yes', t('app.confirm_handover'), t('app.tap_again_to_confirm_and_pay'), t('app.confirming')],
+     ['no', t('app.decline'), t('app.tap_again_to_decline_nothing_is'), t('app.declining')]]
       .forEach(function (b) {
         var key = 'confirm:' + b[0] + ':' + contract.id;
         if (isBusy(key)) {
@@ -4968,12 +4992,12 @@
               decline: b[0] === 'no' ? true : undefined }).then(function (r) {
               if (!r.ok) {
                 if (r.err === 'no_handover' || r.err === 'not_found') {
-                  say('That handover is no longer waiting on you.');
+                  say(t('app.that_handover_is_no_longer_waiting'));
                 } else { fail(r); }
                 return refresh();
               }
-              say(b[0] === 'yes' ? 'Handover confirmed. The payment is being released.'
-                : 'Handover declined. Nothing was paid, and your contract stays open.',
+              say(b[0] === 'yes' ? t('app.handover_confirmed_the_payment_is_being')
+                : t('app.handover_declined_nothing_was_paid_and'),
                 b[0] === 'yes' ? 'ok' : null);
               refresh();
             });
@@ -4998,13 +5022,13 @@
       var still = buyoutWait(secondsLeftOf({ secondsLeft: contract.bailoutSecondsLeft,
         clockReadAt: contract.clockReadAt }));
       row.appendChild(el('div', 'hint',
-        'Paid. A hitman still has ' + (still || 'a moment') + ' to finish this '
-        + '\u2014 stay out of sight. If they do, your money comes back.'));
+        t('app.paid_a_hitman_still_has') + (still || t('app.a_moment')) + t('app.to_finish_this')
+        + t('app.stay_out_of_sight_if_they')));
     } else if (contract.bailoutAvailable) {
       var buyoutKey = 'bailout:' + contract.id;
-      var buyoutLabel = 'Buy out \u2014 ' + money(contract.bailoutAmount);
+      var buyoutLabel = t('app.buy_out') + money(contract.bailoutAmount);
       if (isBusy(buyoutKey)) {
-        row.appendChild(actionButton('primary danger', buyoutLabel, buyoutKey, 'Paying\u2026'));
+        row.appendChild(actionButton('primary danger', buyoutLabel, buyoutKey, t('app.paying')));
       } else {
         var out = el('button', 'primary danger', buyoutLabel);
         out.onclick = function () { bailout(contract); };
@@ -5013,9 +5037,9 @@
     } else if (settings().buyouts === false) {
       // Not the client's doing. Saying "no buyout was offered" here blamed
       // the one person who had not decided it.
-      row.appendChild(el('div', 'hint', 'This server does not offer buyouts.'));
+      row.appendChild(el('div', 'hint', t('app.this_server_does_not_offer_buyouts')));
     } else {
-      row.appendChild(el('div', 'hint', 'No buyout was offered on this contract.'));
+      row.appendChild(el('div', 'hint', t('app.no_buyout_was_offered_on_this')));
     }
   }
 
@@ -5029,16 +5053,16 @@
   // is the one this countdown was armed with (progress.radius).
   var BREAKING = {
     party_offline: function (radius) {
-      return 'Someone has gone offline. The person who placed this contract must be '
-        + 'online and ' + nearPlacer(radius);
+      return t('app.someone_has_gone_offline_the_person')
+        + t('app.online_and') + nearPlacer(radius);
     },
-    target_not_conscious: 'Your target must be alive and conscious',
-    target_too_hurt: 'Your target is too badly hurt',
-    not_coerced: 'Your target is not restrained',
-    target_too_far: 'Your target is too far from you',
-    not_together: 'You and your target are not in the same place',
+    target_not_conscious: t('app.your_target_must_be_alive_and'),
+    target_too_hurt: t('app.your_target_is_too_badly_hurt'),
+    not_coerced: t('app.your_target_is_not_restrained'),
+    target_too_far: t('app.your_target_is_too_far_from'),
+    not_together: t('app.you_and_your_target_are_not'),
     creator_too_far: function (radius) {
-      return 'The person who placed this contract must be ' + nearPlacer(radius);
+      return t('app.the_person_who_placed_this_contract') + nearPlacer(radius);
     }
   };
 
@@ -5065,11 +5089,11 @@
     wrap.appendChild(bar);
 
     wrap.appendChild(el('div', 'label', progress.settling
-      ? 'Held long enough — settling the payout…'
+      ? t('app.held_long_enough_settling_the_payout')
       : progress.awaitingConfirm
-        ? 'Held long enough — waiting for the person who placed it to confirm'
+        ? t('app.held_long_enough_waiting_for_the')
           + (Number(progress.confirmLeft) > 0 ? ' (' + Number(progress.confirmLeft) + 's)' : '')
-        : progress.elapsed + 's of ' + progress.required + 's'));
+        : progress.elapsed + t('app.of') + progress.required + 's'));
     // Nothing to hold any more: the leeway is not drawn.
     if (progress.awaitingConfirm) { return wrap; }
 
@@ -5087,13 +5111,13 @@
 
       wrap.appendChild(el('div', 'label' + (progress.breaking ? ' warn' : ''),
         progress.breaking
-          ? (breakingText(progress) || 'Hold position')
-              + ' — handover fails in ' + (left / 1000).toFixed(1) + 's'
-          : (left / 1000).toFixed(1) + 's of leeway left — the handover '
-              + 'fails if it runs out'));
+          ? (breakingText(progress) || t('app.hold_position'))
+              + t('app.handover_fails_in') + (left / 1000).toFixed(1) + 's'
+          : (left / 1000).toFixed(1) + t('app.of_leeway_left_the_handover')
+              + t('app.fails_if_it_runs_out')));
     } else if (progress.breaking) {
       wrap.appendChild(el('div', 'label warn',
-        breakingText(progress) || 'Hold position'));
+        breakingText(progress) || t('app.hold_position')));
     }
 
     return wrap;
@@ -5135,17 +5159,17 @@
     var everyone = Number(waits.everyoneMinutes) || 0;
     var name = contract.targetName || 'them';
     var mine = [];
-    if (any > 0) { mine.push('any new contract for ' + durationText(any)); }
-    if (same > 0) { mine.push('one on ' + name + ' for ' + durationText(same)); }
+    if (any > 0) { mine.push(t('app.any_new_contract_for') + durationText(any)); }
+    if (same > 0) { mine.push(t('app.one_on') + name + ' for ' + durationText(same)); }
     /* The creator's own, and on a contract somebody took up, the wait on the
        target for every client: withdrawing one nobody took up starts none
        for anybody else, and the dialog said "Nobody else waits" after an
        operative had taken it and walked away. */
     var others = contract.everTaken && everyone > 0
-      ? 'Nobody else can place one on ' + name + ' for ' + durationText(everyone) + ' either.'
+      ? t('app.nobody_else_can_place_one_on') + name + ' for ' + durationText(everyone) + t('app.either_2')
       : '';
     if (!mine.length) { return others || null; }
-    return 'After this you cannot place ' + mine.join(', or ') + '.'
+    return t('app.after_this_you_cannot_place') + mine.join(', or ') + '.'
       + (others ? ' ' + others : '');
   }
 
@@ -5157,20 +5181,20 @@
     var claimed = Number(contract.slotsClaimed) || 0;
     if (claimed <= 0) { return null; }
     return claimed + ' of ' + Math.max(claimed, Number(contract.slots) || 1)
-      + ' payouts were collected';
+      + t('app.payouts_were_collected');
   }
 
   function cancelContract(contract) {
     var waits = relistWaitText(contract);
     var collected = collectedText(contract);
-    var lead = contract.everTaken ? 'The operative who took it walked away' : 'Nobody has taken it';
-    ask('Withdraw this contract?',
+    var lead = contract.everTaken ? t('app.the_operative_who_took_it_walked') : t('app.nobody_has_taken_it');
+    ask(t('app.withdraw_this_contract'),
       (collected
-        ? lead + '. ' + collected + ', so the rest of what you put up comes back to you.'
-        : lead + ', so everything you put up comes back to you.')
+        ? lead + '. ' + collected + t('app.so_the_rest_of_what_you')
+        : lead + t('app.so_everything_you_put_up_comes'))
         + (waits ? ' ' + waits : '')
-        + ' To change what it pays or when it runs out, use Change reward or '
-        + 'Edit instead.',
+        + t('app.to_change_what_it_pays_or')
+        + t('app.edit_instead'),
       function () {
         post('cancel', { id: contract.id }).then(function (r) {
           if (!r.ok) { return takenOr(r); }
@@ -5182,16 +5206,16 @@
           var queued = (r.data && Number(r.data.queued)) || 0;
           var checking = staffChecking(r.data);
           say(queued > 0
-            ? 'Contract withdrawn. Some of what you put up would not fit and is '
-              + 'waiting for you — it arrives when you next have room.' + checking
-            : checking ? 'Contract withdrawn.' + checking
+            ? t('app.contract_withdrawn_some_of_what_you')
+              + t('app.waiting_for_you_it_arrives_when') + checking
+            : checking ? t('app.contract_withdrawn') + checking
               : collected
-                ? 'Contract withdrawn. ' + collected + '; the rest of what you put up has been '
+                ? t('app.contract_withdrawn_2') + collected + t('app.the_rest_of_what_you_put')
                   + 'returned.'
-                : 'Contract withdrawn. Everything you put up has been returned.', 'ok');
+                : t('app.contract_withdrawn_everything_you_put_up'), 'ok');
           refresh();
         });
-      }, { yes: 'Withdraw it', no: 'Keep it' });
+      }, { yes: t('app.withdraw_it'), no: t('app.keep_it') });
   }
 
   /* The same reason control the Place form draws, for the same reason.
@@ -5213,7 +5237,7 @@
       // deadline also replaced the reason with whatever was top of the list.
       var currentPreset = presets.indexOf(contract.reason) + 1;
       fields.push({
-        id: 'reasonPreset', label: 'Reason', type: 'select',
+        id: 'reasonPreset', label: t('app.reason'), type: 'select',
         value: currentPreset > 0 ? currentPreset : undefined,
         // One-based, as the server indexes its own list.
         options: presets.map(function (text, i) {
@@ -5221,7 +5245,7 @@
         })
       });
     } else if (mode !== 'off') {
-      fields.push({ id: 'reason', label: 'Reason', type: 'text',
+      fields.push({ id: 'reason', label: t('app.reason'), type: 'text',
                     value: contract.reason || '',
                     max: settings().reasonMaxLength || 140 });
     }
@@ -5281,8 +5305,8 @@
 
     var mode = v.mode || contract.mode;
     if (mode !== contract.mode) {
-      changes.push({ what: 'mode', text: mode === 'exclusive' ? 'One hitman at a time'
-        : 'Open to several hitmen at once',
+      changes.push({ what: 'mode', text: mode === 'exclusive' ? t('app.one_hitman_at_a_time')
+        : t('app.open_to_several_hitmen_at_once'),
         send: function () {
           return post('propose', { id: contract.id, kind: 'change_mode', payload: { mode: mode } });
         } });
@@ -5290,31 +5314,31 @@
 
     var stakeNow = Number(contract.penaltyAmount) || 0;
     var stake = v.stake === undefined ? stakeNow : whole(v.stake);
-    if (isNaN(stake) || stake < 0) { return { error: 'The stake is a whole number of dollars, 0 for none.' }; }
+    if (isNaN(stake) || stake < 0) { return { error: t('app.the_stake_is_a_whole_number') }; }
     if (stake > stakeNow) {
       var stakeMost = stakeMostOf(contract);
       if (stake > stakeMost) {
-        return { error: 'The stake can be at most ' + money(stakeMost) + ' on this contract.' };
+        return { error: t('app.the_stake_can_be_at_most') + money(stakeMost) + t('app.on_this_contract') };
       }
       changes.push({ what: 'stake', text: 'Stake: ' + money(stake),
         send: function () {
           return post('propose', { id: contract.id, kind: 'raise_penalty', payload: { amount: stake } });
         } });
     } else if (stake < stakeNow) {
-      changes.push({ what: 'stake', text: stake > 0 ? 'Stake: ' + money(stake) : 'No stake',
+      changes.push({ what: 'stake', text: stake > 0 ? 'Stake: ' + money(stake) : t('app.no_stake'),
         send: function () {
           return post('improve', { id: contract.id, kind: 'lower_penalty', payload: { amount: stake } });
         } });
     }
 
     var hours = whole(v.hours);
-    if (isNaN(hours)) { return { error: 'Move the deadline by whole hours: 2 for more, -1 for less.' }; }
+    if (isNaN(hours)) { return { error: t('app.move_the_deadline_by_whole_hours') }; }
     if (hours > 0) {
       var ceiling = Number(settings().deadlineMaxMinutes) || 0;
       if (ceiling > 0 && hours * 60 > ceiling) {
-        return { error: 'The deadline moves by at most ' + durationText(ceiling) + ' at a time.' };
+        return { error: t('app.the_deadline_moves_by_at_most') + durationText(ceiling) + t('app.at_a_time') };
       }
-      changes.push({ what: 'deadline', text: 'Deadline: ' + hours + 'h more',
+      changes.push({ what: 'deadline', text: 'Deadline: ' + hours + t('app.h_more'),
         send: function () {
           return post('improve', { id: contract.id, kind: 'extend_deadline',
                                    payload: { seconds: hours * 3600 } });
@@ -5323,10 +5347,10 @@
       var keep = Number(settings().deadlineMinLeftMinutes) || 5;
       var left = minutesLeft(contract);
       if (left === null || -hours * 60 > left - keep) {
-        return { error: 'There is not that much deadline to take off: it has '
-          + (bandOf(contract) ? bandOf(contract).text.toLowerCase() : 'no deadline') + '.' };
+        return { error: t('app.there_is_not_that_much_deadline')
+          + (bandOf(contract) ? bandOf(contract).text.toLowerCase() : t('app.no_deadline')) + '.' };
       }
-      changes.push({ what: 'deadline', text: 'Deadline: ' + (-hours) + 'h less',
+      changes.push({ what: 'deadline', text: 'Deadline: ' + (-hours) + t('app.h_less'),
         send: function () {
           return post('propose', { id: contract.id, kind: 'shorten_deadline',
                                    payload: { seconds: -hours * 3600 } });
@@ -5339,10 +5363,10 @@
       var buyoutNow = Number(contract.bailoutAmount) || 0;
       var buyout = whole(v.buyout);
       if (isNaN(buyout) || buyout < 0) {
-        return { error: 'The buyout price is a whole number of dollars, 0 for none.' };
+        return { error: t('app.the_buyout_price_is_a_whole') };
       }
       if (buyout !== buyoutNow) {
-        changes.push({ what: 'buyout', text: buyout > 0 ? 'Buyout price: ' + money(buyout) : 'No buyout',
+        changes.push({ what: 'buyout', text: buyout > 0 ? t('app.buyout_price') + money(buyout) : t('app.no_buyout'),
           send: function () { return post('revise', { id: contract.id, bailoutAmount: buyout }); } });
       }
     }
@@ -5351,8 +5375,8 @@
     var ruleNow = aliveOnly(contract) ? 'alive' : 'either';
     if (v.rule && v.rule !== ruleNow) {
       var rule = v.rule;
-      changes.push({ what: 'completion', text: rule === 'alive' ? 'Completed: alive only'
-        : 'Completed: alive or dead',
+      changes.push({ what: 'completion', text: rule === 'alive' ? t('app.completed_alive_only')
+        : t('app.completed_alive_or_dead'),
         send: function () { return post('revise', { id: contract.id, fulfilment: rule }); } });
     }
 
@@ -5363,8 +5387,8 @@
       var anon = v.anon === 'anon';
       var fee = anonymityFee('creator');
       changes.push({ what: 'anonymity', text: anon
-        ? 'Placed anonymously' + (fee > 0 ? ' (' + money(fee) + ' from your ' + anonymityAccount() + ')' : '')
-        : 'Under your name',
+        ? t('app.placed_anonymously') + (fee > 0 ? ' (' + money(fee) + t('app.from_your') + anonymityAccount() + ')' : '')
+        : t('app.under_your_name_2'),
         send: function () {
           return post('revise', { id: contract.id, anonymous: anon,
                                   shown: { creatorFee: fee, feeAccount: anonymityAccount() } });
@@ -5372,17 +5396,17 @@
         // The fee raised under the sheet: the figure now, nothing taken.
         explain: function (r) {
           if (r.err === 'terms_changed' && r.data && typeof r.data.creatorFee === 'number') {
-            return 'placing it anonymously now costs ' + money(r.data.creatorFee) + '. Nothing was taken.';
+            return t('app.placing_it_anonymously_now_costs') + money(r.data.creatorFee) + t('app.nothing_was_taken');
           }
           return null;
         } });
     }
 
     var add = whole(v.add);
-    if (isNaN(add) || add < 0) { return { error: 'Add a whole number of dollars to the reward, or 0.' }; }
+    if (isNaN(add) || add < 0) { return { error: t('app.add_a_whole_number_of_dollars') }; }
     if (add > 0) {
       var source = v.source === 'bank' ? 'bank' : 'cash';
-      changes.push({ what: 'reward', text: 'Reward: ' + money(add) + ' more, from your ' + source,
+      changes.push({ what: 'reward', text: 'Reward: ' + money(add) + t('app.more_from_your') + source,
         send: function () {
           var reward = { baseline: {} };
           reward.baseline[source] = add;
@@ -5406,10 +5430,10 @@
       return change.send().then(function (r) {
         var failed = !r.ok || (r.data && r.data.outcome === 'failed');
         if (failed) {
-          var why = !r.ok ? ((change.explain && change.explain(r)) || failText(r) || 'Not right now.')
-            : (ERRORS[r.data.err] || 'That change no longer fits this contract.');
+          var why = !r.ok ? ((change.explain && change.explain(r)) || failText(r) || t('app.not_right_now'))
+            : (ERRORS[r.data.err] || t('app.that_change_no_longer_fits_this'));
           say((done.length ? 'Saved: ' + done.join(', ') + '. ' : '')
-            + 'Not saved — ' + change.what + ': ' + why);
+            + t('app.not_saved') + change.what + ': ' + why);
           return refresh();
         }
         done.push(change.what);
@@ -5436,27 +5460,27 @@
   var retargetArmed = null;   // the contract id whose Cancel and place again waits for its second tap
   function retargetLabel(contract) {
     var any = Number((settings().relistWaits || {}).anyMinutes) || 0;
-    return any > 0 ? 'Cancel \u2014 place again in ' + durationText(any) : 'Cancel and place again';
+    return any > 0 ? t('app.cancel_place_again_in') + durationText(any) : t('app.cancel_and_place_again');
   }
   function feeKeptText(contract) {
     return contract.creatorAnonymous === true
-      ? ', except the anonymity fee, which is not refunded' : '';
+      ? t('app.except_the_anonymity_fee_which_is') : '';
   }
   function retargetBox(contract) {
     var box = el('div', 'sheet-retarget');
     var waits = relistWaitText(contract);
-    box.appendChild(el('div', 'hint', 'To put this contract on someone else, withdraw it and place '
-      + 'it again: nobody has taken it, so everything you put up comes back'
+    box.appendChild(el('div', 'hint', t('app.to_put_this_contract_on_someone')
+      + t('app.it_again_nobody_has_taken_it')
       + feeKeptText(contract) + '.' + (waits ? ' ' + waits : '')));
     var key = 'retarget:' + contract.id;
     var armed = retargetArmed === contract.id;
     var label = retargetLabel(contract);
     var b;
     if (isBusy(key)) {
-      b = actionButton('ghost ico i-swap', label, key, 'Withdrawing\u2026');
+      b = actionButton('ghost ico i-swap', label, key, t('app.withdrawing'));
     } else {
       b = el('button', 'ghost ico i-swap' + (armed ? ' is-armed' : ''),
-        armed ? 'Tap again to withdraw it' : label);
+        armed ? t('app.tap_again_to_withdraw_it') : label);
       b.onclick = function () {
         if (retargetArmed !== contract.id) {
           retargetArmed = contract.id;
@@ -5472,12 +5496,12 @@
             var queued = (r.data && Number(r.data.queued)) || 0;
             var any = Number((settings().relistWaits || {}).anyMinutes) || 0;
             say((queued > 0
-              ? 'Contract withdrawn. Some of what you put up is waiting for you \u2014 it arrives '
-                + 'when you next have room.'
-              : 'Contract withdrawn. Everything you put up has been returned'
+              ? t('app.contract_withdrawn_some_of_what_you_2')
+                + t('app.when_you_next_have_room')
+              : t('app.contract_withdrawn_everything_you_put_up_2')
                 + feeKeptText(contract) + '.')
-              + (any > 0 ? ' You can place the new one in ' + durationText(any)
-                + ': the Place form is open for it.' : ' Place the new one here.')
+              + (any > 0 ? t('app.you_can_place_the_new_one') + durationText(any)
+                + t('app.the_place_form_is_open_for') : t('app.place_the_new_one_here'))
               + staffChecking(r.data), 'ok');
             state.dialog = null;
             state.draft = state.draft || {};
@@ -5497,9 +5521,9 @@
     var d = state.dialog;
     var contract = d.contract;
     var sheet = el('div', 'card dialog edit-sheet');
-    sheet.appendChild(el('div', 'target', 'Edit this contract'));
-    sheet.appendChild(el('div', 'reason', 'Nobody has taken it, so changes apply as soon as you '
-      + 'confirm. ' + (bandOf(contract) ? 'It has ' + bandOf(contract).text.toLowerCase() + '.' : '')));
+    sheet.appendChild(el('div', 'target', t('app.edit_this_contract')));
+    sheet.appendChild(el('div', 'reason', t('app.nobody_has_taken_it_so_changes')
+      + 'confirm. ' + (bandOf(contract) ? t('app.it_has') + bandOf(contract).text.toLowerCase() + '.' : '')));
     // The fields scroll on a short screen; Save and Cancel stay put under
     // them, as the reward editor's lines do.
     var panel = el('div', 'sheet-body');
@@ -5536,7 +5560,7 @@
         remember('reason', node);
       }
       node.id = 'sheet-' + spec.id;
-      panel.appendChild(labelled('Reason', node));
+      panel.appendChild(labelled(t('app.reason'), node));
     });
 
     // The reward: more from cash or bank here; taking back, and goods, the
@@ -5549,22 +5573,22 @@
     add.placeholder = '0';
     add.value = current('add', '');
     remember('add', add);
-    panel.appendChild(labelled('Add to the reward ($), now ' + money((contract.reward || {}).baseline),
+    panel.appendChild(labelled(t('app.add_to_the_reward_now') + money((contract.reward || {}).baseline),
       add));
     var sources = el('div', 'row target-modes sheet-source');
-    [['cash', 'From cash'], ['bank', 'From bank']].forEach(function (pair) {
+    [['cash', t('app.from_cash')], ['bank', t('app.from_bank')]].forEach(function (pair) {
       var on = (d.values.source || 'cash') === pair[0];
       var b = el('button', on ? 'primary is-chosen' : 'ghost', pair[1]);
       b.onclick = function () { d.values.source = pair[0]; d.changes = null; render(); };
       sources.appendChild(b);
     });
     panel.appendChild(sources);
-    var more = el('button', 'ghost ico i-coin sheet-reward', 'Change reward');
+    var more = el('button', 'ghost ico i-coin sheet-reward', t('app.change_reward'));
     more.onclick = function () { editReward(contract); };
     panel.appendChild(more);
     // The rest of what can be changed (giving back a later payout among
     // them), each applied at once on a contract nobody holds.
-    var rarer = el('button', 'ghost ico i-swap sheet-reward', 'More changes');
+    var rarer = el('button', 'ghost ico i-swap sheet-reward', t('app.more_changes'));
     rarer.onclick = function () { proposeChange(contract); };
 
     // The stake, as a figure: lower applies at once, higher up to the most
@@ -5576,7 +5600,7 @@
     stake.id = 'sheet-stake';
     stake.value = current('stake', Number(contract.penaltyAmount) || 0);
     remember('stake', stake);
-    panel.appendChild(labelled("Hitman's stake ($, 0 for none, at most "
+    panel.appendChild(labelled(t('app.hitmans_stake_0_for_none_at')
       + money(Math.max(stakeMostOf(contract), Number(contract.penaltyAmount) || 0)) + ')', stake));
 
     // The deadline, moved by whole hours either way.
@@ -5587,17 +5611,17 @@
     hours.placeholder = '0';
     hours.value = current('hours', '');
     remember('hours', hours);
-    panel.appendChild(labelled('Move the deadline by (hours: 2 for more, -1 for less)', hours));
+    panel.appendChild(labelled(t('app.move_the_deadline_by_hours_2'), hours));
 
     // How many may take it.
     var modes = el('div', 'row target-modes sheet-mode');
-    [['exclusive', 'One hitman'], ['competitive', 'Several at once']].forEach(function (pair) {
+    [['exclusive', t('app.one_hitman')], ['competitive', t('app.several_at_once')]].forEach(function (pair) {
       var on = (d.values.mode || contract.mode) === pair[0];
       var b = el('button', on ? 'primary is-chosen' : 'ghost', pair[1]);
       b.onclick = function () { d.values.mode = pair[0]; d.changes = null; render(); };
       modes.appendChild(b);
     });
-    panel.appendChild(labelled('Who can take it', modes));
+    panel.appendChild(labelled(t('app.who_can_take_it'), modes));
 
     // The buyout price, where the server runs buyouts (Contracts.revise
     // clamps it as placing does).
@@ -5609,13 +5633,13 @@
       buyoutField.id = 'sheet-buyout';
       buyoutField.value = current('buyout', Number(contract.bailoutAmount) || 0);
       remember('buyout', buyoutField);
-      panel.appendChild(labelled('Buyout price ($, 0 for none)', buyoutField));
+      panel.appendChild(labelled(t('app.buyout_price_0_for_none'), buyoutField));
     }
 
     // How it may be completed: alive only always; alive or dead only where
     // this server places contracts that allow a kill now.
-    var ruleChoices = [['alive', 'Alive only']];
-    if (!placingAliveOnly()) { ruleChoices.push(['either', 'Alive or dead']); }
+    var ruleChoices = [['alive', t('app.alive_only')]];
+    if (!placingAliveOnly()) { ruleChoices.push(['either', t('app.alive_or_dead')]); }
     var ruleNow = aliveOnly(contract) ? 'alive' : 'either';
     if (ruleChoices.length > 1 || ruleNow !== 'alive') {
       var rules = el('div', 'row target-modes sheet-rule');
@@ -5625,7 +5649,7 @@
         b.onclick = function () { d.values.rule = pair[0]; d.changes = null; render(); };
         rules.appendChild(b);
       });
-      panel.appendChild(labelled('How it is completed', rules));
+      panel.appendChild(labelled(t('app.how_it_is_completed'), rules));
     }
 
     // Under their name or anonymously: anonymous offered only where the
@@ -5634,9 +5658,9 @@
     if (anonNow || anonymityOffered('creator', contract.targetProtected === true)) {
       var anons = el('div', 'row target-modes sheet-anon');
       var fee = anonymityFee('creator');
-      var anonChoices = [['named', 'Under my name']];
+      var anonChoices = [['named', t('app.under_my_name')]];
       if (anonNow || anonymityOffered('creator', contract.targetProtected === true)) {
-        anonChoices.push(['anon', 'Anonymously' + (fee > 0 && !anonNow ? ' (' + money(fee) + ')' : '')]);
+        anonChoices.push(['anon', t('app.anonymously') + (fee > 0 && !anonNow ? ' (' + money(fee) + ')' : '')]);
       }
       anonChoices.forEach(function (pair) {
         var on = (d.values.anon || (anonNow ? 'anon' : 'named')) === pair[0];
@@ -5644,7 +5668,7 @@
         b.onclick = function () { d.values.anon = pair[0]; d.changes = null; render(); };
         anons.appendChild(b);
       });
-      panel.appendChild(labelled('Who it says placed it', anons));
+      panel.appendChild(labelled(t('app.who_it_says_placed_it'), anons));
     }
 
     // The target cannot be changed in place: every placing check runs on
@@ -5666,8 +5690,8 @@
     var row = el('div', 'row');
     var confirming = !!(d.changes && d.changes.length);
     var save = el('button', confirming ? 'danger' : 'primary', confirming
-      ? 'Confirm — ' + d.changes.length + (d.changes.length === 1 ? ' change' : ' changes')
-      : 'Save');
+      ? t('app.confirm_2') + d.changes.length + (d.changes.length === 1 ? ' change' : ' changes')
+      : t('app.save'));
     save.onclick = function () {
       if (confirming) {
         var changes = d.changes;
@@ -5677,12 +5701,12 @@
       }
       var worked = sheetChanges(d);
       if (worked.error) { d.error = worked.error; d.changes = null; return render(); }
-      if (!worked.changes.length) { d.error = 'Nothing is changed yet.'; return render(); }
+      if (!worked.changes.length) { d.error = t('app.nothing_is_changed_yet'); return render(); }
       d.error = null;
       d.changes = worked.changes;
       render();
     };
-    var no = el('button', 'ghost', 'Cancel');
+    var no = el('button', 'ghost', t('app.cancel'));
     no.onclick = closeDialog;
     row.appendChild(save);
     row.appendChild(no);
@@ -5702,11 +5726,11 @@
     var idle = Number(settings().exclusiveIdleMinutes) || 0;
     var attempt = Number(settings().exclusiveAttemptMinutes) || 0;
     var ways = [];
-    if (idle > 0) { ways.push('going ' + durationText(idle) + ' without going near them'); }
+    if (idle > 0) { ways.push('going ' + durationText(idle) + t('app.without_going_near_them')); }
     if (attempt > 0) {
-      ways.push((ways.length ? '' : 'going ') + durationText(attempt) + ' without an attempt');
+      ways.push((ways.length ? '' : 'going ') + durationText(attempt) + t('app.without_an_attempt'));
     }
-    return ways.length ? ways.join(', or ') + ', while they are in the city' : '';
+    return ways.length ? ways.join(', or ') + t('app.while_they_are_in_the_city') : '';
   }
 
   /* Where the stake goes, said where the hitman agrees to it. Going idle
@@ -5715,20 +5739,20 @@
      hands it to the client. */
   function stakeRule(contract) {
     var idleLoses = contract.mode === 'exclusive' && idleText(contract) !== '';
-    return (idleLoses ? 'Walk away, go idle or run out of time'
-      : 'Walk away or run out of time') + ' and your stake goes to the person who placed it.';
+    return (idleLoses ? t('app.walk_away_go_idle_or_run')
+      : t('app.walk_away_or_run_out_of')) + t('app.and_your_stake_goes_to_the');
   }
 
   function exclusiveRule(contract) {
     var idle = idleText(contract);
     if (!idle) { return ''; }
     if (contract.mode === 'exclusive') {
-      return ' Exclusive: ' + idle + ' puts it back on the board, and you cannot take it '
+      return ' Exclusive: ' + idle + t('app.puts_it_back_on_the_board')
         + 'again.';
     }
     // A competitive contract is released from only while it is full.
-    return ' While it is full, ' + idle + ' gives your place'
-      + (Number(contract.penaltyAmount) > 0 ? ' and your stake' : '') + ' up.';
+    return t('app.while_it_is_full') + idle + t('app.gives_your_place')
+      + (Number(contract.penaltyAmount) > 0 ? t('app.and_your_stake') : '') + t('app.up');
   }
 
   /* The same rule, on the hitman's own card under Mine: where they look
@@ -5738,15 +5762,15 @@
     if (!idle) { return null; }
     var staked = Number(contract.penaltyAmount) > 0;
     if (contract.mode === 'exclusive') {
-      return el('div', 'hint', 'Exclusive: ' + idle + ' puts it back on the board, and it '
-        + 'is not yours to take again.' + (staked ? ' ' + stakeRule(contract) : ''));
+      return el('div', 'hint', 'Exclusive: ' + idle + t('app.puts_it_back_on_the_board_2')
+        + t('app.is_not_yours_to_take_again') + (staked ? ' ' + stakeRule(contract) : ''));
     }
     // On a competitive card only while it is full, which is when it applies.
     if ((Number(contract.hitmenActive) || 0) < (Number(contract.hitmenMax) || Infinity)) {
       return null;
     }
-    return el('div', 'hint', 'While it is full, ' + idle + ' gives your place'
-      + (staked ? ' and your stake' : '') + ' up.');
+    return el('div', 'hint', t('app.while_it_is_full_2') + idle + t('app.gives_your_place')
+      + (staked ? t('app.and_your_stake') : '') + t('app.up'));
   }
 
   /* What accepting echoes of the card: the anonymity fee and its account
@@ -5766,20 +5790,20 @@
   function acceptMovedText(r) {
     var d = r.data || {};
     if (r.err === 'rule_changed' && typeof d.fulfilment === 'string') {
-      return 'The person who placed it changed how it is completed: '
-        + (d.fulfilment === 'either' ? 'a kill completes it as well as a live handover.'
-          : 'it only pays when the target is brought in alive, and a kill does not complete it.')
-        + ' Nothing was taken. Check the card and accept again if you still want it.';
+      return t('app.the_person_who_placed_it_changed')
+        + (d.fulfilment === 'either' ? t('app.a_kill_completes_it_as_well')
+          : t('app.it_only_pays_when_the_target'))
+        + t('app.nothing_was_taken_check_the_card');
     }
     if (r.err === 'terms_changed' && typeof d.creatorAnonymous === 'boolean') {
-      return 'The person who placed it changed whether it is placed anonymously: it is now '
-        + (d.creatorAnonymous ? 'anonymous' : 'under their name')
-        + '. Nothing was taken. Check the card and accept again if you still want it.';
+      return t('app.the_person_who_placed_it_changed_2')
+        + (d.creatorAnonymous ? 'anonymous' : t('app.under_their_name'))
+        + t('app.nothing_was_taken_check_the_card_2');
     }
     if (r.err === 'terms_changed' && typeof d.bailoutAmount === 'number') {
-      return 'The person who placed it changed the buyout: it is now '
+      return t('app.the_person_who_placed_it_changed_3')
         + (d.bailoutAmount > 0 ? money(d.bailoutAmount) : 'none')
-        + '. Nothing was taken. Check the card and accept again if you still want it.';
+        + t('app.nothing_was_taken_check_the_card_2');
     }
     return null;
   }
@@ -5866,21 +5890,21 @@
           if (moved) { return say(moved); }
           if (r.err === 'insufficient_funds' && (stake > 0 || fee > 0)) {
             return say(stake > 0 && short.part !== 'fee'
-              ? 'You need ' + money(stake) + ' in your bank or in your cash for the '
-                + 'stake \u2014 it is not split between them'
-                + (fee > 0 ? ', plus ' + money(fee) + ' in your ' + from
-                  + ' for anonymity' : '') + '.'
-              : 'Anonymity costs ' + money(fee) + ' from your ' + from
-                + ', and it does not hold that much.');
+              ? t('app.you_need') + money(stake) + t('app.in_your_bank_or_in_your')
+                + t('app.stake_it_is_not_split_between')
+                + (fee > 0 ? ', plus ' + money(fee) + t('app.in_your') + from
+                  + t('app.for_anonymity') : '') + '.'
+              : t('app.anonymity_costs') + money(fee) + t('app.from_your') + from
+                + t('app.and_it_does_not_hold_that'));
           }
           // Holding as many as the server allows. The shared wording said
           // "too many", with no number and nothing to do about it.
           if (r.err === 'limit_reached') {
             var most = Number(r.data && r.data.max);
-            return say('You are already working '
+            return say(t('app.you_are_already_working')
               + (most > 0 ? most + ' contract' + (most === 1 ? '' : 's')
-                + ', the most this server allows' : 'as many contracts as this server allows')
-              + '. Finish one under Mine before you take another.');
+                + t('app.the_most_this_server_allows') : t('app.as_many_contracts_as_this_server'))
+              + t('app.finish_one_under_mine_before_you'));
           }
           return fail(r);
         }
@@ -5893,12 +5917,12 @@
         // contract whose anonymity this hitman already paid for.
         var charged = (r.data && r.data.charged) || {};
         var cost = Number(charged.fee) > 0
-          ? ' Anonymity cost ' + money(Number(charged.fee)) + ' from your '
+          ? t('app.anonymity_cost') + money(Number(charged.fee)) + t('app.from_your')
             + (charged.account === 'cash' ? 'cash' : 'bank') + '.' : '';
-        say(recorded ? 'Contract accepted, anonymously.' + cost
-          : anonymous ? 'Contract accepted under your name: the person who placed it '
-            + 'already knows you on this one.'
-          : 'Contract accepted.', 'ok');
+        say(recorded ? t('app.contract_accepted_anonymously') + cost
+          : anonymous ? t('app.contract_accepted_under_your_name_the')
+            + t('app.already_knows_you_on_this_one')
+          : t('app.contract_accepted'), 'ok');
         // Straight to it under Mine, first and marked: the next thing a
         // hitman does is work it, and the board only said it was taken.
         state.focus = contract.id;
@@ -5928,20 +5952,20 @@
       // has already been advised" read today's switch, not whether a
       // bulletin went for this contract.
       var warning = warned
-        ? 'This contract is on ' + protectedWords(contract.targetProtectedAs).noun + '.'
+        ? t('app.this_contract_is_on') + protectedWords(contract.targetProtectedAs).noun + '.'
           + (advised('accepted')
-            ? ' Accepting alerts every officer in the city that someone is coming.' : '') + ' '
+            ? t('app.accepting_alerts_every_officer_in_the') : '') + ' '
         : '';
       state.dialog = {
         kind: 'choice',
-        question: warned ? 'Take it anyway' + (offered ? ', anonymously?' : '?')
-          : offered ? 'Take this one anonymously?' : 'Take this contract?',
-        detail: warning + (offered ? 'The person who placed it will see an operative, not your name.'
-          : 'The person who placed it will see your name.')
+        question: warned ? t('app.take_it_anyway') + (offered ? t('app.anonymously_2') : '?')
+          : offered ? t('app.take_this_one_anonymously') : t('app.take_this_contract'),
+        detail: warning + (offered ? t('app.the_person_who_placed_it_will')
+          : t('app.the_person_who_placed_it_will_2'))
           // And the target too, where the server shows named operatives to
           // them (Config.TargetClasses.default.ShowOperativeNames).
           + (namesToTarget(contract.targetProtected === true)
-            ? (offered ? ' Under your name, the target sees it too.' : ' So will the target.')
+            ? (offered ? t('app.under_your_name_the_target_sees') : t('app.so_will_the_target'))
             : '')
           // What finishes it, before it is taken: the card's chip says it,
           // and this is where a hitman agrees to the terms. One used to
@@ -5949,11 +5973,11 @@
           // To whom, too: "delivering the target alive" left a hitman asking
           // where, and "the client" did not tell them.
           + (aliveOnly(contract)
-            ? ' This contract only pays when you bring the target, alive, to the '
-              + 'person who placed it. Killing them does not count.'
+            ? t('app.this_contract_only_pays_when_you')
+              + t('app.person_who_placed_it_killing_them')
             : '')
           + (shownFee > 0
-            ? ' Anonymity costs ' + money(shownFee) + ' from your '
+            ? t('app.anonymity_costs_2') + money(shownFee) + t('app.from_your')
               + feeAccount + '.'
             : '')
           // The organisation's cut, as the card said it.
@@ -5961,19 +5985,19 @@
           // Taken whole from one account, which nothing said until a
           // player with half in each was refused.
           + (contract.penaltyAmount > 0
-            ? ' Accepting stakes ' + money(contract.penaltyAmount)
-              + ' of yours, taken whole from your bank or whole from your cash,'
-              + ' returned when you finish. ' + stakeRule(contract)
+            ? t('app.accepting_stakes') + money(contract.penaltyAmount)
+              + t('app.of_yours_taken_whole_from_your')
+              + t('app.returned_when_you_finish') + stakeRule(contract)
             : '')
           // How much time that is. The stake is forfeit to the deadline, and
           // nothing on the dialog said when it was.
-          + (bandOf(contract) ? ' It has ' + bandOf(contract).text.toLowerCase() + '.' : '')
+          + (bandOf(contract) ? t('app.it_has_2') + bandOf(contract).text.toLowerCase() + '.' : '')
           + exclusiveRule(contract),
         options: offered ? [
-          { label: 'Anonymously', primary: true, run: function () { take(true); } },
-          { label: 'Under my name', run: function () { take(false); } }
+          { label: t('app.anonymously'), primary: true, run: function () { take(true); } },
+          { label: t('app.under_my_name'), run: function () { take(false); } }
         ] : [
-          { label: 'Accept', primary: true, run: function () { take(false); } }
+          { label: t('app.accept'), primary: true, run: function () { take(false); } }
         ],
         // Drawn again from the settings when they change while it is open
         // (readBoard), so the fee it shows, and sends back, is the fee now.
@@ -6012,22 +6036,22 @@
     // A contract a kill can finish too keeps the words it had.
     var kidnap = settings().kidnap || {};
     var within = metres(armed);
-    var deliver = (mustRestrain() ? 'restrain them or get them into your vehicle, bring them '
-      : 'bring them, alive and conscious, ')
-      + (within ? 'within ' + within + ' m of' : 'to')
-      + ' the person who placed it, tap Deliver alive and hold '
-      + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : 'until it finishes.');
+    var deliver = (mustRestrain() ? t('app.restrain_them_or_get_them_into')
+      : t('app.bring_them_alive_and_conscious'))
+      + (within ? 'within ' + within + t('app.m_of') : 'to')
+      + t('app.the_person_who_placed_it_tap')
+      + (kidnap.seconds ? 'for ' + kidnap.seconds + 's.' : t('app.until_it_finishes'));
     // With kill photos off (settings().killPhotos) nothing is photographed:
     // Verify kill is checked at the scene.
-    var text = 'Kill: a downed target is not dead. Finish them, then stand over '
+    var text = t('app.kill_a_downed_target_is_not')
         + (settings().killPhotos === false
-          ? 'the body and tap Verify kill before they are revived. '
-          : 'the body and tap Verify kill to photograph it before they are revived. ')
+          ? t('app.the_body_and_tap_verify_kill')
+          : t('app.the_body_and_tap_verify_kill_2'))
         + 'Alive: ' + deliver;
     // Nobody can be met who cannot be found.
     if (contract.creatorAnonymous && settings().relay !== false) {
-      text += ' Your client is anonymous. Use Message to agree where to meet '
-        + 'before you grab them.';
+      text += t('app.your_client_is_anonymous_use_message')
+        + t('app.before_you_grab_them');
     }
     return el('div', 'hint', text);
   }
@@ -6051,8 +6075,8 @@
   // "within 12 m of you and the target", for a missing placer.
   function nearPlacer(radius) {
     var m = metres(radius);
-    return m ? 'within ' + m + ' m of you and the target'
-      : 'right there with you and the target';
+    return m ? 'within ' + m + t('app.m_of_you_and_the_target')
+      : t('app.right_there_with_you_and_the');
   }
 
   /* The radius of a handover running on this contract, as its countdown
@@ -6080,23 +6104,23 @@
   function deliverAliveSteps(radius) {
     var m = metres(radius);
     var seconds = Number((settings().kidnap || {}).seconds);
-    var hold = (seconds > 0 ? 'for ' + seconds + ' seconds' : 'until it finishes');
+    var hold = (seconds > 0 ? 'for ' + seconds + ' seconds' : t('app.until_it_finishes_2'));
     // With the placer's Confirm handover on, the hold is followed by their tap.
     if ((settings().kidnap || {}).confirm === true) {
-      hold += ', then the person who placed it confirms the handover and it pays once they do';
+      hold += t('app.then_the_person_who_placed_it');
     }
     if (!mustRestrain()) {
-      return 'Bring them in alive: take them to the person who placed this contract, '
-        + (m ? 'stay within ' + m + ' m of that person with them' : 'stay close to that person with them')
-        + ', tap Deliver alive and hold ' + hold + '. They have to stay alive, conscious and '
-        + 'on their feet the whole time. Killing them does not count \u2014 they respawn and '
-        + 'the contract stays open.';
+      return t('app.bring_them_in_alive_take_them')
+        + (m ? t('app.stay_within') + m + t('app.m_of_that_person_with_them') : t('app.stay_close_to_that_person_with'))
+        + t('app.tap_deliver_alive_and_hold') + hold + t('app.they_have_to_stay_alive_conscious')
+        + t('app.on_their_feet_the_whole_time')
+        + t('app.the_contract_stays_open');
     }
-    return 'Bring them in alive: cuff them or get them into your vehicle, take them '
-      + 'to the person who placed this contract, '
-      + (m ? 'get within ' + m + ' m of that person' : 'get close to that person')
-      + ', tap Deliver alive and hold ' + hold
-      + '. Killing them does not count \u2014 they respawn and the contract stays open.';
+    return t('app.bring_them_in_alive_cuff_them')
+      + t('app.to_the_person_who_placed_this')
+      + (m ? t('app.get_within') + m + t('app.m_of_that_person') : t('app.get_close_to_that_person'))
+      + t('app.tap_deliver_alive_and_hold') + hold
+      + t('app.killing_them_does_not_count_they');
   }
 
   // Who that person is, as far as this hitman may know: an anonymous one has
@@ -6104,27 +6128,27 @@
   function placerLine(contract) {
     var relay = settings().relay !== false;
     if (contract.creatorAnonymous) {
-      return relay ? ' The person who placed it is anonymous \u2014 use Message to '
-        + 'agree where to meet.' : '';
+      return relay ? t('app.the_person_who_placed_it_is')
+        + t('app.agree_where_to_meet') : '';
     }
     if (contract.creatorName) {
-      return ' The person who placed it is ' + contract.creatorName
-        + (relay ? ' \u2014 use Message to agree where to meet.' : '.');
+      return t('app.the_person_who_placed_it_is_2') + contract.creatorName
+        + (relay ? t('app.use_message_to_agree_where_to') : '.');
     }
     return '';
   }
 
   // The kill refusal on such a contract, with what to do instead.
   function aliveOnlyRefusal() {
-    return 'This contract only pays when you bring the target, alive, to the '
-      + 'person who placed it. ' + deliverAliveSteps();
+    return t('app.this_contract_only_pays_when_you_2')
+      + t('app.person_who_placed_it') + deliverAliveSteps();
   }
 
   // The placer's own card once a hitman has taken it, and the phone notice.
   function placerTakenText() {
-    return 'A hitman took your contract. They\u2019ll bring the target to you alive '
-      + '\u2014 stay in the city' + (settings().relay !== false
-        ? ' and watch your messages.' : '.');
+    return t('app.a_hitman_took_your_contract_they')
+      + t('app.stay_in_the_city') + (settings().relay !== false
+        ? t('app.and_watch_your_messages') : '.');
   }
 
   /* ---------- the kill photo viewfinder ----------
@@ -6240,7 +6264,7 @@
       var shade = el('div', 'viewfinder');
       shade.id = 'viewfinder';
       shade.appendChild(el('div', 'viewfinder-hint',
-        'Point the phone at the body and take the photo.'));
+        t('app.point_the_phone_at_the_body')));
       var frame = el('div', 'viewfinder-frame');
       var canvas = document.createElement('canvas');
       frame.appendChild(canvas);
@@ -6249,9 +6273,9 @@
       // Not live until the client says the rear camera is on. Until then the
       // render shows the ordinary game camera, which has the hitman in it,
       // and a quick tap sent the client that.
-      var shutter = el('button', 'primary', 'Take photo');
+      var shutter = el('button', 'primary', t('app.take_photo'));
       shutter.disabled = true;
-      var cancel = el('button', 'ghost', 'Cancel');
+      var cancel = el('button', 'ghost', t('app.cancel'));
       row.appendChild(shutter);
       row.appendChild(cancel);
       shade.appendChild(row);
@@ -6308,7 +6332,7 @@
         if (!gameRender || shutter.disabled) { return; }
         shutter.disabled = true;
         cancel.disabled = true;
-        shutter.textContent = 'Sending\u2026';
+        shutter.textContent = t('app.sending');
         var taking = gameRender;
         Promise.resolve().then(function () {
           return taking.takePhoto();
@@ -6397,40 +6421,40 @@
            lapsed first in the commonest case. */
         var left = Number(r.data && r.data.secondsLeft);
         var wait = left > 0
-          ? ' It counts if they are still lying dead in ' + waitText(left)
-            + ': tap Verify kill again then.'
+          ? t('app.it_counts_if_they_are_still') + waitText(left)
+            + t('app.tap_verify_kill_again_then')
           : '';
         var rule = r.data && r.data.rule;
         var here = {
-          target_just_up: 'They had only just got back up when you killed them, '
-            + 'so the kill does not count yet.' + wait,
-          target_just_on: 'They had only just come into the city, so the kill '
-            + 'does not count yet.' + wait,
+          target_just_up: t('app.they_had_only_just_got_back')
+            + t('app.so_the_kill_does_not_count') + wait,
+          target_just_on: t('app.they_had_only_just_come_into')
+            + t('app.does_not_count_yet') + wait,
           kill_too_soon: rule === 'target_just_on'
-            ? 'They had only just come into the city, so this kill does not count.'
-            : 'They had only just got back up, so this kill does not count.',
-          target_protected: 'They are protected right now, so the kill does not '
+            ? t('app.they_had_only_just_come_into_2')
+            : t('app.they_had_only_just_got_back_2'),
+          target_protected: t('app.they_are_protected_right_now_so')
             + 'count.',
-          rate_limited: 'Too many attempts just now. Wait a few seconds and '
-            + (noKill ? 'try again.'
-              : noPhoto ? 'tap Verify kill again; the kill is still yours to claim.'
-                : 'photograph them again; the kill is still yours to claim.')
+          rate_limited: t('app.too_many_attempts_just_now_wait')
+            + (noKill ? t('app.try_again_2')
+              : noPhoto ? t('app.tap_verify_kill_again_the_kill')
+                : t('app.photograph_them_again_the_kill_is'))
         };
         // The refusals that speak of a photo, said for a kill checked at
         // the scene where no photo is taken.
         if (noPhoto) {
-          here.no_kill_to_verify = 'No kill on this contract is waiting to be verified. '
-            + 'Down is not dead: if they are on the ground, finish them. Then stand '
-            + 'over the body and tap Verify kill, soon after the kill. If you only '
-            + 'just finished them, give it a few seconds and try again.';
-          here.photo_too_far = 'You are too far from the body. Stand over them and tap '
-            + 'Verify kill again.';
-          here.photo_revived = 'They were brought back before you verified the kill, so '
-            + 'this is not an elimination any more.';
-          here.photo_still_down = 'They are down, not dead. Finish them, then tap Verify '
+          here.no_kill_to_verify = t('app.no_kill_on_this_contract_is')
+            + t('app.down_is_not_dead_if_they')
+            + t('app.over_the_body_and_tap_verify')
+            + t('app.just_finished_them_give_it_a');
+          here.photo_too_far = t('app.you_are_too_far_from_the')
+            + t('app.verify_kill_again');
+          here.photo_revived = t('app.they_were_brought_back_before_you')
+            + t('app.this_is_not_an_elimination_any');
+          here.photo_still_down = t('app.they_are_down_not_dead_finish')
             + 'kill.';
-          here.token_invalid = 'That kill is no longer the one to verify. Stand over the '
-            + 'body and tap Verify kill again.';
+          here.token_invalid = t('app.that_kill_is_no_longer_the')
+            + t('app.body_and_tap_verify_kill_again');
         }
         // Kept on the card as well as said: the notice is read by someone
         // just back from the camera, and it is the only thing that says
@@ -6449,11 +6473,11 @@
       var owed = r.data && Number(r.data.pending) > 0;
       // Held for proof of intent (Config.Roleplay.ProofOfIntent): not room.
       var held = r.data && r.data.intentHold;
-      say((held ? intentHoldText(held, 'Verified.')
+      say((held ? intentHoldText(held, t('app.verified'))
         : owed
-        ? 'Verified. Some of the reward would not fit and is being held for '
-          + 'you \u2014 make room and it will be handed over.' + staffChecking(r.data)
-        : 'Verified. Payment released.' + staffChecking(r.data)) + reputationText(r.data), 'ok');
+        ? t('app.verified_some_of_the_reward_would')
+          + t('app.you_make_room_and_it_will') + staffChecking(r.data)
+        : t('app.verified_payment_released') + staffChecking(r.data)) + reputationText(r.data), 'ok');
       refresh();
     });
   }
@@ -6467,11 +6491,11 @@
       if (!r.ok) { return fail(r); }
       var owed = r.data && Number(r.data.pending) > 0;
       var held = r.data && r.data.intentHold;
-      say((held ? intentHoldText(held, 'Handed over.')
+      say((held ? intentHoldText(held, t('app.handed_over'))
         : owed
-        ? 'Handed over. Some of the reward would not fit and is being held for '
-          + 'you \u2014 make room and it will be handed over.' + staffChecking(r.data)
-        : 'Handed over. Payment released.' + staffChecking(r.data)) + reputationText(r.data), 'ok');
+        ? t('app.handed_over_some_of_the_reward')
+          + t('app.you_make_room_and_it_will') + staffChecking(r.data)
+        : t('app.handed_over_payment_released') + staffChecking(r.data)) + reputationText(r.data), 'ok');
       refresh();
     });
   }
@@ -6484,42 +6508,42 @@
         // The person who placed it, by what they are to this hitman. An
         // anonymous one has to be found first, and Message is how.
         var findThem = contract.creatorAnonymous && settings().relay !== false
-          ? ' They are anonymous \u2014 use Message to agree where to meet.' : '';
+          ? t('app.they_are_anonymous_use_message_to') : '';
         var reasons = {
           // On a contract only a handover completes, a dead target is the
           // kill that does not count: said, with what still works.
-          target_not_conscious: 'The target must be alive and conscious.'
-            + (aliveOnly(contract) ? ' Killing them does not count \u2014 once they '
-              + 'are back on their feet, bring them in alive.' : ''),
-          target_too_hurt: 'The target is too badly hurt to hand over. Get them '
-            + 'patched up first.',
-          not_coerced: 'The target must be restrained or in your vehicle.',
+          target_not_conscious: t('app.the_target_must_be_alive_and')
+            + (aliveOnly(contract) ? t('app.killing_them_does_not_count_once')
+              + t('app.are_back_on_their_feet_bring') : ''),
+          target_too_hurt: t('app.the_target_is_too_badly_hurt')
+            + t('app.patched_up_first'),
+          not_coerced: t('app.the_target_must_be_restrained_or'),
           // Said as the rule, which is the same whether they are offline or
           // only far away: an anonymous one absent is told as this too
           // (Kidnap.conditionsMet), so neither may be guessed from it.
-          creator_too_far: 'The person who placed this contract must be online and '
-            + nearPlacer() + '. Take the target to them, then tap Deliver alive '
+          creator_too_far: t('app.the_person_who_placed_this_contract_2')
+            + nearPlacer() + t('app.take_the_target_to_them_then')
             + 'again.' + findThem,
-          target_too_far: 'Keep the target close.',
+          target_too_far: t('app.keep_the_target_close'),
           // Another instance (an interior, an apartment) is somewhere
           // else, whatever the coordinates say.
-          not_together: 'You and the target must be in the same place, not one '
-            + 'of you inside somewhere the other is not.',
+          not_together: t('app.you_and_the_target_must_be')
+            + t('app.of_you_inside_somewhere_the_other'),
           // A live delivery skips the rule about getting back up, so that is
           // never why; it said so to hitmen holding somebody fresh in town.
-          target_just_on: 'They have only just come into the city. A handover '
-            + 'will not count until they have been here a few minutes.',
-          target_protected: 'They are protected from contracts right now, so a '
-            + 'handover will not count.',
-          party_offline: 'Everyone has to be online for a handover: the person who '
-            + 'placed this contract must be in the city and ' + nearPlacer() + '.',
-          limit_reached: 'Too many handovers in progress. Try shortly.'
+          target_just_on: t('app.they_have_only_just_come_into')
+            + t('app.will_not_count_until_they_have'),
+          target_protected: t('app.they_are_protected_from_contracts_right')
+            + t('app.handover_will_not_count'),
+          party_offline: t('app.everyone_has_to_be_online_for')
+            + t('app.placed_this_contract_must_be_in') + nearPlacer() + '.',
+          limit_reached: t('app.too_many_handovers_in_progress_try')
         };
         // With how long, which the reply carries (failText).
         if (r.err === 'rate_limited') { return fail(r); }
-        return say(reasons[r.err] || ERRORS[r.err] || 'Cannot start the handover.');
+        return say(reasons[r.err] || ERRORS[r.err] || t('app.cannot_start_the_handover'));
       }
-      say('Hold position.', 'caution');
+      say(t('app.hold_position_2'), 'caution');
       pollCountdown(contract.id);
     });
   }
@@ -6602,7 +6626,7 @@
     var tick = function () {
       if (Date.now() > deadline) {
         endCountdown(id);
-        say('Lost track of the handover. Your contracts show how it ended.');
+        say(t('app.lost_track_of_the_handover_your'));
         refresh();
         return;
       }
@@ -6644,9 +6668,9 @@
           endCountdown(id);
           say(r.err === 'no_handover' || r.err === 'not_found'
                 || r.err === 'bad_state'
-            ? 'The handover ended. Get them back to the person who placed this '
-              + 'contract and try again.'
-            : (ERRORS[r.err] || 'Lost track of the handover.'));
+            ? t('app.the_handover_ended_get_them_back')
+              + t('app.contract_and_try_again')
+            : (ERRORS[r.err] || t('app.lost_track_of_the_handover')));
           refresh();
           return;
         }
@@ -6692,7 +6716,7 @@
   function staffChecking(data) {
     var parked = data && (data.parked === true || Number(data.parked) > 0);
     return parked
-      ? ' Part of it could not be confirmed; staff have been asked to check it.'
+      ? t('app.part_of_it_could_not_be')
       : '';
   }
 
@@ -6710,66 +6734,66 @@
   function handoverEnded(ended) {
     if (ended.outcome === 'paid') {
       return say(ended.pending
-        ? 'Delivered. Some of the reward would not fit and is being held for '
-          + 'you \u2014 make room and it will be handed over.' + staffChecking(ended)
-        : 'Delivered. Payment released.' + staffChecking(ended), 'ok');
+        ? t('app.delivered_some_of_the_reward_would')
+          + t('app.you_make_room_and_it_will') + staffChecking(ended)
+        : t('app.delivered_payment_released') + staffChecking(ended), 'ok');
     }
     if (ended.outcome === 'closed') {
-      return say('The contract closed before the handover finished.');
+      return say(t('app.the_contract_closed_before_the_handover'));
     }
     if (ended.outcome === 'refused') {
       // Stopped by a staff freeze, mid-countdown or as it was being paid:
       // "finished" was untrue of the first.
       if (ended.reason === 'contract_frozen') {
-        return say('The handover was not paid. ' + ERRORS.contract_frozen);
+        return say(t('app.the_handover_was_not_paid') + ERRORS.contract_frozen);
       }
       var refused = {
-        bad_state: 'The contract closed before the handover finished.',
-        locked: 'Another payout on this contract was being settled at the same '
-          + 'moment, and it got there first.',
-        target_just_on: 'They had only just come into the city, so the '
-          + 'handover does not count.',
-        target_protected: 'They were protected from contracts, so the handover '
-          + 'does not count.'
+        bad_state: t('app.the_contract_closed_before_the_handover'),
+        locked: t('app.another_payout_on_this_contract_was')
+          + t('app.moment_and_it_got_there_first'),
+        target_just_on: t('app.they_had_only_just_come_into_3')
+          + t('app.handover_does_not_count'),
+        target_protected: t('app.they_were_protected_from_contracts_so')
+          + t('app.does_not_count')
       };
-      return say('The handover finished but was not paid. '
+      return say(t('app.the_handover_finished_but_was_not')
         + (refused[ended.reason] || ERRORS[ended.reason] || ''));
     }
     // The two that mean the person who placed the contract was missing say
     // so, with how close they have to be. "Your client did not arrive"
     // named somebody a hitman may never have been told about.
     var failed = {
-      party_offline: 'Someone the handover needed went offline. The person who placed '
-        + 'this contract must be online and ' + nearPlacer() + '.',
-      creator_too_far: 'The person who placed this contract did not arrive in time. '
-        + 'They must be online and ' + nearPlacer() + ' for the whole handover.',
-      target_not_conscious: 'The target went down. A handover has to be alive.',
-      target_too_hurt: 'The target got too badly hurt. Get them patched up first.',
-      not_together: 'You and the target were not in the same place.',
-      contract_locked: 'The contract was stuck settling another payout.'
+      party_offline: t('app.someone_the_handover_needed_went_offline')
+        + t('app.this_contract_must_be_online_and') + nearPlacer() + '.',
+      creator_too_far: t('app.the_person_who_placed_this_contract_3')
+        + t('app.they_must_be_online_and') + nearPlacer() + t('app.for_the_whole_handover'),
+      target_not_conscious: t('app.the_target_went_down_a_handover'),
+      target_too_hurt: t('app.the_target_got_too_badly_hurt'),
+      not_together: t('app.you_and_the_target_were_not'),
+      contract_locked: t('app.the_contract_was_stuck_settling_another')
     };
     // The placer's Confirm handover (Config.Kidnap.PlacerConfirms): a
     // decline and a window that ran out read the same.
     if (ended.reason === 'not_confirmed') {
-      return say('The person who placed this contract did not confirm the handover, so nothing '
-        + 'was paid. The contract is still open: you can tap Deliver alive again shortly.');
+      return say(t('app.the_person_who_placed_this_contract_4')
+        + t('app.was_paid_the_contract_is_still'));
     }
-    return say('The handover failed. ' + (failed[ended.reason]
-      || 'You lost hold of the target.') + ' Get them back to the person who placed '
-      + 'this contract and try again in a minute.');
+    return say(t('app.the_handover_failed') + (failed[ended.reason]
+      || t('app.you_lost_hold_of_the_target')) + t('app.get_them_back_to_the_person')
+      + t('app.this_contract_and_try_again_in'));
   }
 
   /* "about 2 minutes", for the wait a hitman on the contract still has;
      null on a server that does not make them wait. */
   function buyoutWait(seconds) {
     if (!(seconds > 0)) { return null; }
-    return seconds < 60 ? 'under a minute'
+    return seconds < 60 ? t('app.under_a_minute')
       : 'about ' + durationText(Math.ceil(seconds / 60));
   }
 
   /* What every buyout says, in its dialog and once paid (spec §14.40):
      closing one contract is not a promise that none other is out. */
-  var NOT_THE_LAST = 'Closing this one does not mean nobody else is after you.';
+  var NOT_THE_LAST = t('app.closing_this_one_does_not_mean');
 
   function bailout(contract) {
     var amount = money(contract.bailoutAmount);
@@ -6784,14 +6808,14 @@
        read as safe at once. Not "it closes now" otherwise: a hitman may take
        it between this dialog and the tap, and the reply says which. */
     var wait = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
-    ask('Pay ' + amount + ' to close this contract?',
-        'The person who placed it gets their money back, along with your payment. It is paid in '
-          + 'full from your bank, or from your cash if the bank cannot cover it '
-          + '\u2014 never split between them. '
+    ask('Pay ' + amount + t('app.to_close_this_contract'),
+        t('app.the_person_who_placed_it_gets')
+          + t('app.full_from_your_bank_or_from')
+          + t('app.never_split_between_them')
           + (wait && Number(contract.hitmenActive) > 0
-            ? 'A hitman is already on you and gets ' + wait + ' more to finish it. '
-              + 'If they do, your ' + amount + ' comes back.'
-            : 'If nobody has taken it yet, it closes at once.')
+            ? t('app.a_hitman_is_already_on_you') + wait + t('app.more_to_finish_it')
+              + t('app.if_they_do_your') + amount + t('app.comes_back')
+            : t('app.if_nobody_has_taken_it_yet'))
           // §14.40: another may be out, inside its wait and not shown yet.
           + ' ' + NOT_THE_LAST,
         function () {
@@ -6803,16 +6827,16 @@
               if (!r.ok) {
                 // The placer changed the price under the dialog.
                 if (r.err === 'terms_changed' && r.data && typeof r.data.amount === 'number') {
-                  say('The buyout now costs ' + money(r.data.amount) + '. Nothing was taken.');
+                  say(t('app.the_buyout_now_costs') + money(r.data.amount) + t('app.nothing_was_taken'));
                   return refresh();
                 }
                 // The figure the server asked for, when it says: the price
                 // can have been re-set under the dialog.
                 if (r.err === 'insufficient_funds') {
                   var need = Number(r.data && r.data.need) > 0 ? money(r.data.need) : amount;
-                  return say('Your bank or your cash has to cover the full ' + need
-                    + ' on its own \u2014 it is never split. Move it into one '
-                    + 'account and try again.');
+                  return say(t('app.your_bank_or_your_cash_has') + need
+                    + t('app.on_its_own_it_is_never')
+                    + t('app.account_and_try_again'));
                 }
                 return fail(r);
               }
@@ -6821,9 +6845,9 @@
               var queued = !!(r.data && r.data.queued);
               var waited = buyoutWait(Number(settings().buyoutDelaySeconds) || 0);
               say((queued
-                ? 'Paid. It closes in ' + (waited || 'a moment')
-                  + '. You are still a target until then.'
-                : 'Paid. Contract closed.') + ' ' + NOT_THE_LAST, 'ok');
+                ? t('app.paid_it_closes_in') + (waited || t('app.a_moment'))
+                  + t('app.you_are_still_a_target_until')
+                : t('app.paid_contract_closed')) + ' ' + NOT_THE_LAST, 'ok');
               // Held until the card is read again, so Buy out does not come
               // back live on a contract that is paid for.
               return refresh();
@@ -6848,7 +6872,7 @@
     asList(found).forEach(function (f) {
       if (!f || !f.text) { return; }
       node.appendChild(el('div', 'informant-answer ico i-search',
-        'Informant: ' + (f.label || 'An operative') + ' is ' + f.text));
+        'Informant: ' + (f.label || t('app.an_operative')) + ' is ' + f.text));
     });
   }
 
@@ -6877,54 +6901,54 @@
   function informantButton(contract) {
     var key = 'informant:' + contract.id;
     if (isBusy(key)) {
-      return actionButton('ghost ico i-search', 'Buy informant data', key, 'Buying…');
+      return actionButton('ghost ico i-search', t('app.buy_informant_data'), key, t('app.buying'));
     }
-    var buy = el('button', 'ghost ico i-search', 'Buy informant data');
+    var buy = el('button', 'ghost ico i-search', t('app.buy_informant_data'));
     buy.onclick = function () { buyInformant(contract); };
     return buy;
   }
 
   /* What the last-one and cap lines say, from the viewer's own count. */
   function lookUpsLeftText(left, most) {
-    if (Number(left) === 1) { return ' This is your last one on this contract.'; }
+    if (Number(left) === 1) { return t('app.this_is_your_last_one_on'); }
     if (Number(most) > 0) {
-      return ' You can ask about one contract ' + Number(most)
-        + (Number(most) === 1 ? ' time in total.' : ' times in total.');
+      return t('app.you_can_ask_about_one_contract') + Number(most)
+        + (Number(most) === 1 ? t('app.time_in_total') : t('app.times_in_total'));
     }
     return '';
   }
 
   function buyInformant(contract) {
     var rules = settings().informant;
-    if (!rules) { return say('This server does not run informants.'); }
+    if (!rules) { return say(t('app.this_server_does_not_run_informants')); }
     // A later look-up's own price (Config.Intel.SecondTry).
     if (typeof contract.informantCost === 'number') {
       rules = Object.assign({}, rules, { cost: contract.informantCost });
     }
     var shown = { cost: Number(rules.cost) || 0,
                   account: rules.account === 'cash' ? 'cash' : 'bank' };
-    var detail = 'Your informant asks around about the one you pick. There is a '
-      + chanceOf(rules.chance) + ' they find out who it is, and '
+    var detail = t('app.your_informant_asks_around_about_the')
+      + chanceOf(rules.chance) + t('app.they_find_out_who_it_is')
       + (shown.cost > 0
-        ? 'the ' + money(shown.cost) + ' from your ' + shown.account + ' is paid either way.'
-        : 'it is free on this server.')
-      + ' Nobody is told you asked.'
+        ? 'the ' + money(shown.cost) + t('app.from_your') + shown.account + t('app.is_paid_either_way')
+        : t('app.it_is_free_on_this_server'))
+      + t('app.nobody_is_told_you_asked')
       + lookUpsLeftText(contract.informantLeft, rules.maxPerContract);
     var freeMinutes = Number(rules.repeatFreeMinutes) || 0;
     if (freeMinutes > 0) {
-      detail += ' Asking about the same one again within ' + freeMinutes
-        + ' minutes repeats the answer at no charge.';
+      detail += t('app.asking_about_the_same_one_again') + freeMinutes
+        + t('app.minutes_repeats_the_answer_at_no');
     }
     var options = asList(contract.informantPicks).map(function (p) {
       return { pick: p.pick, label: p.label, disabled: !!p.known,
                note: p.known ? (p.named ? (p.pick === 'placer'
-                 ? 'Placed under their name: you know who it is.'
-                 : 'Took it under their name: you know who it is.')
-                 : 'Your informant already found out.') : null };
+                 ? t('app.placed_under_their_name_you_know')
+                 : t('app.took_it_under_their_name_you'))
+                 : t('app.your_informant_already_found_out')) : null };
     });
-    askPick('Buy informant data?', detail, options, function (pick) {
+    askPick(t('app.buy_informant_data_2'), detail, options, function (pick) {
       doBuyInformant(contract, shown, pick);
-    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : 'Ask');
+    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : t('app.ask'));
     // Drawn again from the settings when they change while it is open
     // (readBoard), so the price it quotes, and sends back, is the price now.
     if (state.dialog) {
@@ -6936,20 +6960,20 @@
   function sayLookUp(data, miss) {
     var d = data || {};
     if (d.found) {
-      return say('Your informant found out: ' + (d.label || 'they') + ' is '
+      return say(t('app.your_informant_found_out') + (d.label || 'they') + ' is '
         + (d.name || d.description) + '.', 'ok');
     }
     say((d.message || miss) + (d.repeated
-      ? ' That is the answer you were given a moment ago, and it cost nothing.' : ''));
+      ? t('app.that_is_the_answer_you_were') : ''));
   }
 
   /* The refusals both informants share, in their words. */
   var INFORMANT_REFUSALS = {
-    limit_reached: 'You have used every look-up the informant sells on this contract.',
-    insufficient_funds: 'You cannot afford the informant.',
-    not_participant: 'This is not yours to ask about.',
-    bad_state: 'This server does not run informants.',
-    feature_off: 'The informant is turned off by the server right now.'
+    limit_reached: t('app.you_have_used_every_look_up'),
+    insufficient_funds: t('app.you_cannot_afford_the_informant'),
+    not_participant: t('app.this_is_not_yours_to_ask'),
+    bad_state: t('app.this_server_does_not_run_informants'),
+    feature_off: t('app.the_informant_is_turned_off_by')
   };
 
   function doBuyInformant(contract, shown, pick) {
@@ -6966,7 +6990,7 @@
         fail(r);
         return refresh();
       }
-      sayLookUp(r.data, 'Your informant could not find out who it is.');
+      sayLookUp(r.data, t('app.your_informant_could_not_find_out'));
       // What was found is kept on the card too; the refresh brings it.
       refresh();
     });
@@ -6983,7 +7007,7 @@
       return null;
     }
     var key = 'placerInformant:' + contract.id;
-    var label = 'Informant on an operative — ' + lookUpPrice(rules);
+    var label = t('app.informant_on_an_operative') + lookUpPrice(rules);
     var wrap = el('div', 'placer-informant');
     var picks = asList(contract.placerInformantPicks);
     var left = contract.placerInformantLeft;
@@ -6995,11 +7019,11 @@
     }
     var why = null;
     if (wait > 0) {
-      why = 'Your informant can ask again ' + retryIn(wait) + '.';
+      why = t('app.your_informant_can_ask_again') + retryIn(wait) + '.';
     }
     var button;
     if (isBusy(key)) {
-      button = actionButton('ghost ico i-search', label, key, 'Asking…');
+      button = actionButton('ghost ico i-search', label, key, t('app.asking'));
     } else {
       button = el('button', 'ghost ico i-search', label);
       if (why) {
@@ -7015,27 +7039,27 @@
 
   function buyPlacerInformant(contract) {
     var rules = settings().placerInformant;
-    if (!rules) { return say('This server does not run informants.'); }
+    if (!rules) { return say(t('app.this_server_does_not_run_informants')); }
     var shown = { cost: Number(rules.cost) || 0,
                   account: rules.account === 'cash' ? 'cash' : 'bank' };
-    var detail = 'Your informant asks around about the operative you pick. There is a '
-      + chanceOf(rules.chance) + ' they find out who it is, and '
+    var detail = t('app.your_informant_asks_around_about_the_2')
+      + chanceOf(rules.chance) + t('app.they_find_out_who_it_is')
       + (shown.cost > 0
-        ? 'the ' + money(shown.cost) + ' from your ' + shown.account + ' is paid either way.'
-        : 'it is free on this server.')
-      + ' If they do find out, there is a ' + chanceOf(rules.alertChance)
-      + ' that operative notices someone was asking about them, though never who.'
+        ? 'the ' + money(shown.cost) + t('app.from_your') + shown.account + t('app.is_paid_either_way')
+        : t('app.it_is_free_on_this_server'))
+      + t('app.if_they_do_find_out_there') + chanceOf(rules.alertChance)
+      + t('app.that_operative_notices_someone_was_asking')
       + lookUpsLeftText(contract.placerInformantLeft, rules.maxPerContract);
     if (Number(rules.cooldownMinutes) > 0) {
-      detail += ' Look-ups on one contract are ' + Number(rules.cooldownMinutes)
-        + ' minutes apart.';
+      detail += t('app.look_ups_on_one_contract_are') + Number(rules.cooldownMinutes)
+        + t('app.minutes_apart');
     }
     var options = asList(contract.placerInformantPicks).map(function (p) {
       return { pick: p.pick, label: p.label };
     });
-    askPick('Informant on an operative?', detail, options, function (pick) {
+    askPick(t('app.informant_on_an_operative_2'), detail, options, function (pick) {
       doBuyPlacerInformant(contract, shown, pick);
-    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : 'Ask');
+    }, shown.cost > 0 ? 'Pay ' + money(shown.cost) : t('app.ask'));
     if (state.dialog) {
       state.dialog.redo = function () { state.dialog = null; buyPlacerInformant(contract); };
     }
@@ -7054,7 +7078,7 @@
           fail(r);
           return refresh();
         }
-        sayLookUp(r.data, 'Your informant could not find out who they are.');
+        sayLookUp(r.data, t('app.your_informant_could_not_find_out_2'));
         refresh();
       });
     });
@@ -7073,26 +7097,26 @@
       // A slot, never an amount: the server gives back a whole unclaimed
       // collection. Describing it as money was describing a payload the
       // server has never accepted.
-      return 'Give back payout ' + ((p && p.slot) || '?')
-        + ', returning what funds it to the person who placed the contract';
+      return t('app.give_back_payout') + ((p && p.slot) || '?')
+        + t('app.returning_what_funds_it_to_the');
     },
     // With the before and after, which is what the hitman is agreeing to.
     shorten_deadline: function (p, contract) {
       var by = p && p.seconds ? Math.round(p.seconds / 60) : 0;
       var band = contract ? bandOf(contract) : null;
-      return 'Shorten the deadline'
+      return t('app.shorten_the_deadline')
         + (by ? ' by ' + durationText(by) : '')
         + (by && band ? ' (now ' + band.text.toLowerCase() + ')' : '');
     },
     raise_penalty: function (p) {
-      return 'Raise the stake' + (p && p.amount ? ' to ' + money(p.amount) : '');
+      return t('app.raise_the_stake') + (p && p.amount ? ' to ' + money(p.amount) : '');
     },
     change_mode: function (p) {
-      return 'Change this to a ' + ((p && p.mode) === 'exclusive'
-        ? 'single-hitman contract' : 'competitive contract');
+      return t('app.change_this_to_a') + ((p && p.mode) === 'exclusive'
+        ? t('app.single_hitman_contract') : t('app.competitive_contract'));
     },
     change_reason: function (p) {
-      return 'Change the stated reason' + (p && p.reason ? ' to "' + p.reason + '"' : '');
+      return t('app.change_the_stated_reason') + (p && p.reason ? ' to "' + p.reason + '"' : '');
     },
     /* Both kinds end the whole contract. The server applies an agreed
        `withdraw` exactly as it applies `cancel` — the contract closes for
@@ -7103,25 +7127,25 @@
        two-hour wait before they could list the same person again. */
     /* And to a hitman asked to agree, where their stake goes: back to them. */
     withdraw: function (_p, contract) {
-      return 'Call the whole contract off — it closes for everyone on it, '
-        + 'and what the person who placed it put up goes back to them' + stakeBack(contract);
+      return t('app.call_the_whole_contract_off_it')
+        + t('app.and_what_the_person_who_placed') + stakeBack(contract);
     },
     cancel: function (_p, contract) {
-      return 'Cancel this contract outright — it closes for everyone on '
-        + 'it, and what the person who placed it put up goes back to them' + stakeBack(contract);
+      return t('app.cancel_this_contract_outright_it_closes')
+        + t('app.it_and_what_the_person_who') + stakeBack(contract);
     }
   };
 
   function stakeBack(contract) {
     return contract && contract.role === 'hitman' && Number(contract.penaltyAmount) > 0
-      ? '; your ' + money(contract.penaltyAmount) + ' stake comes back to you' : '';
+      ? '; your ' + money(contract.penaltyAmount) + t('app.stake_comes_back_to_you') : '';
   }
 
   function describeAmendment(proposal, contract) {
     var describe = AMENDMENT[proposal.kind];
     // An unknown kind is still shown, because a proposal nobody can read is
     // a proposal nobody can refuse.
-    return describe ? describe(proposal.payload, contract) : 'A change to this contract';
+    return describe ? describe(proposal.payload, contract) : t('app.a_change_to_this_contract');
   }
 
   /* The read of each contract's proposals that is the live one: a token
@@ -7224,23 +7248,23 @@
   var PROPOSAL_OVER = {
     // Its own code since an answer refused as it went in shared bad_state
     // with this, and the last person to agree was told it had run out.
-    proposal_expired: 'That proposal ran out before it was answered.',
-    bad_state: 'That proposal can no longer be answered.',
-    not_found: 'That proposal has already been settled or has run out.',
-    already_settled: 'That contract has closed, and the proposal with it.',
-    invalid_input: 'Agreed, but the contract has moved on and the change no '
-      + 'longer fits. Nothing was changed.',
-    invalid_reward: 'Agreed, but the contract has moved on and the change no '
-      + 'longer fits. Nothing was changed.'
+    proposal_expired: t('app.that_proposal_ran_out_before_it'),
+    bad_state: t('app.that_proposal_can_no_longer_be'),
+    not_found: t('app.that_proposal_has_already_been_settled'),
+    already_settled: t('app.that_contract_has_closed_and_the'),
+    invalid_input: t('app.agreed_but_the_contract_has_moved')
+      + t('app.longer_fits_nothing_was_changed'),
+    invalid_reward: t('app.agreed_but_the_contract_has_moved')
+      + t('app.longer_fits_nothing_was_changed')
   };
 
   /* Why a change everybody agreed to did not go in, for "Agreed, but it no
      longer applies: ...". */
   var NO_LONGER_APPLIES = {
-    bad_state: 'who is on the contract changed before it went in.',
-    invalid_input: 'the contract has moved on and the change no longer fits.',
-    reward_too_small: 'it would leave the reward under the least a contract may be worth.',
-    already_settled: 'the contract has closed.'
+    bad_state: t('app.who_is_on_the_contract_changed'),
+    invalid_input: t('app.the_contract_has_moved_on_and'),
+    reward_too_small: t('app.it_would_leave_the_reward_under'),
+    already_settled: t('app.the_contract_has_closed')
   };
 
   function answerProposal(proposal, approve, takingBack) {
@@ -7249,8 +7273,8 @@
         // Everybody agreed and the server refused it as it went in: said as
         // that, with why, and not as a proposal that lapsed.
         if (r.data && r.data.outcome === 'failed') {
-          say('Agreed, but it no longer applies: ' + (NO_LONGER_APPLIES[r.err]
-            || 'the contract changed before it went in.') + ' Nothing was changed.');
+          say(t('app.agreed_but_it_no_longer_applies') + (NO_LONGER_APPLIES[r.err]
+            || t('app.the_contract_changed_before_it_went')) + t('app.nothing_was_changed'));
           forgetProposals();
           refresh();
           return;
@@ -7264,9 +7288,9 @@
         return fail(r);
       }
       var outcome = r.data && r.data.outcome;
-      say(outcome === 'applied' ? 'Agreed — the change is in effect.'
-        : outcome === 'declined' ? (takingBack ? 'Taken back. The other side is told.' : 'Declined.')
-        : 'Recorded. Waiting on the other party.', 'ok');
+      say(outcome === 'applied' ? t('app.agreed_the_change_is_in_effect')
+        : outcome === 'declined' ? (takingBack ? t('app.taken_back_the_other_side_is') : t('app.declined'))
+        : t('app.recorded_waiting_on_the_other_party'), 'ok');
       forgetProposals();
       refresh();
     });
@@ -7281,11 +7305,11 @@
       return null;
     }
     var seconds = read - Math.floor((Date.now() - (proposal.clockReadAt || Date.now())) / 1000);
-    return 'Lapses in ' + durationText(Math.max(1, Math.ceil(seconds / 60)));
+    return t('app.lapses_in') + durationText(Math.max(1, Math.ceil(seconds / 60)));
   }
 
   function takeBack(proposal) {
-    return actionButton('', 'Take it back', 'amend:' + proposal.id, 'Sending\u2026',
+    return actionButton('', t('app.take_it_back'), 'amend:' + proposal.id, t('app.sending'),
       function () { return answerProposal(proposal, false, true); });
   }
 
@@ -7300,14 +7324,14 @@
       var item = el('div', 'proposal');
       item.appendChild(el('div', 'what', describeAmendment(proposal, contract)));
       item.appendChild(el('div', 'who',
-        proposal.mine ? 'Your proposal' : proposal.proposer + ' proposed this'));
+        proposal.mine ? t('app.your_proposal') : proposal.proposer + t('app.proposed_this')));
 
       // What a shorter clock costs the hitman being asked, said where they
       // answer it. Agree is one tap and applies at once.
       if (proposal.kind === 'shorten_deadline' && contract.role === 'hitman'
           && Number(contract.penaltyAmount) > 0) {
         item.appendChild(el('div', 'hint is-warn', 'Your ' + money(contract.penaltyAmount)
-          + ' stake goes to the person who placed it if you have not finished by then.'));
+          + t('app.stake_goes_to_the_person_who')));
       }
       var lapses = lapsesIn(proposal);
 
@@ -7320,18 +7344,18 @@
            it sat until it lapsed, held the contract's one open slot
            meanwhile, and was then put to the next hitman to accept. */
         item.appendChild(el('div', 'hint',
-          'Nobody else is on this contract to agree, so it is yours to apply.'
-          + (lapses ? ' ' + lapses + ' if you do not.' : '')));
+          t('app.nobody_else_is_on_this_contract')
+          + (lapses ? ' ' + lapses + t('app.if_you_do_not') : '')));
         var applyRow = el('div', 'row');
-        applyRow.appendChild(actionButton('primary', 'Apply it',
-          'amend:' + proposal.id, 'Sending…',
+        applyRow.appendChild(actionButton('primary', t('app.apply_it'),
+          'amend:' + proposal.id, t('app.sending'),
           function () { return answerProposal(proposal, true); }));
         if (proposal.mine) { applyRow.appendChild(takeBack(proposal)); }
         item.appendChild(applyRow);
       } else if (proposal.mine || proposal.answered) {
-        item.appendChild(el('div', 'hint', 'Waiting on ' + waiting
-              + (waiting === 1 ? ' other party.' : ' other parties.')
-              + (lapses ? ' ' + lapses + ' if nobody answers.' : '')));
+        item.appendChild(el('div', 'hint', t('app.waiting_on') + waiting
+              + (waiting === 1 ? t('app.other_party') : t('app.other_parties'))
+              + (lapses ? ' ' + lapses + t('app.if_nobody_answers') : '')));
         /* The proposer's own: taken back rather than left holding the
            contract's one open proposal until it lapses. The server takes
            their own decline as that, and tells the other side. */
@@ -7341,16 +7365,16 @@
           item.appendChild(mineRow);
         }
       } else {
-        if (lapses) { item.appendChild(el('div', 'hint', lapses + ' if you do not answer.')); }
+        if (lapses) { item.appendChild(el('div', 'hint', lapses + t('app.if_you_do_not_answer'))); }
         // Both keyed on the proposal, so answering it disables BOTH — a
         // second tap on either used to send a second answer, and the reply
         // to that one reports the change that actually applied as "Gone."
         var row = el('div', 'row');
-        row.appendChild(actionButton('primary', 'Agree',
-          'amend:' + proposal.id, 'Sending\u2026',
+        row.appendChild(actionButton('primary', t('app.agree'),
+          'amend:' + proposal.id, t('app.sending'),
           function () { return answerProposal(proposal, true); }));
-        row.appendChild(actionButton('danger', 'Decline',
-          'amend:' + proposal.id, 'Sending\u2026',
+        row.appendChild(actionButton('danger', t('app.decline'),
+          'amend:' + proposal.id, t('app.sending'),
           function () { return answerProposal(proposal, false); }));
         item.appendChild(row);
       }
@@ -7378,10 +7402,10 @@
   /* The bands a contract's time left is said in, longest first, with the
      least time each one can mean, in minutes (server: Util.TIME_BANDS). */
   var TIME_BANDS = [
-    { text: 'More than 2 hours left', least: 121 },
-    { text: '1\u20132 hours left', least: 61 },
-    { text: 'Under 1 hour left', least: 16 },
-    { text: 'Under 15 minutes left', least: 0 }
+    { text: t('app.more_than_2_hours_left'), least: 121 },
+    { text: t('app.1_2_hours_left'), least: 61 },
+    { text: t('app.under_1_hour_left'), least: 16 },
+    { text: t('app.under_15_minutes_left'), least: 0 }
   ];
 
   /* The band a contract is in, or null when it has no deadline. */
@@ -7415,10 +7439,10 @@
     var band = bandOf(contract);
     if (!band) { return null; }
     // On hold by staff: the clock stands still until they release it.
-    if (contract.onHold) { return { text: 'On hold \u00b7 ' + band.text, warn: false }; }
+    if (contract.onHold) { return { text: t('app.on_hold_2') + band.text, warn: false }; }
     var close = band.least < (Number(settings().stakeWindowMinutes) || 30);
     if (contract.role === 'hitman' && contract.penaltyAmount > 0 && close) {
-      return { text: band.text + ' \u00b7 stake at risk', warn: true };
+      return { text: band.text + t('app.stake_at_risk'), warn: true };
     }
     return { text: band.text, warn: close };
   }
@@ -7448,26 +7472,26 @@
      "runs out in no set deadline". */
   function runsOut(contract) {
     var band = bandOf(contract);
-    if (!band) { return 'has no deadline'; }
+    if (!band) { return t('app.has_no_deadline'); }
     return 'has ' + band.text.toLowerCase();
   }
 
   /* "3 days ago", from a server time in seconds; null without one. */
   function agoText(at) {
-    var t = Number(at);
-    if (!t) { return null; }
-    var minutes = Math.floor((Date.now() / 1000 - t) / 60);
-    if (minutes < 1) { return 'Just now'; }
-    if (minutes < 60) { return minutes + ' min ago'; }
+    var tv = Number(at);
+    if (!tv) { return null; }
+    var minutes = Math.floor((Date.now() / 1000 - tv) / 60);
+    if (minutes < 1) { return t('app.just_now'); }
+    if (minutes < 60) { return minutes + t('app.min_ago'); }
     var hours = Math.floor(minutes / 60);
-    if (hours < 24) { return hours + 'h ago'; }
+    if (hours < 24) { return hours + t('app.h_ago'); }
     var days = Math.floor(hours / 24);
-    return days + (days === 1 ? ' day ago' : ' days ago');
+    return days + (days === 1 ? t('app.day_ago') : t('app.days_ago'));
   }
 
   function durationText(minutes) {
-    if (minutes === null || minutes === undefined) { return 'no set deadline'; }
-    if (minutes <= 0) { return 'no time left'; }
+    if (minutes === null || minutes === undefined) { return t('app.no_set_deadline'); }
+    if (minutes <= 0) { return t('app.no_time_left'); }
     if (minutes < 60) { return minutes + (minutes === 1 ? ' minute' : ' minutes'); }
     var hours = Math.floor(minutes / 60);
     var rest = minutes % 60;
@@ -7500,8 +7524,8 @@
     var reward = contract.reward || {};
     var bonusPaid = Number(reward.bonus) || 0;
     var pays = money(Number(reward.baseline) || 0)
-      + (bonusPaid > 0 ? ' (+' + money(bonusPaid) + (aliveOnly(contract) ? ')' : ' if alive)') : '')
-      + (aliveOnly(contract) ? ' for a live delivery' : '');
+      + (bonusPaid > 0 ? ' (+' + money(bonusPaid) + (aliveOnly(contract) ? ')' : t('app.if_alive_2')) : '')
+      + (aliveOnly(contract) ? t('app.for_a_live_delivery') : '');
 
     // The most a stake can be, as Contracts.clampPenalty holds it: offered
     // above that, the server applies the ceiling instead of the figure typed.
@@ -7529,32 +7553,32 @@
 
     var options = [
       {
-        label: 'Shorten the deadline',
+        label: t('app.shorten_the_deadline'),
         note: bandOf(contract) ? bandOf(contract).text + '.' : 'It ' + runsOut(contract) + '.',
         // Nothing to shorten without a deadline, or without time to spare.
         skip: most < 1,
         run: function () {
           if (most < 1) {
-            return say('There is no deadline left to shorten.');
+            return say(t('app.there_is_no_deadline_left_to'));
           }
-          askNumber('Shorten the deadline',
+          askNumber(t('app.shorten_the_deadline'),
             hitman
-              ? 'You are asking the person who placed it for less time than you have.'
-              : (untaken ? 'Nobody has taken it, so this applies at once.'
-                         : 'You are asking the operative to finish sooner.'),
+              ? t('app.you_are_asking_the_person_who')
+              : (untaken ? t('app.nobody_has_taken_it_so_this')
+                         : t('app.you_are_asking_the_operative_to')),
             function (minutes) {
               sendProposal(contract, 'shorten_deadline', { seconds: minutes * 60 });
             },
             {
-              label: 'Cut it short by (minutes)',
+              label: t('app.cut_it_short_by_minutes'),
               value: Math.min(30, most), min: 1, max: most,
-              confirm: untaken ? 'Shorten' : 'Propose',
+              confirm: untaken ? t('app.shorten') : t('app.propose'),
               hint: function (value) {
                 if (!value || value < 1 || value > most) {
-                  return 'Between 1 and ' + most + ' minutes, leaving at least '
+                  return 'Between 1 and ' + most + t('app.minutes_leaving_at_least')
                     + keep + '.';
                 }
-                return 'It would then have ' + durationText(value) + ' less.';
+                return t('app.it_would_then_have') + durationText(value) + t('app.less');
               }
             });
         }
@@ -7575,19 +7599,19 @@
            later collection in a number box and let the other party find
            out by pressing Agree. There is nothing to choose, so nothing is
            asked. */
-        label: 'Give back the last payout',
+        label: t('app.give_back_the_last_payout'),
         note: spare > 0
           ? 'Payout ' + total + ' of ' + total + ', leaving ' + (total - 1) + '.'
-          : 'Nothing after the one being competed for.',
+          : t('app.nothing_after_the_one_being_competed'),
         skip: spare <= 0,
         run: function () {
-          ask('Give back payout ' + total + ' of ' + total + '?',
+          ask(t('app.give_back_payout') + total + ' of ' + total + '?',
             (hitman
-              ? 'You are offering to give up the last payout still to '
-                + 'come. What is on the table now is untouched.'
-              : 'This returns the last payout to you. The one being '
-                + 'competed for now is untouched.')
-              + ' ' + (total - 1) + ' would remain.',
+              ? t('app.you_are_offering_to_give_up')
+                + t('app.come_what_is_on_the_table')
+              : t('app.this_returns_the_last_payout_to')
+                + t('app.competed_for_now_is_untouched'))
+              + ' ' + (total - 1) + t('app.would_remain'),
             function () {
               sendProposal(contract, 'reduce_reward', { slot: total });
             });
@@ -7599,29 +7623,29 @@
       {
         // No note: the label says it, and the dialog it opens says the rest.
         // A note here pushed this dialog's own Cancel off a small screen.
-        label: exclusiveNow ? 'Open it to other hitmen' : 'Make it one hitman only',
+        label: exclusiveNow ? t('app.open_it_to_other_hitmen') : t('app.make_it_one_hitman_only'),
         // Exclusive with two on it is a contract its own rules forbid, and
         // the server refuses it after everybody has agreed.
         skip: hitman || (!exclusiveNow && active > 1),
         run: function () {
           var mode = exclusiveNow ? 'competitive' : 'exclusive';
-          ask(exclusiveNow ? 'Open it to other hitmen?' : 'Make it one hitman only?',
+          ask(exclusiveNow ? t('app.open_it_to_other_hitmen_2') : t('app.make_it_one_hitman_only_2'),
             (exclusiveNow
-              ? 'Several hitmen can then take it at once, and the first to finish is paid. '
-              : 'Only one hitman can then be on it at a time. ')
-              + (untaken ? 'Nobody has taken it, so this applies at once.'
-                : 'The operative on it has to agree first.'),
+              ? t('app.several_hitmen_can_then_take_it')
+              : t('app.only_one_hitman_can_then_be'))
+              + (untaken ? t('app.nobody_has_taken_it_so_this')
+                : t('app.the_operative_on_it_has_to')),
             function () { sendProposal(contract, 'change_mode', { mode: mode }); },
-            { yes: untaken ? 'Change it' : 'Propose' });
+            { yes: untaken ? t('app.change_it') : t('app.propose') });
         }
       },
       {
         // Unheld, Edit already changes it directly.
-        label: 'Change the reason',
+        label: t('app.change_the_reason'),
         skip: hitman || untaken || !reasonOn,
         run: function () {
-          askFields('Change the reason',
-            'The operative has to agree first.',
+          askFields(t('app.change_the_reason'),
+            t('app.the_operative_has_to_agree_first'),
             reasonFields(contract),
             function (values) {
               var preset = parseInt(values.reasonPreset, 10) || 0;
@@ -7629,52 +7653,52 @@
                 reason: values.reason,
                 reasonPreset: preset > 0 ? preset : undefined
               });
-            }, 'Propose');
+            }, t('app.propose'));
         }
       },
       {
         // Only while nobody holds it: a hitman staked the figure they took
         // it at, and the server refuses to change it under them. Unheld, it
         // applies on this confirm, and the next hitman stakes the new one.
-        label: stakeNow > 0 ? 'Raise the stake' : 'Ask for a stake',
+        label: stakeNow > 0 ? t('app.raise_the_stake') : t('app.ask_for_a_stake'),
         note: stakeNow > 0
-          ? 'Now ' + money(stakeNow) + '. To lower it, use Change reward.'
-          : 'Nobody has to put anything up to take it now.',
+          ? 'Now ' + money(stakeNow) + t('app.to_lower_it_use_change_reward')
+          : t('app.nobody_has_to_put_anything_up'),
         skip: hitman || !untaken || stakeMost <= stakeNow,
         run: function () {
-          askNumber(stakeNow > 0 ? 'Raise the stake' : 'Ask for a stake',
-            'What a hitman puts up when they accept, returned when they finish '
-              + 'and yours if they walk away or run out of time. Nobody has '
-              + 'taken it, so this applies at once.',
+          askNumber(stakeNow > 0 ? t('app.raise_the_stake') : t('app.ask_for_a_stake'),
+            t('app.what_a_hitman_puts_up_when')
+              + t('app.and_yours_if_they_walk_away')
+              + t('app.taken_it_so_this_applies_at'),
             function (amount) {
               sendProposal(contract, 'raise_penalty', { amount: amount });
             },
             {
-              label: 'Stake ($)',
+              label: t('app.stake'),
               value: Math.min(stakeMost, stakeNow + 1000), min: stakeNow + 1, max: stakeMost,
-              confirm: 'Set it',
+              confirm: t('app.set_it'),
               hint: function (value) {
                 if (!value || value <= stakeNow || value > stakeMost) {
                   return 'Between ' + money(stakeNow + 1) + ' and ' + money(stakeMost)
-                    + ', the most this contract can ask.';
+                    + t('app.the_most_this_contract_can_ask');
                 }
-                return 'A hitman would stake ' + money(value) + ' to take it.';
+                return t('app.a_hitman_would_stake') + money(value) + t('app.to_take_it');
               }
             });
         }
       },
       {
-        label: hitman ? 'Call it off' : 'Cancel the contract',
+        label: hitman ? t('app.call_it_off') : t('app.cancel_the_contract'),
         // Not "hand it back": agreed, this closes the whole contract for
         // everyone on it, the same as the client cancelling it. Walking away
         // alone is Abandon.
         note: hitman
-          ? 'Ask for the whole contract to be cancelled. If everyone agrees it '
-            + 'closes for all of you, and everything put up goes back, your stake '
-            + 'included. To leave on your own, use Abandon.'
+          ? t('app.ask_for_the_whole_contract_to')
+            + t('app.closes_for_all_of_you_and')
+            + t('app.included_to_leave_on_your_own')
           : (untaken
-            ? 'Nobody has taken it, so this is Withdraw, which asks first.'
-            : 'Close it and take back what you put up, if the operative agrees.'),
+            ? t('app.nobody_has_taken_it_so_this_2')
+            : t('app.close_it_and_take_back_what')),
         run: function () {
           /* Untaken, through Withdraw itself. Sent as a proposal it closed
              the contract on this one tap — the server applies the creator's
@@ -7687,24 +7711,24 @@
              reads the waits an agreed cancel starts, a hitman where their
              stake goes. */
           var waits = hitman ? null : relistWaitText(contract);
-          ask(hitman ? 'Ask to call it off?' : 'Ask to cancel the contract?',
+          ask(hitman ? t('app.ask_to_call_it_off') : t('app.ask_to_cancel_the_contract'),
             (hitman
-              ? 'If everyone agrees it closes for all of you'
+              ? t('app.if_everyone_agrees_it_closes_for')
                 + (Number(contract.penaltyAmount) > 0
-                  ? ', and your ' + money(contract.penaltyAmount) + ' stake comes back to you.'
+                  ? t('app.and_your') + money(contract.penaltyAmount) + t('app.stake_comes_back_to_you_2')
                   : '.')
-              : 'If everyone on it agrees it closes, and what you put up comes back to you.'
+              : t('app.if_everyone_on_it_agrees_it')
                 + (waits ? ' ' + waits : ''))
-              + ' You can take the proposal back until it is answered.',
+              + t('app.you_can_take_the_proposal_back'),
             function () { sendProposal(contract, hitman ? 'withdraw' : 'cancel', {}); },
-            { yes: 'Propose it', no: 'Keep it' });
+            { yes: t('app.propose_it'), no: t('app.keep_it') });
         }
       }
     ];
 
     state.dialog = {
       kind: 'choice',
-      question: 'Propose a change',
+      question: t('app.propose_a_change'),
       // The terms, in the header rather than on one option. What the
       // contract pays and how long is left is what every one of these
       // choices is about, and it should not disappear because the option
@@ -7713,13 +7737,13 @@
         + (total > 1 ? ', ' + total + ' payouts' : '')
         + (untaken
           // Nobody holds it, so there is nobody to wait for.
-          ? '. Nobody has taken it, so this applies as soon as you confirm.'
-          : '. Nothing happens until '
-            + (hitman ? 'the person who placed it' : 'the operative') + ' agrees.')
+          ? t('app.nobody_has_taken_it_so_this_3')
+          : t('app.nothing_happens_until')
+            + (hitman ? t('app.the_person_who_placed_it') : t('app.the_operative')) + t('app.agrees'))
         // More time and more money are the client's to give, at once, and
         // a hitman looking here for them found only ways to make it worse.
         + (hitman && settings().relay !== false
-          ? ' For more time or money, message them.'
+          ? t('app.for_more_time_or_money_message')
           : ''),
       // An option the server would refuse whatever the player enters is not
       // an option; it is a button that wastes their time and reads as a
@@ -7737,19 +7761,19 @@
            the player holds — so a creator proposing a second change was
            told they were holding too many contracts. */
         var reasons = {
-          limit_reached: 'There is already a change waiting on this contract. '
-            + 'It has to be answered, or run out, before you can propose '
+          limit_reached: t('app.there_is_already_a_change_waiting')
+            + t('app.it_has_to_be_answered_or')
             + 'another.',
-          invalid_input: 'That change no longer fits this contract \u2014 it '
-            + 'has moved on since you opened it. Look again.',
-          bad_state: 'This contract cannot be changed right now.',
-          feature_off: 'Proposing changes is turned off by the server right now.'
+          invalid_input: t('app.that_change_no_longer_fits_this_2')
+            + t('app.has_moved_on_since_you_opened'),
+          bad_state: t('app.this_contract_cannot_be_changed_right'),
+          feature_off: t('app.proposing_changes_is_turned_off_by')
         };
         // A new reason is refused for its words — too long, too many
         // digits, a banned pattern — not because the contract moved on.
         if (kind === 'change_reason') {
-          reasons.invalid_input = 'This server will not take that reason. '
-            + 'Word it differently.';
+          reasons.invalid_input = t('app.this_server_will_not_take_that')
+            + t('app.word_it_differently');
         }
         if (reasons[r.err]) {
           if (r.err === 'invalid_input') { refresh(); }
@@ -7770,14 +7794,14 @@
          proposal the card never drew and that blocked the next one. */
       forgetProposals();
       if (r.data && r.data.outcome === 'applied') {
-        say('Done \u2014 the change is in effect.', 'ok');
+        say(t('app.done_the_change_is_in_effect'), 'ok');
         return refresh();
       }
       if (r.data && r.data.outcome === 'failed') {
-        say(ERRORS[r.data.err] || 'That change no longer fits this contract.');
+        say(ERRORS[r.data.err] || t('app.that_change_no_longer_fits_this'));
         return refresh();
       }
-      say('Proposed. The other party has to agree.', 'ok');
+      say(t('app.proposed_the_other_party_has_to'), 'ok');
       refresh();
     });
   }
@@ -7792,17 +7816,17 @@
        is left. */
     var band = bandOf(contract);
     var standing = band === null
-      ? 'This contract has no deadline set.'
-      : 'It currently has ' + band.text.toLowerCase() + '.';
+      ? t('app.this_contract_has_no_deadline_set')
+      : t('app.it_currently_has') + band.text.toLowerCase() + '.';
 
     /* It opened on an empty box, with no ceiling and no hint — so Confirm,
        the obvious first tap, did nothing and said nothing. It now opens on
        a sensible figure, is held to what the server will take, and says
        what the deadline would become. */
     var ceiling = Number(settings().deadlineMaxMinutes) || 0;
-    askNumber('Extend the deadline by how many minutes?',
-              standing + ' This applies at once \u2014 it can only help '
-              + 'whoever is working it.',
+    askNumber(t('app.extend_the_deadline_by_how_many'),
+              standing + t('app.this_applies_at_once_it_can')
+              + t('app.whoever_is_working_it'),
               function (minutes) {
                 post('improve', {
                   id: contract.id,
@@ -7810,23 +7834,23 @@
                   payload: { seconds: minutes * 60 }
                 }).then(function (r) {
                   if (!r.ok) return fail(r);
-                  say('Deadline extended.', 'ok');
+                  say(t('app.deadline_extended'), 'ok');
                   refresh();
                 });
               },
               {
-                label: 'Extra minutes',
+                label: t('app.extra_minutes'),
                 value: ceiling > 0 ? Math.min(30, ceiling) : 30,
                 min: 1,
                 max: ceiling > 0 ? ceiling : undefined,
-                confirm: 'Extend',
+                confirm: t('app.extend'),
                 hint: function (value) {
                   if (!value || value < 1 || (ceiling > 0 && value > ceiling)) {
-                    return ceiling > 0 ? 'Between 1 and ' + ceiling + ' minutes.'
-                                       : 'At least 1 minute.';
+                    return ceiling > 0 ? 'Between 1 and ' + ceiling + t('app.minutes_2')
+                                       : t('app.at_least_1_minute');
                   }
-                  return 'It would then have ' + durationText(value)
-                    + ' more, or run to the contract\u2019s own time limit if that is sooner.';
+                  return t('app.it_would_then_have') + durationText(value)
+                    + t('app.more_or_run_to_the_contract');
                 }
               });
   }
@@ -7857,8 +7881,8 @@
         state.reward.data = r.data;
       } else {
         state.reward.failed = (r.err === 'rate_limited')
-          ? 'Asked too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.'
-          : 'Could not read what this contract is holding.';
+          ? t('app.asked_too_fast_try_again') + retryIn(r.data && r.data.retryAfter) + '.'
+          : t('app.could_not_read_what_this_contract');
       }
       redraw();
     });
@@ -7881,7 +7905,7 @@
     }
     // Named the way the Place form names it, so "bonus" is not left to
     // mean whichever bonus the reader guesses.
-    var text = what + ' — ' + (line.portion === 'bonus' ? 'kidnapping bonus' : 'base');
+    var text = what + ' — ' + (line.portion === 'bonus' ? t('app.kidnapping_bonus') : 'base');
     if ((Number(slots) || 1) > 1) {
       text = 'Payout ' + (Number(line.slot) || 1) + ': ' + text;
     }
@@ -7891,7 +7915,7 @@
   function renderRewardEditor(view) {
     var edit = state.reward;
     var panel = el('div', 'card dialog');
-    panel.appendChild(el('div', 'target', 'Change the reward'));
+    panel.appendChild(el('div', 'target', t('app.change_the_reward')));
 
     if (!edit) { closeDialog(); return; }
 
@@ -7932,19 +7956,19 @@
       }
 
       if (!amount && !dirty && !goods) {
-        total.textContent = 'Nothing ticked yet.';
+        total.textContent = t('app.nothing_ticked_yet');
         return;
       }
 
       var parts = [];
       if (amount) { parts.push(money(amount)); }
-      if (dirty) { parts.push(money(dirty) + ' dirty money'); }
+      if (dirty) { parts.push(money(dirty) + t('app.dirty_money_2')); }
       if (goods) { parts.push(goods + (goods === 1 ? ' item' : ' items')); }
-      total.textContent = 'Coming back to you: ' + parts.join(' and ') + '.';
+      total.textContent = t('app.coming_back_to_you') + parts.join(' and ') + '.';
     }
 
     if (edit.pending) {
-      panel.appendChild(el('div', 'reason', 'Reading what this contract is holding…'));
+      panel.appendChild(el('div', 'reason', t('app.reading_what_this_contract_is_holding')));
     } else if (edit.failed) {
       panel.appendChild(el('div', 'reason', edit.failed));
     } else if (edit.data) {
@@ -7954,11 +7978,11 @@
         panel.appendChild(el('div', 'reason', edit.data.reason));
       } else {
         panel.appendChild(el('div', 'reason',
-          'Add more, or tick anything you want back. The rest stays on the contract.'));
+          t('app.add_more_or_tick_anything_you')));
       }
 
       if (!lines.length) {
-        panel.appendChild(el('div', 'hint', 'Nothing here can be taken back.'));
+        panel.appendChild(el('div', 'hint', t('app.nothing_here_can_be_taken_back')));
       }
 
       var list = el('div', 'reward-lines');
@@ -8011,7 +8035,7 @@
     // that is exactly when a creator wants to. First in the row, and "Add
     // to it" rather than "Add money": the next step offers bank and dirty
     // money, goods and the kidnapping bonus too.
-    var add = el('button', 'ghost ico i-plus', 'Add to it');
+    var add = el('button', 'ghost ico i-plus', t('app.add_to_it'));
     add.onclick = function () {
       var contract = edit.contract;
       state.dialog = null; state.reward = null;
@@ -8027,7 +8051,7 @@
     // whoever takes it. The server has done it since the first commit and
     // nothing here asked for it.
     if (Number(edit.contract.penaltyAmount) > 0) {
-      var lower = el('button', 'ghost', 'Lower the stake');
+      var lower = el('button', 'ghost', t('app.lower_the_stake'));
       lower.onclick = function () {
         var contract = edit.contract;
         state.dialog = null; state.reward = null;
@@ -8037,13 +8061,13 @@
     }
 
     if (edit.data && !edit.pending && takeable) {
-      take = el('button', 'primary take-back', 'Take back what I ticked');
+      take = el('button', 'primary take-back', t('app.take_back_what_i_ticked'));
       take.onclick = function () { withdrawChosen(edit); };
       row.appendChild(take);
       showTotal();
     }
 
-    var close = el('button', 'ghost', 'Done');
+    var close = el('button', 'ghost', t('app.done_2'));
     close.onclick = function () { state.reward = null; closeDialog(); };
     row.appendChild(close);
 
@@ -8054,7 +8078,7 @@
   function withdrawChosen(edit) {
     var ids = Object.keys(edit.chosen);
     if (!ids.length) {
-      say('Nothing ticked, so nothing was taken back.');
+      say(t('app.nothing_ticked_so_nothing_was_taken'));
       return;
     }
 
@@ -8077,9 +8101,9 @@
            rule nobody had told them, with no hint that Withdraw does what
            they were trying to do. */
         if (r.err === 'invalid_reward') {
-          return say('A payout has to keep something in it. To take the '
-            + 'whole reward back, use Withdraw \u2014 that closes the contract '
-            + 'and returns everything.');
+          return say(t('app.a_payout_has_to_keep_something')
+            + t('app.whole_reward_back_use_withdraw_that')
+            + t('app.and_returns_everything'));
         }
         return takenOr(r);
       }
@@ -8087,10 +8111,10 @@
       var queued = (r.data && r.data.queued) || 0;
       var checking = staffChecking(r.data);
       say(queued
-        ? 'Taken off the contract. Some of it could not fit and is waiting '
-          + 'for you — it arrives when you next have room.' + checking
-        : checking ? 'Taken off the contract.' + checking
-          : 'Taken off the contract and returned to you.', 'ok');
+        ? t('app.taken_off_the_contract_some_of')
+          + t('app.for_you_it_arrives_when_you') + checking
+        : checking ? t('app.taken_off_the_contract') + checking
+          : t('app.taken_off_the_contract_and_returned'), 'ok');
 
       state.reward = null;
       state.dialog = null;
@@ -8121,7 +8145,7 @@
 
     var caps = wallet.caps || {};
     var usable = ['cash', 'bank', 'dirty'].filter(function (source) {
-      return caps[source + 'Enabled'] !== false && (Number(wallet[source]) || 0) > 0;
+      return caps[source + t('app.enabled')] !== false && (Number(wallet[source]) || 0) > 0;
     });
 
     /* Goods, and the kidnapping bonus, beside money. The server has taken
@@ -8143,7 +8167,7 @@
     var bonusRoom = bonusCap > bonusNow && base > 0 && !aliveOnly(contract);
 
     if (!usable.length && !items.length && !weapons.length && !bonusRoom) {
-      return say('You have nothing this server takes as a reward.');
+      return say(t('app.you_have_nothing_this_server_takes'));
     }
 
     // Every top-up lands the same way, whatever it is made of.
@@ -8151,38 +8175,38 @@
       post('addEscrow', { id: contract.id, reward: reward }).then(function (r) {
         if (!r.ok && r.err === 'invalid_reward') { return say(tooMuch); }
         if (!r.ok) return fail(r);
-        say('Added to the reward.', 'ok');
+        say(t('app.added_to_the_reward'), 'ok');
         state.wallet = null;
         refresh();
       });
     }
 
     function addItem() {
-      askFields('Add an item to the reward',
-        'Taken from you now and held with the rest.',
+      askFields(t('app.add_an_item_to_the_reward'),
+        t('app.taken_from_you_now_and_held'),
         [
-          { id: 'item', label: 'Item', type: 'select', value: items[0].name,
+          { id: 'item', label: t('app.item'), type: 'select', value: items[0].name,
             options: items.map(function (item) {
               return { value: item.name, label: item.label + '  \u00b7  ' + item.count + ' held' };
             }) },
-          { id: 'count', label: 'How many', type: 'number', value: 1, min: 1 }
+          { id: 'count', label: t('app.how_many'), type: 'number', value: 1, min: 1 }
         ],
         function (values) {
           var held = 0;
           items.forEach(function (item) { if (item.name === values.item) { held = item.count; } });
           if (!values.count || values.count < 1 || values.count > held) {
-            return say('You hold ' + held + ' of those.');
+            return say(t('app.you_hold') + held + t('app.of_those'));
           }
           send({ baseline: { items: [{ name: values.item, count: values.count }] } },
-            'This contract cannot carry that: it is already holding as much as it can.');
-        }, 'Add');
+            t('app.this_contract_cannot_carry_that_it'));
+        }, t('app.add'));
     }
 
     function addWeapon() {
-      askFields('Add a weapon to the reward',
-        'Taken from you now and held with the rest. The hitman gets this one, '
-          + 'serial and all.',
-        [{ id: 'weapon', label: 'Weapon', type: 'select', value: String(weapons[0].slot),
+      askFields(t('app.add_a_weapon_to_the_reward'),
+        t('app.taken_from_you_now_and_held_2')
+          + t('app.serial_and_all'),
+        [{ id: 'weapon', label: t('app.weapon'), type: 'select', value: String(weapons[0].slot),
            options: weapons.map(function (weapon) {
              return { value: String(weapon.slot),
                       label: weapon.label + (weapon.serial ? '  #' + weapon.serial : '') };
@@ -8192,41 +8216,41 @@
           weapons.forEach(function (weapon) {
             if (String(weapon.slot) === String(values.weapon)) { found = weapon; }
           });
-          if (!found) { return say('That weapon is no longer in your pockets.'); }
+          if (!found) { return say(t('app.that_weapon_is_no_longer_in')); }
           send({ baseline: { weapons: [{ name: found.name, slot: found.slot }] } },
-            'This contract cannot carry that: it is already holding as much as it can.');
-        }, 'Add');
+            t('app.this_contract_cannot_carry_that_it'));
+        }, t('app.add'));
     }
 
     function raiseBonus() {
       var later = Math.max(0, (Number(contract.slots) || 1) - (Number(contract.currentSlot) || 1));
-      askNumber('Raise the kidnapping bonus',
-        'Paid on top for delivering them alive. The extra is taken from you now '
-          + 'and applies at once.',
+      askNumber(t('app.raise_the_kidnapping_bonus'),
+        t('app.paid_on_top_for_delivering_them')
+          + t('app.and_applies_at_once'),
         function (percent) {
           post('improve', { id: contract.id, kind: 'raise_bonus',
                             payload: { percent: percent } }).then(function (r) {
             if (!r.ok && r.err === 'invalid_reward') {
-              return say('That bonus would take this contract past what this server '
-                + 'allows, or there is no money left in it to work a bonus out from.');
+              return say(t('app.that_bonus_would_take_this_contract')
+                + t('app.allows_or_there_is_no_money'));
             }
             if (!r.ok) return fail(r);
-            say('Kidnapping bonus raised to ' + percent + '%.', 'ok');
+            say(t('app.kidnapping_bonus_raised_to') + percent + '%.', 'ok');
             state.wallet = null;
             refresh();
           });
         },
         {
-          label: 'Bonus (%)',
+          label: t('app.bonus_2'),
           value: Math.min(bonusCap, bonusNow + 10), min: bonusNow + 1, max: bonusCap,
-          confirm: 'Raise',
+          confirm: t('app.raise'),
           hint: function (value) {
             if (!value || value <= bonusNow || value > bonusCap) {
               return 'Now ' + bonusNow + '%. Between ' + (bonusNow + 1) + ' and '
                 + bonusCap + '.';
             }
             return 'Now ' + bonusNow + '%. About ' + money(Math.floor(base * (value - bonusNow) / 100))
-              + ' more from you' + (later > 0 ? ', and the same share of each later payout.' : '.');
+              + t('app.more_from_you') + (later > 0 ? t('app.and_the_same_share_of_each') : '.');
           }
         });
     }
@@ -8240,27 +8264,27 @@
         ceiling = Math.min(ceiling, Math.max(0, maxValue - (Number(contract.valueHeld) || 0)));
       }
       if (ceiling < 1) {
-        return say('This contract is already worth as much as this server allows one to be.');
+        return say(t('app.this_contract_is_already_worth_as'));
       }
       askNumber('Add ' + (SOURCE_LABELS[source] || source).toLowerCase()
-                  + ' to the reward',
-        'It is taken from you now and held with the rest.',
+                  + t('app.to_the_reward'),
+        t('app.it_is_taken_from_you_now'),
         function (value) {
           var reward = { baseline: {} };
           reward.baseline[source] = value;
-          send(reward, 'That would take this contract past the most one contract '
-            + 'may be worth on this server.');
+          send(reward, t('app.that_would_take_this_contract_past')
+            + t('app.may_be_worth_on_this_server'));
         },
         {
-          label: 'How much',
+          label: t('app.how_much'),
           value: Math.min(1000, ceiling), min: 1, max: ceiling,
-          confirm: 'Add',
+          confirm: t('app.add'),
           hint: function (value) {
             if (!value || value < 1 || value > ceiling) {
               return 'Between ' + money(1) + ' and ' + money(ceiling) + '.';
             }
-            return 'You hold ' + money(held) + '; '
-              + money(held - value) + ' would be left.';
+            return t('app.you_hold') + money(held) + '; '
+              + money(held - value) + t('app.would_be_left');
           }
         });
     }
@@ -8268,20 +8292,20 @@
     var options = usable.map(function (source) {
       return {
         label: SOURCE_LABELS[source] || source,
-        note: 'You hold ' + money(wallet[source]) + '.',
+        note: t('app.you_hold') + money(wallet[source]) + '.',
         run: function () { amountFrom(source); }
       };
     });
     if (items.length) {
-      options.push({ label: 'Items', note: 'Something from your pockets.', run: addItem });
+      options.push({ label: t('app.items'), note: t('app.something_from_your_pockets'), run: addItem });
     }
     if (weapons.length) {
-      options.push({ label: 'Weapons', note: 'You carry ' + weapons.length
-        + (weapons.length === 1 ? ' weapon.' : ' weapons.'), run: addWeapon });
+      options.push({ label: t('app.weapons'), note: t('app.you_carry') + weapons.length
+        + (weapons.length === 1 ? t('app.weapon_2') : t('app.weapons_2')), run: addWeapon });
     }
     if (bonusRoom) {
-      options.push({ label: 'Kidnapping bonus', note: 'Now ' + bonusNow
-        + '%, paid on top for delivering them alive.', run: raiseBonus });
+      options.push({ label: t('app.kidnapping_bonus_2'), note: 'Now ' + bonusNow
+        + t('app.paid_on_top_for_delivering_them_2'), run: raiseBonus });
     }
 
     // One thing to add, straight to it. More than one, ask which first.
@@ -8289,8 +8313,8 @@
 
     state.dialog = {
       kind: 'choice',
-      question: 'Add to the reward',
-      detail: 'Taken from you now and held with the rest.',
+      question: t('app.add_to_the_reward'),
+      detail: t('app.taken_from_you_now_and_held'),
       options: options
     };
     render();
@@ -8301,40 +8325,40 @@
      old figure gets the difference back. */
   function lowerStake(contract) {
     var now = Number(contract.penaltyAmount) || 0;
-    var detail = 'Now ' + money(now) + '. This applies at once'
+    var detail = 'Now ' + money(now) + t('app.this_applies_at_once')
       + (Number(contract.hitmenActive) > 0
-        ? ', and anyone already staked gets the difference back.' : '.');
+        ? t('app.and_anyone_already_staked_gets_the') : '.');
 
     function send(amount) {
       post('improve', { id: contract.id, kind: 'lower_penalty',
                         payload: { amount: amount } }).then(function (r) {
         if (!r.ok) return fail(r);
-        say(amount > 0 ? 'Stake lowered to ' + money(amount) + '.' : 'Stake removed.', 'ok');
+        say(amount > 0 ? t('app.stake_lowered_to') + money(amount) + '.' : t('app.stake_removed'), 'ok');
         refresh();
       });
     }
 
     state.dialog = {
       kind: 'choice',
-      question: 'Lower the stake',
+      question: t('app.lower_the_stake'),
       detail: detail,
       options: [
         {
-          label: 'Lower it', note: 'To a smaller figure.', skip: now <= 1,
+          label: t('app.lower_it'), note: t('app.to_a_smaller_figure'), skip: now <= 1,
           run: function () {
-            askNumber('Lower the stake', detail, send, {
-              label: 'New stake ($)', value: Math.max(1, Math.floor(now / 2)),
-              min: 1, max: now - 1, confirm: 'Lower',
+            askNumber(t('app.lower_the_stake'), detail, send, {
+              label: t('app.new_stake'), value: Math.max(1, Math.floor(now / 2)),
+              min: 1, max: now - 1, confirm: t('app.lower'),
               hint: function (value) {
                 if (!value || value < 1 || value >= now) {
                   return 'Between ' + money(1) + ' and ' + money(now - 1) + '.';
                 }
-                return 'A hitman would stake ' + money(value) + ' to take it.';
+                return t('app.a_hitman_would_stake') + money(value) + t('app.to_take_it');
               }
             });
           }
         },
-        { label: 'Remove it', note: 'Nobody has to put anything up to take it.',
+        { label: t('app.remove_it'), note: t('app.nobody_has_to_put_anything_up_2'),
           run: function () { send(0); } }
       ].filter(function (option) { return !option.skip; })
     };
@@ -8412,11 +8436,11 @@
      creator of a contract that has just closed was told on every push,
      sitting in front of a conversation they had been part of a moment ago. */
   var THREAD_GONE = {
-    already_settled: 'That contract has closed, and its conversation closed '
-      + 'with it.',
-    not_participant: 'That conversation is no longer open — the contract '
-      + 'has ended or the operative is no longer on it. If the contract is '
-      + 'still running, open it again from Mine.'
+    already_settled: t('app.that_contract_has_closed_and_its')
+      + t('app.with_it'),
+    not_participant: t('app.that_conversation_is_no_longer_open')
+      + t('app.has_ended_or_the_operative_is')
+      + t('app.still_running_open_it_again_from')
   };
 
   /* Leave a thread the server will not serve any more, rather than sitting
@@ -8526,19 +8550,19 @@
       if (navSeq !== navAt || state.dialog) { return; }
       if (!r.ok) return fail(r);
       var threads = asList(r.data);
-      if (!threads.length) return say('No operative to talk to yet.');
+      if (!threads.length) return say(t('app.no_operative_to_talk_to_yet'));
       if (threads.length === 1) { return openThread(contract, threads[0]); }
 
       state.dialog = {
         kind: 'choice',
-        question: 'Which operative?',
-        detail: threads.length + ' operatives are on this contract. Each has '
-          + 'a thread of their own, and none of them can see the others.',
+        question: t('app.which_operative'),
+        detail: threads.length + t('app.operatives_are_on_this_contract_each')
+          + t('app.a_thread_of_their_own_and'),
         options: threads.map(function (thread) {
           var fresh = unreadIn(threadKey(contract, thread), thread.lastMessageAt);
           return {
-            label: thread.alias || 'Operative',
-            note: [thread.name, fresh ? 'New message' : null].filter(Boolean).join(' \u00b7 ')
+            label: thread.alias || t('app.operative'),
+            note: [thread.name, fresh ? t('app.new_message') : null].filter(Boolean).join(' \u00b7 ')
               || null,
             run: function () { openThread(contract, thread); }
           };
@@ -8552,28 +8576,28 @@
      It used to be "they have been asked to call you back" every time, on
      servers where the other side had no way to do that either. */
   var CALL_NOT_PLACED = {
-    callback: 'They have been asked to call you back.',
-    both_anonymous: 'Both of you are anonymous, so calls are off for this '
-      + 'contract. Use messages.',
-    no_calls: 'They have been told you want to talk. This server cannot '
-      + 'place calls, so use messages.',
-    not_placed: 'The call could not be placed, so they have been told you '
-      + 'want to talk. Use messages.',
-    unreachable: 'They could not be reached. Use messages.'
+    callback: t('app.they_have_been_asked_to_call'),
+    both_anonymous: t('app.both_of_you_are_anonymous_so')
+      + t('app.contract_use_messages'),
+    no_calls: t('app.they_have_been_told_you_want')
+      + t('app.place_calls_so_use_messages'),
+    not_placed: t('app.the_call_could_not_be_placed')
+      + t('app.want_to_talk_use_messages'),
+    unreachable: t('app.they_could_not_be_reached_use')
   };
 
   function requestCall() {
-    var t = state.thread;
-    if (!t) { return; }
+    var tv = state.thread;
+    if (!tv) { return; }
 
     return post('requestCall', {
-      id: t.contract.id,
-      thread: t.thread ? t.thread.handle : null
+      id: tv.contract.id,
+      thread: tv.thread ? tv.thread.handle : null
     }).then(function (r) {
       if (!r.ok) {
         // On a call already: Hang up is what this thread offers now.
         if (r.err === 'already_in_call') {
-          state.call = threadKey(t.contract, t.thread);
+          state.call = threadKey(tv.contract, tv.thread);
           redraw();
         }
         return fail(r);
@@ -8581,13 +8605,13 @@
       // Say which actually happened. Telling the player a call is
       // connecting when none is would be worse than any of the others.
       if (r.data && r.data.placed) {
-        state.call = threadKey(t.contract, t.thread);
+        state.call = threadKey(tv.contract, tv.thread);
         // Redrawn only where the player still is, so Hang up appears
         // without a late reply rebuilding some other page under them.
-        if (state.tab === 'thread' && sameThread(state.thread, t.contract, t.thread)) {
+        if (state.tab === 'thread' && sameThread(state.thread, tv.contract, tv.thread)) {
           render();
         }
-        return say('Calling. Hang up here when you are done.', 'ok');
+        return say(t('app.calling_hang_up_here_when_you'), 'ok');
       }
       var line = CALL_NOT_PLACED[r.data && r.data.reason];
       say(typeof line === 'string' ? line : CALL_NOT_PLACED.not_placed, 'ok');
@@ -8598,28 +8622,28 @@
      phone stops ringing for its messages, which still arrive and still
      show here. Nothing about it reaches the other side. */
   function toggleMute() {
-    var t = state.thread;
-    if (!t) { return; }
+    var tv = state.thread;
+    if (!tv) { return; }
 
     return post('muteThread', {
-      id: t.contract.id,
-      thread: t.thread ? t.thread.handle : null,
-      muted: !t.muted
+      id: tv.contract.id,
+      thread: tv.thread ? tv.thread.handle : null,
+      muted: !tv.muted
     }).then(function (r) {
       if (!r.ok) {
-        if (leaveDeadThread(r, t.contract, t.thread)) { return; }
+        if (leaveDeadThread(r, tv.contract, tv.thread)) { return; }
         return fail(r);
       }
       var muted = !!(r.data && r.data.muted === true);
       // Onto the thread as it stands now — a push can have re-read it
       // meanwhile — and redrawn only where the player still is.
-      if (sameThread(state.thread, t.contract, t.thread)) {
+      if (sameThread(state.thread, tv.contract, tv.thread)) {
         state.thread.muted = muted;
         if (state.tab === 'thread') { render(); }
       }
       say(muted
-        ? 'Muted: new messages will not ring your phone. Contract updates still will.'
-        : 'Unmuted: new messages will ring your phone again.', 'ok');
+        ? t('app.muted_new_messages_will_not_ring')
+        : t('app.unmuted_new_messages_will_ring_your'), 'ok');
     });
   }
 
@@ -8627,8 +8651,8 @@
      from here is live (draw). */
   function callBar() {
     var bar = el('div', 'row call-bar');
-    bar.appendChild(el('div', 'hint', 'You are on a call placed from this app.'));
-    var hang = el('button', 'ghost ico i-xcircle', 'Hang up');
+    bar.appendChild(el('div', 'hint', t('app.you_are_on_a_call_placed')));
+    var hang = el('button', 'ghost ico i-xcircle', t('app.hang_up'));
     hang.id = 'call-hangup';
     hang.onclick = function () { endCall(); };
     bar.appendChild(hang);
@@ -8643,16 +8667,16 @@
       redraw();
       // Over already — the other side hung up or never answered — is said
       // as it is, rather than claiming this ended it.
-      say(r.data && r.data.ended ? 'Call ended.' : 'The call had already ended.', 'ok');
+      say(r.data && r.data.ended ? t('app.call_ended') : t('app.the_call_had_already_ended'), 'ok');
     });
   }
 
   function sendMessage(body) {
     if (!body) { return; }
-    var t = state.thread;
+    var tv = state.thread;
     return post('sendMessage', {
-      id: t.contract.id,
-      thread: t.thread ? t.thread.handle : null,
+      id: tv.contract.id,
+      thread: tv.thread ? tv.thread.handle : null,
       body: body
     }).then(function (r) {
       // Cleared on success and not before. It used to be emptied the
@@ -8660,26 +8684,26 @@
       // long, too fast, a thread that had closed — took the player's words
       // with it and left them retyping something they could not see.
       if (!r.ok) {
-        if (leaveDeadThread(r, t.contract, t.thread)) { return; }
+        if (leaveDeadThread(r, tv.contract, tv.thread)) { return; }
         return fail(r);
       }
-      t.draft = '';
+      tv.draft = '';
       // Only if it is still what was sent: the player may have started the
       // next message while this one was in flight.
-      var key = threadKey(t.contract, t.thread);
+      var key = threadKey(tv.contract, tv.thread);
       if (state.drafts[key] === body) { delete state.drafts[key]; }
       // A push can have re-read the thread while this was in flight, which
       // replaces state.thread with a copy still holding what was just sent.
-      if (sameThread(state.thread, t.contract, t.thread)
+      if (sameThread(state.thread, tv.contract, tv.thread)
           && state.thread.draft === body) {
         state.thread.draft = '';
       }
       // Only if the player is still in this conversation. Reopening it
       // regardless pulled them out of whichever thread they had moved to.
-      if (state.tab !== 'thread' || !sameThread(state.thread, t.contract, t.thread)) {
+      if (state.tab !== 'thread' || !sameThread(state.thread, tv.contract, tv.thread)) {
         return;
       }
-      return openThread(t.contract, t.thread, { reread: true });
+      return openThread(tv.contract, tv.thread, { reread: true });
     });
   }
 
@@ -8694,7 +8718,7 @@
     var failed = el('div', 'card');
     failed.appendChild(el('div', 'hint', why));
     if (!state.loadFinal[section]) {
-      var again = el('button', 'ghost ico i-refresh', 'Try again');
+      var again = el('button', 'ghost ico i-refresh', t('app.try_again'));
       again.onclick = function () { delete state.loadFailed[section]; refresh(); render(); };
       failed.appendChild(again);
     }
@@ -8716,8 +8740,8 @@
   function barredText(r) {
     var data = r && r.data;
     if (data && data.held && data.job) {
-      return 'Closed to you while you hold the ' + data.job + ' job. Quit it from your '
-        + 'job menu to use it again.';
+      return t('app.closed_to_you_while_you_hold') + data.job + t('app.job_quit_it_from_your')
+        + t('app.job_menu_to_use_it_again');
     }
     return ERRORS.blacklisted_job;
   }
@@ -8733,7 +8757,7 @@
      card and before the empty one, so a refusal still wins. */
   function drewPending(view, section) {
     if (state.loaded[section]) { return false; }
-    view.appendChild(el('div', 'empty is-pending', 'Asking the server…'));
+    view.appendChild(el('div', 'empty is-pending', t('app.asking_the_server')));
     return true;
   }
 
@@ -8742,15 +8766,15 @@
      who set it: the server sends no name. */
   function suspendedText(data) {
     var at = data && Number(data.untilAt);
-    var until = 'staff lift it';
+    var until = t('app.staff_lift_it');
     if (at > 0) {
       var d = new Date(at * 1000);
       var two = function (n) { return (n < 10 ? '0' : '') + n; };
       until = d.getFullYear() + '-' + two(d.getMonth() + 1) + '-' + two(d.getDate())
         + ' ' + two(d.getHours()) + ':' + two(d.getMinutes());
     }
-    var reason = data && typeof data.reason === 'string' && data.reason ? data.reason : 'no reason given';
-    return 'You are suspended from contracts until ' + until + ': ' + reason;
+    var reason = data && typeof data.reason === 'string' && data.reason ? data.reason : t('app.no_reason_given');
+    return t('app.you_are_suspended_from_contracts_until') + until + ': ' + reason;
   }
 
   /* ---------- one line of help, and the Board's top ----------
@@ -8760,21 +8784,21 @@
      going (contracts taken, placed, on them: each a tap to where they are)
      and searches the contracts on it and the app's own screens. */
   var SCREEN_HELP = {
-    board: 'Open contracts you can take. Accept one to work it.',
-    mine: 'The contracts you took and the ones you placed, with their messages.',
-    place: 'Put a price on someone: pick who, the reward and the terms.',
-    onme: 'Contracts with you as the target, and what you can do about them.',
-    ledger: 'Your record: the contracts you finished, placed and survived.',
-    org: 'The hitman organisation: your place in it, its members and its money.'
+    board: t('app.open_contracts_you_can_take_accept'),
+    mine: t('app.the_contracts_you_took_and_the'),
+    place: t('app.put_a_price_on_someone_pick'),
+    onme: t('app.contracts_with_you_as_the_target'),
+    ledger: t('app.your_record_the_contracts_you_finished'),
+    org: t('app.the_hitman_organisation_your_place_in')
   };
-  var SCREENS = [['board', 'Board', 'open contracts to take'], ['mine', 'Mine', 'contracts you took or placed, messages'],
-    ['place', 'Place', 'put a contract on someone, reward'], ['onme', 'On me', 'contracts on you, buy out'],
-    ['ledger', 'Ledger', 'your record, finished contracts'], ['org', 'Org', 'the organisation, members, money']];
+  var SCREENS = [['board', t('app.board'), t('app.open_contracts_to_take')], ['mine', t('app.mine'), t('app.contracts_you_took_or_placed_messages')],
+    ['place', t('app.place'), t('app.put_a_contract_on_someone_reward')], ['onme', t('app.on_me'), t('app.contracts_on_you_buy_out')],
+    ['ledger', t('app.ledger'), t('app.your_record_finished_contracts')], ['org', t('app.org'), t('app.the_organisation_members_money')]];
 
   /** Opens a tab as its own button does (wireTab), so it reads afresh. */
   function tabNode(name) {
-    return Array.prototype.filter.call(document.querySelectorAll('.tab'), function (t) {
-      return t.dataset && t.dataset.tab === name;
+    return Array.prototype.filter.call(document.querySelectorAll('.tab'), function (tv) {
+      return tv.dataset && tv.dataset.tab === name;
     })[0] || null;
   }
   function goTab(name) {
@@ -8791,10 +8815,10 @@
     var data = state.mine;
     if (!data || data.burnerMissing) { return null; }
     var parts = [['mine', asList(data.accepted).length, 'taken'], ['mine', asList(data.created).length, 'placed'],
-      ['onme', asList(data.onMe).length, 'on you']];
+      ['onme', asList(data.onMe).length, t('app.on_you')]];
     var row = el('div', 'row home-summary');
     parts.forEach(function (p) {
-      var b = el('button', 'ghost' + (p[2] === 'on you' && p[1] > 0 ? ' danger' : ''), p[1] + ' ' + p[2]);
+      var b = el('button', 'ghost' + (p[0] === 'onme' && p[1] > 0 ? ' danger' : ''), p[1] + ' ' + p[2]);
       b.onclick = function () { goTab(p[0]); };
       row.appendChild(b);
     });
@@ -8807,8 +8831,8 @@
     var box = el('div', 'board-search');
     var input = el('input', 'search-field');
     input.type = 'search';
-    input.placeholder = 'Search contracts and screens';
-    input.setAttribute('aria-label', 'Search contracts and screens');
+    input.placeholder = t('app.search_contracts_and_screens');
+    input.setAttribute('aria-label', t('app.search_contracts_and_screens'));
     input.value = state.find || '';
     var screens = el('div', 'row search-screens');
     function apply() {
@@ -8867,7 +8891,7 @@
     if (data && data.rumours && data.rumours.broker) { view.appendChild(brokerPanel()); }
     var contracts = asList(data && data.contracts);
     if (!data || contracts.length === 0) {
-      view.appendChild(el('div', 'empty', 'No contracts on the board.'));
+      view.appendChild(el('div', 'empty', t('app.no_contracts_on_the_board')));
       search.apply();
       return;
     }
@@ -8884,10 +8908,10 @@
     var pages = Number(data.pages) || 1;
     if (pages > 1) {
       var nav = el('div', 'row pager');
-      var back = el('button', 'ghost ico i-left', 'Back');
+      var back = el('button', 'ghost ico i-left', t('app.back'));
       back.disabled = page <= 1;
       back.onclick = function () { state.boardPage = page - 1; refresh(); };
-      var forward = el('button', 'ghost ico ico-end i-right', 'More');
+      var forward = el('button', 'ghost ico ico-end i-right', t('app.more'));
       forward.disabled = page >= pages;
       forward.onclick = function () { state.boardPage = page + 1; refresh(); };
       nav.appendChild(back);
@@ -8907,9 +8931,9 @@
   var broker = { people: null, picked: null, asking: false };
 
   function rumourBand(r) {
-    if (r.goods && !(Number(r.high) > 0)) { return 'Pays in goods'; }
-    if (!(Number(r.high) > 0)) { return 'Pay unknown'; }
-    return money(r.low) + ' \u2013 ' + money(r.high) + (r.goods ? ' and goods' : '');
+    if (r.goods && !(Number(r.high) > 0)) { return t('app.pays_in_goods'); }
+    if (!(Number(r.high) > 0)) { return t('app.pay_unknown'); }
+    return money(r.low) + ' \u2013 ' + money(r.high) + (r.goods ? t('app.and_goods') : '');
   }
 
   function rumourCard(contract, rules) {
@@ -8917,25 +8941,25 @@
     var node = el('div', 'card is-rumour');
     var head = el('div', 'card-head');
     var who = el('div', 'identity');
-    who.appendChild(el('div', 'target', 'A rumour'));
-    who.appendChild(el('div', 'reason', 'Word is somebody wants a job done around '
-      + (r.area || 'the city') + '.'));
+    who.appendChild(el('div', 'target', t('app.a_rumour')));
+    who.appendChild(el('div', 'reason', t('app.word_is_somebody_wants_a_job')
+      + (r.area || t('app.the_city')) + '.'));
     head.appendChild(who);
     node.appendChild(head);
     // On a line of its own: a band is two figures, too wide for the stamp.
-    node.appendChild(el('div', 'rumour-band', 'Pays about ' + rumourBand(r)));
+    node.appendChild(el('div', 'rumour-band', t('app.pays_about') + rumourBand(r)));
     // The band already says "left" ("Under 1 hour left").
     if (contract.timeLeft) { node.appendChild(el('div', 'hint', contract.timeLeft)); }
     var row = el('div', 'row');
     // A broker briefs; they do not go looking for one.
     if (rules.npc && !rules.broker) {
-      var ask = el('button', 'ghost ico i-eye', 'Ask the broker');
+      var ask = el('button', 'ghost ico i-eye', t('app.ask_the_broker'));
       ask.onclick = function () {
         once('rumour:' + contract.id, function () {
           return post('rumourBrief', { id: contract.id }).then(function (res) {
             if (!res.ok) { say(failText(res)); return; }
-            say('The broker filled you in. You have ' + (Number(res.data && res.data.minutes) || 0)
-              + ' minutes to act on it.', 'ok');
+            say(t('app.the_broker_filled_you_in_you') + (Number(res.data && res.data.minutes) || 0)
+              + t('app.minutes_to_act_on_it'), 'ok');
             refresh();
           });
         });
@@ -8944,15 +8968,15 @@
     }
     if (rules.broker) {
       var brief = el('button', broker.picked ? 'primary ico i-usercheck' : 'ghost ico i-usercheck',
-        'Brief them');
+        t('app.brief_them'));
       brief.onclick = function () {
         if (!broker.picked) {
-          return say('Pick who is standing with you first: Who is near me?, above.');
+          return say(t('app.pick_who_is_standing_with_you'));
         }
         once('brief:' + contract.id, function () {
           return post('brokerBrief', { id: contract.id, who: broker.picked }).then(function (res) {
             if (!res.ok) { say(failText(res)); return; }
-            say('Briefed. They can see this one on their board now.', 'ok');
+            say(t('app.briefed_they_can_see_this_one'), 'ok');
           });
         });
       };
@@ -8968,40 +8992,40 @@
      on the map, the district it stands in (the server's, by name only). */
   function rumourHint(rules) {
     if (rules.broker) {
-      return 'Pick somebody standing with you above, then Brief them on this one.';
+      return t('app.pick_somebody_standing_with_you_above');
     }
     if (rules.npc) {
       if (rules.brokerArea) {
-        return 'Find the broker \u2014 ask around ' + rules.brokerArea
-          + '. Ask them about it to see who it is on and take it.';
+        return t('app.find_the_broker_ask_around') + rules.brokerArea
+          + t('app.ask_them_about_it_to_see');
       }
       return rules.blip
-        ? 'Find the broker (marked on your map) and ask about it to see who it is on and take it.'
-        : 'Find the broker and ask about it to see who it is on and take it.';
+        ? t('app.find_the_broker_marked_on_your')
+        : t('app.find_the_broker_and_ask_about');
     }
-    return 'A broker can tell you who it is on, and then you can take it.';
+    return t('app.a_broker_can_tell_you_who');
   }
 
   /* No burner phone, with the item it takes on this server. */
   function burnerText(item) {
-    return 'You need a burner phone' + (item ? ' (item: ' + item + ')' : '') + '.';
+    return t('app.you_need_a_burner_phone') + (item ? ' (item: ' + item + ')' : '') + '.';
   }
 
   function brokerPanel() {
     var box = el('div', 'notice broker-panel');
-    box.appendChild(el('div', 'tip-state ico i-usercheck', 'You are a broker. Pick somebody '
-      + 'standing with you, then Brief them on a rumour below.'));
+    box.appendChild(el('div', 'tip-state ico i-usercheck', t('app.you_are_a_broker_pick_somebody')
+      + t('app.standing_with_you_then_brief_them')));
     var people = asList(broker.people);
     if (broker.people && !people.length) {
-      box.appendChild(el('div', 'hint', 'Nobody is standing close enough.'));
+      box.appendChild(el('div', 'hint', t('app.nobody_is_standing_close_enough')));
     }
     people.forEach(function (p, i) {
       var pick = el('button', broker.picked === p.handle ? 'primary' : 'ghost',
-        'Person ' + (i + 1) + ', ' + (Number(p.metres) || 0) + ' m away');
+        'Person ' + (i + 1) + ', ' + (Number(p.metres) || 0) + t('app.m_away'));
       pick.onclick = function () { broker.picked = p.handle; render(); };
       box.appendChild(pick);
     });
-    var look = el('button', 'ghost ico i-eye', 'Who is near me?');
+    var look = el('button', 'ghost ico i-eye', t('app.who_is_near_me'));
     look.onclick = function () {
       once('brokerNearby', function () {
         return post('brokerNearby', {}).then(function (res) {
@@ -9034,7 +9058,7 @@
     asList(data.intentHeld).forEach(function (h) {
       any = true;
       view.appendChild(el('div', 'notice gold intent-hold', (h.ref ? 'Ref ' + h.ref + ': ' : '')
-        + intentHoldText(h, 'A payout of yours is held.')));
+        + intentHoldText(h, t('app.a_payout_of_yours_is_held'))));
     });
 
     // The one they came here for (just accepted, or tapped on the board)
@@ -9053,15 +9077,15 @@
 
     if (accepted.length) {
       any = true;
-      view.appendChild(el('h3', 'section', 'Contracts you took'));
+      view.appendChild(el('h3', 'section', t('app.contracts_you_took')));
       focusFirst(accepted).forEach(mineCard);
     }
     if (created.length) {
       any = true;
-      view.appendChild(el('h3', 'section', 'Contracts you placed'));
+      view.appendChild(el('h3', 'section', t('app.contracts_you_placed')));
       focusFirst(created).forEach(mineCard);
     }
-    if (!any) view.appendChild(el('div', 'empty', 'Nothing active.'));
+    if (!any) view.appendChild(el('div', 'empty', t('app.nothing_active')));
     else view.appendChild(refHint());
   }
 
@@ -9078,10 +9102,10 @@
     // page had already said there was a price on this player's head.
     var rows = asList(state.mine && state.mine.onMe);
     if (!rows.length) {
-      view.appendChild(el('div', 'empty', 'Nobody is looking for you. That you know of.'));
+      view.appendChild(el('div', 'empty', t('app.nobody_is_looking_for_you_that')));
       return;
     }
-    view.appendChild(el('div', 'notice', 'There is a price on your head.'));
+    view.appendChild(el('div', 'notice', t('app.there_is_a_price_on_your')));
     rows.forEach(function (c) { view.appendChild(card(c, 'onme')); });
     view.appendChild(refHint());
   }
@@ -9109,20 +9133,20 @@
     var shared = data.colleagues !== undefined && data.colleagues !== null;
     var others = asList(data.colleagues);
 
-    var shows = shared ? 'only shows contracts on you and on other whitelisted-job members.'
-      : 'only shows contracts on you.';
+    var shows = shared ? t('app.only_shows_contracts_on_you_and')
+      : t('app.only_shows_contracts_on_you');
     // Naming the job that puts them here when they hold it rather than
     // work it (a boss can hire anybody), with how to get the whole app back.
     view.appendChild(el('div', 'notice ok', data.heldJob
-      ? 'You hold the ' + data.heldJob + ' job, a whitelisted one, so this app ' + shows
-        + ' Quit it from your job menu for the whole app.'
-      : 'You\u2019re on a whitelisted job, so this app ' + shows));
+      ? t('app.you_hold_the') + data.heldJob + t('app.job_a_whitelisted_one_so_this') + shows
+        + t('app.quit_it_from_your_job_menu')
+      : t('app.you_re_on_a_whitelisted_job') + shows));
     // Its one way to ask again while open: nothing pushes a colleague's
     // contract moving to this screen, since that would date it for every
     // officer. Through the same allowance as every read.
     var again = el('div', 'row actions');
-    again.appendChild(actionButton('ghost ico i-refresh', 'Refresh', 'jobview:refresh',
-      'Refreshing\u2026', function () { return readJobView({ keep: true }); }));
+    again.appendChild(actionButton('ghost ico i-refresh', t('app.refresh'), 'jobview:refresh',
+      t('app.refreshing'), function () { return readJobView({ keep: true }); }));
     // Notify me, where the server sends whether it is on: it sends that
     // only while it allows it (Config.WhitelistedView.Alerts).
     var alerts = data.alerts && typeof data.alerts === 'object' ? data.alerts : null;
@@ -9130,14 +9154,14 @@
     view.appendChild(again);
     if (alerts) {
       view.appendChild(el('div', 'hint', alerts.on === true
-        ? 'Notify me is on: your phone tells you when a new contract appears here, while '
-          + 'you are in the city.'
-        : 'Notify me is off. Turn it on and your phone tells you when a new contract appears '
-          + 'here, while you are in the city.'));
+        ? t('app.notify_me_is_on_your_phone')
+          + t('app.you_are_in_the_city')
+        : t('app.notify_me_is_off_turn_it')
+          + t('app.here_while_you_are_in_the')));
     }
     if (!mine.length && !others.length) {
       view.appendChild(el('div', 'empty', shared
-        ? 'No contracts on you or other whitelisted-job members.' : 'No contracts on you.'));
+        ? t('app.no_contracts_on_you_or_other') : t('app.no_contracts_on_you')));
       return;
     }
     if (!shared) {
@@ -9145,17 +9169,17 @@
       return;
     }
 
-    view.appendChild(el('h3', 'section', 'Contracts on you'));
+    view.appendChild(el('h3', 'section', t('app.contracts_on_you')));
     if (mine.length) {
       mine.forEach(function (entry) { view.appendChild(jobViewCard(entry, true)); });
     } else {
-      view.appendChild(el('div', 'hint', 'None on you.'));
+      view.appendChild(el('div', 'hint', t('app.none_on_you')));
     }
-    view.appendChild(el('h3', 'section', 'Contracts on whitelisted jobs'));
+    view.appendChild(el('h3', 'section', t('app.contracts_on_whitelisted_jobs')));
     if (others.length) {
       others.forEach(function (entry) { view.appendChild(jobViewCard(entry, false)); });
     } else {
-      view.appendChild(el('div', 'hint', 'None on other whitelisted-job members.'));
+      view.appendChild(el('div', 'hint', t('app.none_on_other_whitelisted_job_members')));
     }
   }
 
@@ -9164,8 +9188,8 @@
      it on. Words on the button rather than a box to tick, as Mute on a
      thread: which way it is set is the whole point of it. */
   function jobViewAlertsButton(on) {
-    var button = actionButton('ghost ico i-phone', on ? 'Turn off Notify me' : 'Notify me',
-      'jobview:alerts', on ? 'Turning off\u2026' : 'Turning on\u2026',
+    var button = actionButton('ghost ico i-phone', on ? t('app.turn_off_notify_me') : t('app.notify_me'),
+      'jobview:alerts', on ? t('app.turning_off') : t('app.turning_on'),
       function () { return setJobViewAlerts(!on); });
     button.id = 'jobview-alerts';
     return button;
@@ -9187,7 +9211,7 @@
       var now = !!(r.data && r.data.on === true);
       if (state.jobView) { state.jobView.alerts = { on: now }; }
       redrawFor(['jobview']);
-      say(now ? 'Notify me is on.' : 'Notify me is off.', 'ok');
+      say(now ? t('app.notify_me_is_on') : t('app.notify_me_is_off'), 'ok');
     });
   }
 
@@ -9199,7 +9223,7 @@
     var left = el('div', 'card-identity');
     left.appendChild(portrait(entry.targetName, null));
     var who = el('div', 'identity');
-    who.appendChild(el('div', 'target', entry.targetName || 'Unknown'));
+    who.appendChild(el('div', 'target', entry.targetName || t('app.unknown')));
     if (entry.targetJob) { who.appendChild(el('div', 'target-job', entry.targetJob)); }
     left.appendChild(who);
     head.appendChild(left);
@@ -9211,8 +9235,8 @@
     if (entry.hitmenActive !== undefined && entry.hitmenActive !== null) {
       var taken = Number(entry.hitmenActive) || 0;
       meta.appendChild(taken > 0
-        ? chip('Taken by ' + taken + (taken === 1 ? ' hitman' : ' hitmen'), 'hot', 'i-users')
-        : chip('Open \u2014 no hitman yet', null, 'i-users'));
+        ? chip(t('app.taken_by') + taken + (taken === 1 ? ' hitman' : ' hitmen'), 'hot', 'i-users')
+        : chip(t('app.open_no_hitman_yet'), null, 'i-users'));
     }
     var posted = agoText(entry.postedAt);
     if (posted) {
@@ -9226,11 +9250,11 @@
     // shows those to the target. A colleague's entry never carries either.
     if (own) {
       if (entry.creatorName) {
-        meta.appendChild(chip('Placed by ' + entry.creatorName, null, 'i-briefcase'));
+        meta.appendChild(chip(t('app.placed_by') + entry.creatorName, null, 'i-briefcase'));
       }
       asList(entry.operatives).forEach(function (o) {
         if (o && o.name) {
-          meta.appendChild(chip((o.alias || 'An operative') + ': ' + o.name, 'hot', 'i-user'));
+          meta.appendChild(chip((o.alias || t('app.an_operative')) + ': ' + o.name, 'hot', 'i-user'));
         }
       });
     }
@@ -9250,10 +9274,10 @@
       // The bulletin said a hitman bought an informant tip on them: when,
       // never who or where.
       var tip = el('div', 'tip-told');
-      tip.appendChild(el('div', 'tip-state ico i-eye', 'A hitman has a tip on their location.'));
+      tip.appendChild(el('div', 'tip-state ico i-eye', t('app.a_hitman_has_a_tip_on')));
       var tipWhen = agoText(entry.tipAdvisedAt);
       if (tipWhen) {
-        tip.appendChild(el('div', 'hint', 'Tipped off ' + tipWhen.charAt(0).toLowerCase()
+        tip.appendChild(el('div', 'hint', t('app.tipped_off') + tipWhen.charAt(0).toLowerCase()
           + tipWhen.slice(1) + '.'));
       }
       node.appendChild(tip);
@@ -9278,7 +9302,7 @@
       // What the success rate is worked out from beside it: the rate was
       // drawn and the contracts that brought it down were not.
       if (typeof record.failed === 'number') {
-        stats.appendChild(tally(record.failed, 'abandoned or lost'));
+        stats.appendChild(tally(record.failed, t('app.abandoned_or_lost')));
       }
       stats.appendChild(tally(record.placed, 'placed'));
       stats.appendChild(tally(record.survived, 'survived'));
@@ -9295,8 +9319,8 @@
     var waiting = Number(data.waiting) || 0;
     if (waiting > 0) {
       view.appendChild(el('div', 'hint', waiting + ' payment' + (waiting === 1 ? '' : 's')
-        + ' waiting for room. Make room and ' + (waiting === 1 ? 'it is' : 'they are')
-        + ' handed over.'));
+        + t('app.waiting_for_room_make_room_and') + (waiting === 1 ? t('app.it_is') : t('app.they_are'))
+        + t('app.handed_over_2')));
     }
 
     /* Photos kept for this client in the app whose ledger row is gone:
@@ -9307,7 +9331,7 @@
     });
 
     if (!rows.length && !kept.length) {
-      view.appendChild(el('div', 'empty', 'No history yet.'));
+      view.appendChild(el('div', 'empty', t('app.no_history_yet')));
       view.appendChild(buildStamp());
       return;
     }
@@ -9316,16 +9340,16 @@
       // The same face and name as the entry had on the board, so a closed
       // file reads as the one that was open.
       var head = el('div', 'card-identity');
-      head.appendChild(portrait(row.target_name || 'Unknown', null));
+      head.appendChild(portrait(row.target_name || t('app.unknown'), null));
       var who = el('div', 'identity');
-      who.appendChild(el('div', 'target', row.target_name || 'Unknown'));
+      who.appendChild(el('div', 'target', row.target_name || t('app.unknown')));
       who.appendChild(el('div', 'reason', row.reason || ''));
       head.appendChild(who);
       node.appendChild(head);
       var meta = el('div', 'meta');
       // The part they played, in words: "creator" and "hitman" were the
       // server's field values, read off the row as they were stored.
-      meta.appendChild(chip(ROLE_WORDS[row.role] || 'You were on it', 'role',
+      meta.appendChild(chip(ROLE_WORDS[row.role] || t('app.you_were_on_it'), 'role',
         ROLE_ICONS[row.role] || 'i-user'));
       var outcome = ledgerOutcome(row);
       meta.appendChild(chip(outcome.text, 'hot', outcome.icon));
@@ -9350,10 +9374,10 @@
     });
 
     if (kept.length) {
-      view.appendChild(el('h3', 'section', 'Photos kept in this app'));
+      view.appendChild(el('h3', 'section', t('app.photos_kept_in_this_app')));
       kept.forEach(function (photo) {
         var node = el('div', 'card');
-        node.appendChild(el('div', 'target', 'Kill photo'));
+        node.appendChild(el('div', 'target', t('app.kill_photo')));
         var taken = agoText(photo.taken_at);
         if (taken) { node.appendChild(el('div', 'reason', 'Taken ' + taken.toLowerCase())); }
         node.appendChild(proofLine(photo));
@@ -9371,11 +9395,11 @@
   function proofLine(photo) {
     var line = el('div', 'proof-line');
     if (photo.state === 'pending' || photo.state === 'kept') {
-      line.appendChild(actionButton('ghost ico i-camera', 'View photo',
-        'proof:' + photo.handle, 'Opening\u2026',
+      line.appendChild(actionButton('ghost ico i-camera', t('app.view_photo'),
+        'proof:' + photo.handle, t('app.opening'),
         function () { return openProof(photo.handle); }));
       line.appendChild(el('div', 'hint', photo.state === 'kept'
-        ? 'Kept for you in this app.' : 'You can see it once.'));
+        ? t('app.kept_for_you_in_this_app_3') : t('app.you_can_see_it_once')));
     } else if (PROOF_WORDS[photo.state]) {
       line.appendChild(el('div', 'hint', PROOF_WORDS[photo.state]));
     }
@@ -9385,23 +9409,23 @@
   // The icon beside the part a player played in a closed contract.
   var ROLE_ICONS = { hitman: 'i-user', creator: 'i-briefcase', target: 'i-eye' };
   // And the part itself, as they would say it.
-  var ROLE_WORDS = { creator: 'You placed it', hitman: 'You took it', target: 'It was on you' };
+  var ROLE_WORDS = { creator: t('app.you_placed_it'), hitman: t('app.you_took_it'), target: t('app.it_was_on_you') };
 
   /* How a closed contract ended, from the row's kind (the server's Ledger:
      'paid', 'withdrawn', 'refunded', 'cancelled', 'buyout'; a row from before there were
      kinds is a payout). */
   function ledgerOutcome(row) {
     var kind = row.kind || 'paid';
-    if (kind === 'withdrawn') { return { text: 'Withdrawn', icon: 'i-xcircle' }; }
-    if (kind === 'refunded') { return { text: 'Ran out \u2014 refunded', icon: 'i-clock' }; }
-    if (kind === 'cancelled') { return { text: 'Cancelled \u2014 refunded', icon: 'i-xcircle' }; }
-    if (kind === 'buyout') { return { text: 'Bought out', icon: 'i-exit' }; }
+    if (kind === 'withdrawn') { return { text: t('app.withdrawn'), icon: 'i-xcircle' }; }
+    if (kind === 'refunded') { return { text: t('app.ran_out_refunded'), icon: 'i-clock' }; }
+    if (kind === 'cancelled') { return { text: t('app.cancelled_refunded'), icon: 'i-xcircle' }; }
+    if (kind === 'buyout') { return { text: t('app.bought_out'), icon: 'i-exit' }; }
     // A proof item handed to the placer (Config.Improvements.ProofItems):
     // paid as a kill would be, but nobody saw one.
-    if (row.fulfilment === 'proof') { return { text: 'Proof handed over', icon: 'i-usercheck' }; }
+    if (row.fulfilment === 'proof') { return { text: t('app.proof_handed_over'), icon: 'i-usercheck' }; }
     return row.fulfilment === 'kidnapping'
-      ? { text: 'Delivered alive', icon: 'i-usercheck' }
-      : { text: 'Eliminated', icon: 'i-crosshair' };
+      ? { text: t('app.delivered_alive'), icon: 'i-usercheck' }
+      : { text: t('app.eliminated'), icon: 'i-crosshair' };
   }
 
   /* The money a row moved, from this player's side: what they were paid,
@@ -9415,14 +9439,14 @@
       // The operatives' stakes it handed over are counted in, and said so
       // (the server's Ledger.ended): never whose.
       var stakes = Number(row.stakes) || 0;
-      return money(amount) + ' back to you'
-        + (stakes > 0 ? ' (' + money(stakes) + ' of it forfeited stakes)' : '');
+      return money(amount) + t('app.back_to_you')
+        + (stakes > 0 ? ' (' + money(stakes) + t('app.of_it_forfeited_stakes') : '');
     }
     if (kind === 'buyout') {
-      return row.role === 'target' ? 'You paid ' + money(amount) : money(amount) + ' to you';
+      return row.role === 'target' ? t('app.you_paid') + money(amount) : money(amount) + t('app.to_you');
     }
-    if (row.role === 'hitman') { return 'Paid you ' + money(amount); }
-    if (row.role === 'creator') { return 'Cost you ' + money(amount); }
+    if (row.role === 'hitman') { return t('app.paid_you') + money(amount); }
+    if (row.role === 'creator') { return t('app.cost_you') + money(amount); }
     return null;
   }
 
@@ -9440,14 +9464,14 @@
      anyone asks them. */
   function buildStamp() {
     var build = (typeof window !== 'undefined' && window.CH_BUILD) || 'unknown';
-    var stamp = el('div', 'hint build-stamp', 'Crimson-Hitman build ' + build);
+    var stamp = el('div', 'hint build-stamp', t('app.crimson_hitman_build') + build);
     stamp.onclick = function () { Diag.tapped(); };
     return stamp;
   }
 
   function viewThread(view) {
-    var t = state.thread;
-    if (!t) { state.tab = 'mine'; return render(); }
+    var tv = state.thread;
+    if (!tv) { state.tab = 'mine'; return render(); }
 
     // The head stays on the top edge (see the stylesheet): Back, who and
     // what the thread is about, and Call on one line, Mute on its own under
@@ -9456,7 +9480,7 @@
     var row = el('div', 'row thread-bar');
     head.appendChild(row);
 
-    var back = el('button', 'ghost ico i-left', 'Back');
+    var back = el('button', 'ghost ico i-left', t('app.back'));
     back.onclick = function () { navigated(); state.tab = 'mine'; render(); };
     row.appendChild(back);
 
@@ -9472,14 +9496,14 @@
     // A hitman's thread is with the person who placed the contract, said
     // as that: the server called them "Client", which a player new to the
     // app could not place.
-    var placerSide = t.contract.role === 'hitman';
-    var withWhom = placerSide ? 'the person who placed it'
-      : t.thread && t.thread.alias
-        ? t.thread.alias + (t.thread.name ? ' (' + t.thread.name + ')' : '')
+    var placerSide = tv.contract.role === 'hitman';
+    var withWhom = placerSide ? t('app.the_person_who_placed_it')
+      : tv.thread && tv.thread.alias
+        ? tv.thread.alias + (tv.thread.name ? ' (' + tv.thread.name + ')' : '')
         : null;
     var about = el('div', 'hint');
-    if (t.contract.targetName) {
-      about.appendChild(el('div', 'about', t.contract.targetName));
+    if (tv.contract.targetName) {
+      about.appendChild(el('div', 'about', tv.contract.targetName));
     }
     if (withWhom) {
       about.appendChild(el('div', 'with', 'with ' + withWhom));
@@ -9492,32 +9516,32 @@
     // Not when both sides are anonymous: neither can be rung and the server
     // sends nothing, so the button could only say calls were off. A
     // creator's thread names the operative only when they chose to be seen.
-    var bothAnonymous = t.contract.creatorAnonymous === true
-      && (t.contract.role === 'hitman'
-        ? t.contract.myAnonymous === true
-        : !!(t.thread && !t.thread.name));
+    var bothAnonymous = tv.contract.creatorAnonymous === true
+      && (tv.contract.role === 'hitman'
+        ? tv.contract.myAnonymous === true
+        : !!(tv.thread && !tv.thread.name));
     // Nor where either side is anonymous and the phone cannot hide the
     // number as the server requires (settings().canMask): every Call there
     // was refused, and a call asked of the other side sent them to a Call
     // that was refused too.
-    var anyAnonymous = t.contract.creatorAnonymous === true
-      || (t.contract.role === 'hitman' ? t.contract.myAnonymous === true
-        : !(t.thread && t.thread.name));
-    if (state.call === threadKey(t.contract, t.thread)) {
+    var anyAnonymous = tv.contract.creatorAnonymous === true
+      || (tv.contract.role === 'hitman' ? tv.contract.myAnonymous === true
+        : !(tv.thread && tv.thread.name));
+    if (state.call === threadKey(tv.contract, tv.thread)) {
       // lb-phone draws no call screen for a call placed from here — its
       // CreateCall is built for payphones — so this is the only way the
       // caller can put the phone down. Whatever the settings say now: calls
       // switched off mid-call took the button away, and with it the call's
       // only end.
-      var hang = el('button', 'ghost ico i-xcircle', 'Hang up');
+      var hang = el('button', 'ghost ico i-xcircle', t('app.hang_up'));
       hang.id = 'thread-hangup';
       hang.onclick = function () { endCall(); };
       row.appendChild(hang);
     } else if (settings().calls && !bothAnonymous
         && !(anyAnonymous && settings().canMask === false)) {
       // Held while it is asked, so a double tap places one call, not two.
-      var call = actionButton('ghost ico i-phone', 'Call',
-        'call:' + threadKey(t.contract, t.thread), 'Calling\u2026',
+      var call = actionButton('ghost ico i-phone', t('app.call'),
+        'call:' + threadKey(tv.contract, tv.thread), t('app.calling'),
         function () { return requestCall(); });
       call.id = 'thread-call';
       row.appendChild(call);
@@ -9531,15 +9555,15 @@
     // be put back with a tap: at 390px "with Operative #2" was cut to
     // "with Operat…", and a client with several operatives could not tell
     // which one they were writing to.
-    var mute = actionButton('ghost', t.muted ? 'Unmute' : 'Mute',
-      'mute:' + threadKey(t.contract, t.thread),
-      t.muted ? 'Unmuting\u2026' : 'Muting\u2026',
+    var mute = actionButton('ghost', tv.muted ? t('app.unmute') : t('app.mute'),
+      'mute:' + threadKey(tv.contract, tv.thread),
+      tv.muted ? t('app.unmuting') : t('app.muting'),
       function () { return toggleMute(); });
     mute.id = 'thread-mute';
     var tools = el('div', 'row thread-tools');
     tools.appendChild(mute);
     // Reporting this conversation to staff, with its last messages.
-    var report = reportButton(t.contract, t.thread);
+    var report = reportButton(tv.contract, tv.thread);
     report.id = 'thread-report';
     tools.appendChild(report);
     head.appendChild(tools);
@@ -9547,18 +9571,18 @@
     view.appendChild(head);
 
     var thread = el('div', 'thread');
-    t.messages.forEach(function (m) {
+    tv.messages.forEach(function (m) {
       var msg = el('div', 'msg' + (m.mine ? ' mine' : ''));
       // Signed by the placer, to a hitman: a message stored before the
       // server named them so still carries "Client".
       msg.appendChild(el('div', 'who', placerSide && !m.mine && (!m.alias || m.alias === 'Client')
-        ? 'The person who placed it' : m.alias));
+        ? t('app.the_person_who_placed_it_2') : m.alias));
       msg.appendChild(el('div', null, m.body));
       thread.appendChild(msg);
     });
     // A new thread was a header and a text box with nothing between them.
-    if (!t.messages.length) {
-      thread.appendChild(el('div', 'hint', 'No messages yet.'));
+    if (!tv.messages.length) {
+      thread.appendChild(el('div', 'hint', t('app.no_messages_yet')));
     }
     view.appendChild(thread);
 
@@ -9573,17 +9597,17 @@
     var field = el('div', 'field compose');
     var input = make('input');
     input.id = 'compose-input';
-    input.placeholder = 'Say something';
+    input.placeholder = t('app.say_something');
     input.maxLength = settings().messageMaxLength || 200;
-    input.value = t.draft || '';
+    input.value = tv.draft || '';
     input.oninput = function () {
-      t.draft = input.value;
-      state.drafts[threadKey(t.contract, t.thread)] = input.value;
+      tv.draft = input.value;
+      state.drafts[threadKey(tv.contract, tv.thread)] = input.value;
     };
 
     // Per conversation, not per contract: a send to one operative must not
     // lock the box in another's thread.
-    var busyKey = 'message:' + threadKey(t.contract, t.thread);
+    var busyKey = 'message:' + threadKey(tv.contract, tv.thread);
 
     function send() {
       var body = input.value;
@@ -9595,7 +9619,7 @@
     field.appendChild(input);
 
     var go = el('button', 'primary',
-      isBusy(busyKey) ? 'Sending\u2026' : 'Send');
+      isBusy(busyKey) ? t('app.sending') : t('app.send'));
     if (isBusy(busyKey)) { go.disabled = true; }
     else { go.onclick = send; }
     field.appendChild(go);
@@ -9626,9 +9650,9 @@
     } else if (state.walletFailed) {
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', state.walletFailed.text
-        + ' Money still works; items and weapons need another look.'
+        + t('app.money_still_works_items_and_weapons')
         + (state.walletFailed.code ? ' (code: ' + state.walletFailed.code + ')' : '')));
-      var again = el('button', 'ghost ico i-refresh', 'Try again');
+      var again = el('button', 'ghost ico i-refresh', t('app.try_again'));
       again.onclick = function () {
         state.walletFailed = null; state.walletPending = false; render();
       };
@@ -9642,9 +9666,9 @@
       var meta = el('div', 'stats');
       // Only what this server will actually take. A balance shown beside a
       // source that is switched off is an offer the form cannot honour.
-      if (wcaps.cashEnabled !== false) { meta.appendChild(balance('Cash', money(w.cash))); }
-      if (wcaps.bankEnabled !== false) { meta.appendChild(balance('Bank', money(w.bank))); }
-      if (wcaps.dirtyEnabled !== false) { meta.appendChild(balance('Dirty', money(w.dirty))); }
+      if (wcaps.cashEnabled !== false) { meta.appendChild(balance(t('app.cash'), money(w.cash))); }
+      if (wcaps.bankEnabled !== false) { meta.appendChild(balance(t('app.bank'), money(w.bank))); }
+      if (wcaps.dirtyEnabled !== false) { meta.appendChild(balance(t('app.dirty'), money(w.dirty))); }
       wallet.appendChild(meta);
       form.appendChild(wallet);
     } else {
@@ -9674,11 +9698,11 @@
             // Not "Money still works" where nothing does: the server's
             // boot recovery failed, and placing is refused too.
             state.walletFailed = (r.err === 'rate_limited')
-              ? { text: 'Reading your pockets too fast. Try again '
+              ? { text: t('app.reading_your_pockets_too_fast_try')
                   + retryIn(r.data && r.data.retryAfter) + '.' }
               : finalRefusal(r.err)
                 ? { text: ERRORS[r.err], final: true }
-                : { text: 'Could not read what you are carrying.',
+                : { text: t('app.could_not_read_what_you_are'),
                     code: r.err || 'no reply' };
           }
           redraw();
@@ -9689,8 +9713,8 @@
       // lost on the way to the client — would otherwise leave this branch
       // drawing nothing at all, forever, with no way to ask again.
       var waiting = el('div', 'card');
-      waiting.appendChild(el('div', 'hint', 'Reading what you are carrying…'));
-      var retry = el('button', 'ghost ico i-refresh', 'Try again');
+      waiting.appendChild(el('div', 'hint', t('app.reading_what_you_are_carrying')));
+      var retry = el('button', 'ghost ico i-refresh', t('app.try_again'));
       retry.onclick = function () { state.walletPending = false; render(); };
       waiting.appendChild(retry);
       form.appendChild(waiting);
@@ -9701,11 +9725,11 @@
        with nothing to say where one decision ended and the next began.
        Only the paper is new — every field, id and draft key, and the order
        they come in, is as it was. */
-    var subject = formSection('Subject');
-    subject.appendChild(labelled('Target', targetSearch()));
+    var subject = formSection(t('app.subject'));
+    subject.appendChild(labelled(t('app.target'), targetSearch()));
     form.appendChild(subject);
 
-    var job = formSection('The job');
+    var job = formSection(t('app.the_job'));
 
     // The reason control this server will actually accept.
     //
@@ -9731,25 +9755,25 @@
         opt.textContent = text;
         pick.appendChild(opt);
       });
-      job.appendChild(labelled('Reason', drafted(pick, 'reasonPreset', '1')));
+      job.appendChild(labelled(t('app.reason'), drafted(pick, 'reasonPreset', '1')));
     } else if (reasonMode !== 'off') {
-      job.appendChild(labelled('Reason',
-        drafted(textInput('reason', 'Why?', settings().reasonMaxLength || 140),
+      job.appendChild(labelled(t('app.reason'),
+        drafted(textInput('reason', t('app.why_2'), settings().reasonMaxLength || 140),
                 'reason')));
     }
 
     var mode = make('select');
     mode.id = 'mode';
-    [['exclusive', 'Exclusive — one hitman'],
-     ['competitive', 'Competitive — first to finish']].forEach(function (o) {
+    [['exclusive', t('app.exclusive_one_hitman')],
+     ['competitive', t('app.competitive_first_to_finish')]].forEach(function (o) {
       var opt = document.createElement('option');
       opt.value = o[0]; opt.textContent = o[1];
       mode.appendChild(opt);
     });
-    job.appendChild(labelled('Assignment', drafted(mode, 'mode', 'exclusive')));
+    job.appendChild(labelled(t('app.assignment'), drafted(mode, 'mode', 'exclusive')));
     form.appendChild(job);
 
-    var pay = formSection('Payment');
+    var pay = formSection(t('app.payment'));
 
     // How many times a contract can be collected, only where the server
     // allows more than once (Config.Limits.MaxPayoutSlots, 1 to 3). At 1,
@@ -9763,13 +9787,13 @@
       // past five.
       slots.max = slotCeiling();
       slots.onchange = function () { state.draft.slots = slots.value; renderSlots(); };
-      pay.appendChild(labelled('Payouts (how many times it can be collected)', slots));
+      pay.appendChild(labelled(t('app.payouts_how_many_times_it_can'), slots));
       var ceilingNote = el('div', 'hint');
       ceilingNote.id = 'slots-ceiling';
       pay.appendChild(ceilingNote);
       pay.appendChild(el('div', 'hint',
-        'Every payout is paid in and held up front. More hitmen may accept than there are ' +
-        'payouts — the first to finish are paid.'));
+        t('app.every_payout_is_paid_in_and') +
+        t('app.payouts_the_first_to_finish_are')));
     }
     // The least a contract may be worth (caps.minValue, 0 for none), said
     // where the money is set rather than in a refusal once it is all filled
@@ -9778,7 +9802,7 @@
     var leastValue = Number(payCaps.minValue) || 0;
     if (leastValue > 0) {
       pay.appendChild(el('div', 'hint', minRewardText(leastValue)
-        + (placingAliveOnly() || payCaps.bonusPercent === 0 ? '' : ' The kidnapping bonus does.')));
+        + (placingAliveOnly() || payCaps.bonusPercent === 0 ? '' : t('app.the_kidnapping_bonus_does'))));
     }
     // What a payout is paid for, on a server that places contracts for a
     // live delivery only. Said where the money is set, since it is what the
@@ -9786,8 +9810,8 @@
     // thing that told a creator they have to be at the handover.
     if (placingAliveOnly()) {
       pay.appendChild(el('div', 'hint',
-        'Contracts here only pay when the target is brought to you alive. You need '
-        + 'to be in the city to meet the hitman for the handover.'));
+        t('app.contracts_here_only_pay_when_the')
+        + t('app.to_be_in_the_city_to')));
     }
 
     var slotBox = el('div');
@@ -9795,7 +9819,7 @@
     pay.appendChild(slotBox);
     form.appendChild(pay);
 
-    var terms = formSection('Terms');
+    var terms = formSection(t('app.terms'));
 
     // Bounded by the ceiling the server sent, and told to the creator.
     // caps.bonusPercent was computed and shipped and never read, so a figure
@@ -9820,22 +9844,22 @@
       var bonusField = drafted(numberInput('bonus', bonusOpen), 'bonus', bonusOpen);
       if (bonusCap) { bonusField.max = bonusCap; }
       terms.appendChild(labelled(
-        'Kidnapping bonus %' + (bonusCap ? ' (up to ' + bonusCap + ')' : ''),
+        t('app.kidnapping_bonus_3') + (bonusCap ? t('app.up_to_2') + bonusCap + ')' : ''),
         bonusField));
       // It opens at 50 and is money taken now, which nothing said: a creator
       // holding exactly what they entered was refused for the half on top.
       // The total it comes to is said above the Place button.
       terms.appendChild(el('div', 'hint',
-        'Paid on top of ' + (slotCeiling() > 1 ? 'a payout' : 'the reward')
-        + ' when the target is delivered alive, plus any '
-        + 'items marked alive only. It is taken from you now with the rest, and '
-        + 'comes back if nobody earns it. Set 0 for none. Delivered alive means '
-        + 'brought to you: you have to be there in person for the handover.'));
+        t('app.paid_on_top_of') + (slotCeiling() > 1 ? t('app.a_payout') : t('app.the_reward'))
+        + t('app.when_the_target_is_delivered_alive')
+        + t('app.items_marked_alive_only_it_is')
+        + t('app.comes_back_if_nobody_earns_it')
+        + t('app.brought_to_you_you_have_to')));
     }
     // Not on a server without buyouts, where the figure was taken and then
     // quietly set to nothing.
     if (settings().buyouts !== false) {
-      terms.appendChild(labelled('Buyout price (0 for none)',
+      terms.appendChild(labelled(t('app.buyout_price_0_for_none_2'),
         drafted(numberInput('bailout', 0), 'bailout', '0')));
       // The server holds the price between the clean money in the reward,
       // bonus lines included, and a multiple of it, and moves anything
@@ -9843,19 +9867,19 @@
       // the 50% bonus became $15,000. Said here, and the price it settled on
       // is said once it is placed and on the client's card.
       terms.appendChild(el('div', 'hint',
-        'What the target can pay to close this early. It is kept between the '
-        + 'cash and bank you put up' + (placingAliveOnly() ? '' : ' (kidnapping bonus included)')
-        + ' and a few times that, and is moved to the nearest limit if outside.'));
+        t('app.what_the_target_can_pay_to')
+        + t('app.cash_and_bank_you_put_up') + (placingAliveOnly() ? '' : t('app.kidnapping_bonus_included'))
+        + t('app.and_a_few_times_that_and')));
     } else {
       delete state.draft.bailout;
     }
     // "Stake", the word every card, dialog and proposal uses for it. Set
     // here as a "failure penalty", it came back on the client's own card as
     // "$5,000 stake", which read as a second figure.
-    terms.appendChild(labelled("Hitman's stake (0 for none)",
+    terms.appendChild(labelled(t('app.hitmans_stake_0_for_none'),
       drafted(numberInput('penalty', 0), 'penalty', '0')));
     terms.appendChild(el('div', 'hint',
-      'A hitman stakes this when they accept, and forfeits it to you if they walk away.'));
+      t('app.a_hitman_stakes_this_when_they')));
 
     // How long it runs. The form has no deadline of its own: every contract
     // gets the server's default, and nothing here said what that was, so a
@@ -9873,11 +9897,11 @@
     // wait for a taker.
     function clockHint() {
       var ceiling = Number(settings().deadlineMaxMinutes) || 0;
-      return 'It runs for ' + durationText(Number(settings().defaultDeadlineMinutes) || 180)
-        + ', counted only while you, the target and a hitman on it are all in the city. '
-        + 'It does not start until someone accepts. Then it lapses and what you put up '
-        + 'comes back. Extend it from Mine'
-        + (ceiling > 0 ? ', up to ' + durationText(ceiling) + ' after you place it.' : '.');
+      return t('app.it_runs_for') + durationText(Number(settings().defaultDeadlineMinutes) || 180)
+        + t('app.counted_only_while_you_the_target')
+        + t('app.it_does_not_start_until_someone')
+        + t('app.comes_back_extend_it_from_mine')
+        + (ceiling > 0 ? t('app.up_to') + durationText(ceiling) + t('app.after_you_place_it') : '.');
     }
     var clock = el('div', 'hint', clockHint());
     terms.appendChild(clock);
@@ -9907,9 +9931,9 @@
       toggle.className = 'toggle';
       toggle.htmlFor = 'anon';
       toggle.appendChild(anon);
-      toggle.appendChild(el('span', null, 'Place anonymously'
+      toggle.appendChild(el('span', null, t('app.place_anonymously')
         + (anonymityFee('creator') > 0 ? ' (costs ' + money(anonymityFee('creator'))
-          + ' from your ' + anonymityAccount() + ')' : '')));
+          + t('app.from_your') + anonymityAccount() + ')' : '')));
       anonSlot.appendChild(toggle);
     }
     drawAnonOption();
@@ -9926,9 +9950,9 @@
       orgToggle.className = 'toggle';
       orgToggle.htmlFor = 'to-org';
       orgToggle.appendChild(org);
-      orgToggle.appendChild(el('span', null, 'Send to ' + String(toOrg.label || 'the organisation')
-        + ' (a boss assigns it; not taken within ' + durationText(Number(toOrg.minutes) || 30)
-        + ', it goes on the open board)'));
+      orgToggle.appendChild(el('span', null, t('app.send_to') + String(toOrg.label || t('app.the_organisation'))
+        + t('app.a_boss_assigns_it_not_taken') + durationText(Number(toOrg.minutes) || 30)
+        + t('app.it_goes_on_the_open_board')));
       terms.appendChild(orgToggle);
       // Several organisations: which one it goes to.
       var orgList = Array.isArray(toOrg.orgs) ? toOrg.orgs : [];
@@ -9985,15 +10009,15 @@
     // second places it. Placing was the one charge in the app on one tap.
     var armed = state.placeArmed && !isBusy('create');
     var submit = el('button', armed ? 'danger' : 'primary',
-      isBusy('create') ? 'Placing\u2026'
-        : armed ? state.placeArmed.label : 'Place contract');
+      isBusy('create') ? t('app.placing')
+        : armed ? state.placeArmed.label : t('app.place_contract'));
     submit.id = 'place-submit';
     placeSubmit = submit;
     // Paused by staff, or suspended: placing is refused, so not live. The
     // banner at the top says why.
     if (takingPaused() && !isBusy('create')) {
       submit.disabled = true;
-      submit.textContent = 'Place contract';
+      submit.textContent = t('app.place_contract');
     }
     if (isBusy('create')) {
       submit.disabled = true;
@@ -10051,14 +10075,14 @@
       state.draft.slots = String(count);
       var field = document.getElementById('slots-count');
       if (field) { field.value = String(count); }
-      if (note) { note.textContent = 'This server allows at most ' + count + ' payouts.'; }
+      if (note) { note.textContent = t('app.this_server_allows_at_most') + count + t('app.payouts_2'); }
       /* At one there is no count field to say it beside, and payouts 2 and
          up went with whatever was staged on them and no word. Said as a
          notice instead. */
       if (count === 1) {
-        say('This server now takes one payout per contract; '
+        say(t('app.this_server_now_takes_one_payout_2')
           + (typed === 2 ? 'payout 2 was' : typed === 3 ? 'payouts 2 and 3 were'
-            : 'payouts 2 to ' + typed + ' were') + ' removed.', 'caution');
+            : 'payouts 2 to ' + typed + ' were') + t('app.removed_2'), 'caution');
       }
     } else if (note) {
       note.textContent = '';
@@ -10077,7 +10101,7 @@
     for (var i = 1; i <= count; i++) {
       var slot = el('div', 'slot');
       // Numbered only where there can be more than one.
-      slot.appendChild(el('h4', null, slotCeiling() > 1 ? 'Payout ' + i : 'Reward'));
+      slot.appendChild(el('h4', null, slotCeiling() > 1 ? 'Payout ' + i : t('app.reward')));
 
       var caps = (state.wallet && state.wallet.caps) || {};
       var split = el('div', 'split');
@@ -10089,7 +10113,7 @@
         // and the whole contract was then refused with "That reward does not
         // add up" — a message about the numbers, when the numbers were fine
         // and the source was simply not accepted.
-        if (caps[source + 'Enabled'] === false) { return; }
+        if (caps[source + t('app.enabled')] === false) { return; }
         offered++;
 
         var id = 'slot-' + source + '-' + i;
@@ -10122,16 +10146,16 @@
         // A source switched off on its own said so nowhere: its field and
         // its balance just went. Said once, under the first payout.
         var off = ['cash', 'bank', 'dirty'].filter(function (source) {
-          return caps[source + 'Enabled'] === false;
+          return caps[source + t('app.enabled')] === false;
         }).map(function (source) { return SOURCE_LABELS[source].toLowerCase(); });
         if (off.length && i === 1) {
-          slot.appendChild(el('div', 'hint', 'This server does not take '
-            + off.join(' or ') + ' as a reward.'));
+          slot.appendChild(el('div', 'hint', t('app.this_server_does_not_take')
+            + off.join(' or ') + t('app.as_a_reward')));
         }
       } else {
         slot.appendChild(el('div', 'hint',
-          'This server does not take money as a reward. Items and weapons '
-          + 'below, if it takes those.'));
+          t('app.this_server_does_not_take_money')
+          + t('app.below_if_it_takes_those')));
       }
 
       slot.appendChild(goodsBox(i));
@@ -10204,7 +10228,7 @@
     wrap.appendChild(el('h5', 'goods-title', 'Items & weapons'));
 
     if (!wallet) {
-      wrap.appendChild(el('div', 'hint', 'Reading your pockets\u2026'));
+      wrap.appendChild(el('div', 'hint', t('app.reading_your_pockets')));
       return wrap;
     }
 
@@ -10218,7 +10242,7 @@
     // marked as such.
     var chosen = el('div', 'meta');
     stagedHalves(picked).forEach(function (half) {
-      var tail = (half === picked) ? '' : ' \u2014 alive only';
+      var tail = (half === picked) ? '' : t('app.alive_only_2');
       Object.keys(half.items).forEach(function (name) {
         chosen.appendChild(removable(
           labelOf(items, name) + ' x' + half.items[name] + tail,
@@ -10254,7 +10278,7 @@
       aliveToggle.className = 'toggle';
       aliveToggle.htmlFor = alive.id;
       aliveToggle.appendChild(alive);
-      aliveToggle.appendChild(el('span', null, 'Only if delivered alive'));
+      aliveToggle.appendChild(el('span', null, t('app.only_if_delivered_alive')));
       wrap.appendChild(aliveToggle);
     }
 
@@ -10264,8 +10288,8 @@
       // One of the two switched off while the other is offered: the
       // missing picker read as an app that failed to read the pockets.
       wrap.appendChild(el('div', 'hint', caps.itemsEnabled === false
-        ? 'This server does not take items as a reward.'
-        : 'This server does not take weapons as a reward.'));
+        ? t('app.this_server_does_not_take_items')
+        : t('app.this_server_does_not_take_weapons')));
     }
     return wrap;
   }
@@ -10274,31 +10298,31 @@
      option assumes it does not exist. */
   function goodsAbsenceReason(wallet, caps) {
     if (wallet.inventoryRead === false) {
-      return 'Your inventory could not be read, so items and weapons cannot be '
-        + 'offered right now. Money still works. Tell an admin if this keeps happening.';
+      return t('app.your_inventory_could_not_be_read')
+        + t('app.offered_right_now_money_still_works');
     }
     if (caps.itemsEnabled === false && caps.weaponsEnabled === false) {
-      return 'This server does not take items or weapons as a reward. Money only.';
+      return t('app.this_server_does_not_take_items_2');
     }
     if (caps.itemsEnabled === false) {
-      return 'This server does not take items as a reward, and you are not '
-        + 'carrying a weapon that can be put up.';
+      return t('app.this_server_does_not_take_items_3')
+        + t('app.carrying_a_weapon_that_can_be');
     }
     if (caps.weaponsEnabled === false) {
-      return 'This server does not take weapons as a reward, and you are not '
-        + 'carrying anything else that can be put up.';
+      return t('app.this_server_does_not_take_weapons_2')
+        + t('app.carrying_anything_else_that_can_be');
     }
     // Only the money this server takes, and none where it takes none.
     var taken = moneyTaken();
     if (taken === 'money') {
-      return 'You are not carrying anything that can be put up as a reward.';
+      return t('app.you_are_not_carrying_anything_that');
     }
-    return 'You are not carrying anything that can be put up as a reward. '
-      + taken.charAt(0).toUpperCase() + taken.slice(1) + ' above still '
+    return t('app.you_are_not_carrying_anything_that_2')
+      + taken.charAt(0).toUpperCase() + taken.slice(1) + t('app.above_still')
       + (taken.indexOf(' and ') === -1 ? 'works.' : 'work.');
   }
 
-  var SOURCE_LABELS = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
+  var SOURCE_LABELS = { cash: t('app.cash'), bank: t('app.bank'), dirty: t('app.dirty_money_3') };
 
   /* A readable name for something that is no longer in the player's pockets.
 
@@ -10307,7 +10331,7 @@
      wallet is asked first and the raw name is tidied when it cannot answer:
      WEAPON_PISTOL reads as "Pistol", black_money as "Black money". */
   function itemLabel(name) {
-    if (!name) { return 'Something'; }
+    if (!name) { return t('app.something'); }
 
     var wallet = state.wallet;
     if (wallet) {
@@ -10362,18 +10386,18 @@
       if (item.namesOwner && placingAnonymously()) {
         naming[item.name] = true;
         option.disabled = true;
-        option.textContent = item.label + '  \u00b7  carries your name';
+        option.textContent = item.label + t('app.carries_your_name');
       }
       choose.appendChild(option);
     });
-    if (choose.children.length === 0) { return el('div', 'hint', 'Nothing spare left to add.'); }
+    if (choose.children.length === 0) { return el('div', 'hint', t('app.nothing_spare_left_to_add')); }
 
     var count = numberInput('slot-item-count-' + index, 1);
     count.min = 1;
 
-    var howMany = labelled('How many', count);
+    var howMany = labelled(t('app.how_many'), count);
     var field = el('div', 'picker');
-    field.appendChild(labelled('Item', choose));
+    field.appendChild(labelled(t('app.item'), choose));
     field.appendChild(howMany);
 
     /* Show the quantity field only where the answer could be anything but
@@ -10392,7 +10416,7 @@
     choose.onchange = follow;
     follow();
 
-    var add = el('button', 'ghost ico i-plus', 'Add this item');
+    var add = el('button', 'ghost ico i-plus', t('app.add_this_item'));
     add.id = 'slot-item-add-' + index;
     add.onclick = function () {
       var name = choose.value;
@@ -10401,10 +10425,10 @@
       // reading a control the player never saw is how a hidden default
       // becomes a silent refusal.
       var wanted = (free <= 1) ? 1 : (parseInt(count.value, 10) || 0);
-      if (!name || wanted <= 0) { return say('Choose an item and how many.'); }
+      if (!name || wanted <= 0) { return say(t('app.choose_an_item_and_how_many')); }
       if (naming[name]) {
-        return say(labelOf(items, name) + ' carries your name or number, so it cannot go '
-          + 'on a contract placed anonymously.');
+        return say(labelOf(items, name) + t('app.carries_your_name_or_number_so')
+          + t('app.on_a_contract_placed_anonymously'));
       }
 
       var caps = state.wallet.caps || {};
@@ -10416,16 +10440,16 @@
       items.forEach(function (item) { if (item.name === name) { held = item.count; } });
 
       if (allocatedItem(name) + wanted > held) {
-        return say('You only have ' + (held - allocatedItem(name)) + ' of those spare.');
+        return say(t('app.you_only_have') + (held - allocatedItem(name)) + t('app.of_those_spare'));
       }
       if ((picked.items[name] || 0) + wanted > (caps.maxPerStack || Infinity)) {
-        return say('That is more than ' + (slotCeiling() > 1 ? 'one payout' : 'the reward')
-          + ' can hold of a single item.');
+        return say(t('app.that_is_more_than') + (slotCeiling() > 1 ? t('app.one_payout') : t('app.the_reward'))
+          + t('app.can_hold_of_a_single_item'));
       }
       if (picked.items[name] === undefined
           && Object.keys(picked.items).length >= (caps.maxStacks || Infinity)) {
-        return say((slotCeiling() > 1 ? 'This payout' : 'The reward')
-          + ' is already carrying as many kinds of item as it can.');
+        return say((slotCeiling() > 1 ? t('app.this_payout') : t('app.the_reward_2'))
+          + t('app.is_already_carrying_as_many_kinds'));
       }
 
       picked.items[name] = (picked.items[name] || 0) + wanted;
@@ -10446,25 +10470,25 @@
       option.textContent = weapon.label + (weapon.serial ? '  #' + weapon.serial : '');
       choose.appendChild(option);
     });
-    if (choose.children.length === 0) { return el('div', 'hint', 'No weapons left to add.'); }
+    if (choose.children.length === 0) { return el('div', 'hint', t('app.no_weapons_left_to_add')); }
 
-    var add = el('button', 'ghost ico i-plus', 'Add this weapon');
+    var add = el('button', 'ghost ico i-plus', t('app.add_this_weapon'));
     add.id = 'slot-weapon-add-' + index;
     add.onclick = function () {
       var slotNumber = parseInt(choose.value, 10);
-      if (!slotNumber && slotNumber !== 0) { return say('Choose a weapon.'); }
+      if (!slotNumber && slotNumber !== 0) { return say(t('app.choose_a_weapon')); }
 
       var caps = state.wallet.caps || {};
       var picked = pickedFor(index);
       if (picked.aliveOnly) { picked = picked.alive; }
       if (Object.keys(picked.weapons).length >= (caps.maxWeapons || Infinity)) {
-        return say((slotCeiling() > 1 ? 'This payout' : 'The reward')
-          + ' is already carrying as many weapons as it can.');
+        return say((slotCeiling() > 1 ? t('app.this_payout') : t('app.the_reward_2'))
+          + t('app.is_already_carrying_as_many_weapons'));
       }
 
       var found = null;
       weapons.forEach(function (weapon) { if (weapon.slot === slotNumber) { found = weapon; } });
-      if (!found) { return say('That weapon is no longer in your pockets.'); }
+      if (!found) { return say(t('app.that_weapon_is_no_longer_in')); }
 
       // Keyed by inventory slot, not by name: two of the same weapon are two
       // different objects, and escrowing one twice would take one and then
@@ -10474,7 +10498,7 @@
     };
 
     var field = el('div', 'picker');
-    field.appendChild(labelled('Weapon', choose));
+    field.appendChild(labelled(t('app.weapon'), choose));
     field.appendChild(add);
     return field;
   }
@@ -10584,13 +10608,13 @@
      what is staged, across every payout. */
   function takenText(composed) {
     var parts = [];
-    var words = { cash: 'cash', bank: 'bank', dirty: 'dirty money' };
+    var words = { cash: 'cash', bank: 'bank', dirty: t('app.dirty_money') };
     ['cash', 'bank', 'dirty'].forEach(function (src) {
       var all = composed.totals[src];
       if (!all) { return; }
       var extra = composed.bonus[src];
       parts.push(money(all) + ' ' + words[src] + (extra
-        ? ' (' + money(all - extra) + ' + ' + money(extra) + ' kidnapping bonus)' : ''));
+        ? ' (' + money(all - extra) + ' + ' + money(extra) + t('app.kidnapping_bonus_4') : ''));
     });
 
     // One entry per item and half, summed over the payouts; each weapon on
@@ -10600,7 +10624,7 @@
       var picked = state.picked[i];
       if (!picked) { continue; }
       stagedHalves(picked).forEach(function (half) {
-        var tail = (half === picked) ? '' : ' (alive only)';
+        var tail = (half === picked) ? '' : t('app.alive_only_3');
         Object.keys(half.items).forEach(function (name) {
           var key = name + tail;
           if (!byKey[key]) {
@@ -10633,19 +10657,19 @@
     if (!node) { return; }
     var composed = composeTotals(draftSlots(), bonusPercent());
     var taken = takenText(composed);
-    if (!taken) { node.textContent = 'Nothing in the reward yet.'; return; }
+    if (!taken) { node.textContent = t('app.nothing_in_the_reward_yet'); return; }
 
-    var text = 'Taken from you now: ' + taken + '.';
+    var text = t('app.taken_from_you_now') + taken + '.';
     // The fee is charged, not held, so it is said apart from the escrow.
     var fee = state.draft.anon === true ? anonymityFee('creator') : 0;
     if (fee > 0) {
-      text += ' Plus ' + money(fee) + ' from your '
+      text += ' Plus ' + money(fee) + t('app.from_your')
         + ((settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank')
-        + ' for anonymity.';
+        + t('app.for_anonymity_2');
     }
     var bonus = composed.bonus.cash + composed.bonus.bank + composed.bonus.dirty;
-    if (bonus > 0 || taken.indexOf('(alive only)') !== -1) {
-      text += ' The bonus comes back to you if the target is killed rather than delivered.';
+    if (bonus > 0 || taken.indexOf(t('app.alive_only_3')) !== -1) {
+      text += t('app.the_bonus_comes_back_to_you');
     }
     node.textContent = text;
   }
@@ -10655,8 +10679,8 @@
      are moved to the nearest amount the reward allows without a word, and
      the deadline was the server's default, which the form never named. */
   function placedText(held, placed, asked) {
-    var text = 'Contract placed.';
-    if (held) { text += ' Held from you: ' + held + '.'; }
+    var text = t('app.contract_placed');
+    if (held) { text += t('app.held_from_you') + held + '.'; }
 
     var terms = [];
     var moved = [];
@@ -10667,23 +10691,23 @@
     if (typeof placed.penaltyAmount === 'number' && placed.penaltyAmount > 0) {
       // Whose it is, said: "stake $1,000" beside the buyout read as a
       // second sum taken from the client.
-      terms.push("Hitman's stake: " + money(placed.penaltyAmount) + ' (they put it up, not you)');
+      terms.push(t('app.hitmans_stake') + money(placed.penaltyAmount) + t('app.they_put_it_up_not_you'));
       if (asked.penalty > 0 && asked.penalty !== placed.penaltyAmount) { moved.push('stake'); }
     }
     if (terms.length) { text += ' ' + terms.join('; ') + '.'; }
     if (moved.length) {
-      text += ' The ' + moved.join(' and the ') + (moved.length > 1 ? ' were' : ' was')
-        + ' moved to the nearest amount this reward allows.';
+      text += ' The ' + moved.join(t('app.and_the')) + (moved.length > 1 ? ' were' : ' was')
+        + t('app.moved_to_the_nearest_amount_this');
     }
     // A stake asked for and none placed: the reward cannot carry one.
     if (asked.penalty > 0 && placed.penaltyAmount === 0) {
-      text += ' No stake was set: this reward cannot carry one.';
+      text += t('app.no_stake_was_set_this_reward');
     }
 
     // What anonymity cost, as the server took it (the reply's `charged`).
     var charged = placed.charged || {};
     if (Number(charged.fee) > 0) {
-      text += ' Placing it anonymously cost ' + money(Number(charged.fee)) + ' from your '
+      text += t('app.placing_it_anonymously_cost') + money(Number(charged.fee)) + t('app.from_your')
         + (charged.account === 'cash' ? 'cash' : 'bank') + '.';
     }
 
@@ -10691,29 +10715,29 @@
     if (typeof placed.fulfilment === 'string'
         && (placed.fulfilment !== 'either') !== (asked.aliveOnly === true)) {
       text += placed.fulfilment === 'either'
-        ? ' A kill completes it as well as a live handover.'
-        : ' It only pays when the target is brought to you alive.';
+        ? t('app.a_kill_completes_it_as_well_2')
+        : t('app.it_only_pays_when_the_target_2');
     }
 
     var band = bandOf(placed);
     var minutes = Number(settings().defaultDeadlineMinutes) || 0;
     if (band || minutes > 0) {
-      text += ' It has ' + (band ? band.text.toLowerCase() : durationText(minutes) + ' left')
-        + ' unless you extend it. Its clock runs only while you, the target and an '
-        + 'operative on it are all in the city.';
+      text += t('app.it_has_2') + (band ? band.text.toLowerCase() : durationText(minutes) + ' left')
+        + t('app.unless_you_extend_it_its_clock')
+        + t('app.operative_on_it_are_all_in');
     }
     // Contract decay (Config.Improvements.ContractDecay): told as it is placed.
     var decay = settings().contractDecay;
     if (decay && typeof decay === 'object') {
       text += decay.mode === 'shorten'
-        ? ' While nobody takes it, it runs out ' + decay.percent + '% sooner every ' + decay.hours + ' h.'
-        : ' While nobody takes it, its reward rises ' + decay.percent + '% every ' + decay.hours
-          + ' h, up to ' + decay.maxPercent + '%, taken from your '
+        ? t('app.while_nobody_takes_it_it_runs') + decay.percent + t('app.sooner_every') + decay.hours + ' h.'
+        : t('app.while_nobody_takes_it_its_reward') + decay.percent + '% every ' + decay.hours
+          + t('app.h_up_to') + decay.maxPercent + t('app.taken_from_your')
           + (decay.account === 'cash' ? 'cash' : 'bank') + '.';
       if (decay.mode !== 'shorten' && asked.anonymous === true) {
-        text += ' Not this one: a contract placed anonymously never rises.';
+        text += t('app.not_this_one_a_contract_placed');
       } else {
-        text += ' You can stop that from its card under Mine.';
+        text += t('app.you_can_stop_that_from_its');
       }
     }
     return text;
@@ -10726,7 +10750,7 @@
   function paintPlaceSubmit() {
     if (!placeSubmit || !placeSubmit.parentNode || isBusy('create')) { return; }
     var armed = state.placeArmed;
-    placeSubmit.textContent = armed ? armed.label : 'Place contract';
+    placeSubmit.textContent = armed ? armed.label : t('app.place_contract');
     placeSubmit.className = 'btn ' + (armed ? 'danger' : 'primary');
   }
 
@@ -10735,7 +10759,7 @@
     // dialog over the form, which empties #view. Reading the controls here
     // meant the first submit always failed and the second submitted nothing.
     var target = state.draft.target || document.getElementById('target-handle').value;
-    if (!target) return say('Choose a target.');
+    if (!target) return say(t('app.choose_a_target'));
     // A server that takes free text refuses an empty reason. Said here, by
     // the field, rather than after a round trip as "Check what you
     // entered." on a form full of money fields. Where the server said so:
@@ -10752,10 +10776,10 @@
       moneyFields.push('slot-cash-' + k, 'slot-bank-' + k, 'slot-dirty-' + k);
     }
     if (badAmounts(moneyFields)) {
-      return say('Amounts are whole dollars, written out in full (100000, not 1e5).');
+      return say(t('app.amounts_are_whole_dollars_written_out'));
     }
     var caps = (state.wallet && state.wallet.caps) || {};
-    var labels = { cash: 'Cash', bank: 'Bank', dirty: 'Dirty money' };
+    var labels = { cash: t('app.cash'), bank: t('app.bank'), dirty: t('app.dirty_money_3') };
 
     var slots = draftSlots();
     // Named by number only where there can be more than one payout.
@@ -10767,8 +10791,8 @@
       for (var src in labels) {
         var cap = Number(caps[src]);
         if (baseline[src] && cap > 0 && baseline[src] > cap) {
-          return say((numbered ? 'Payout ' + i + ': ' : '') + labels[src] + ' is at most '
-            + money(cap) + ' on this server.');
+          return say((numbered ? 'Payout ' + i + ': ' : '') + labels[src] + t('app.is_at_most')
+            + money(cap) + t('app.on_this_server'));
         }
       }
 
@@ -10776,11 +10800,11 @@
       // do not: the server refuses a payout whose kill half is empty.
       if (!baseline.cash && !baseline.bank && !baseline.dirty
           && !baseline.items && !baseline.weapons) {
-        var which = numbered ? 'Payout ' + i : 'The reward';
+        var which = numbered ? 'Payout ' + i : t('app.the_reward_2');
         return say(slots[i - 1].bonus
-          ? which + ' pays nothing for a kill. Put something in it '
-            + 'that is not marked alive only.'
-          : numbered ? which + ' has no reward in it.' : 'There is no reward in it yet.');
+          ? which + t('app.pays_nothing_for_a_kill_put')
+            + t('app.that_is_not_marked_alive_only')
+          : numbered ? which + t('app.has_no_reward_in_it') : t('app.there_is_no_reward_in_it'));
       }
     }
 
@@ -10817,27 +10841,27 @@
     for (var held in labels) {
       var have = Number(wallet[held]);
       if (need[held] > 0 && isFinite(have) && need[held] > have) {
-        return say(labels[held] + (numbered ? ' across every payout' : ' in the reward')
-          + (bonusPct > 0 ? ', with the ' + bonusPct + '% kidnapping bonus taken now on top,' : '')
+        return say(labels[held] + (numbered ? t('app.across_every_payout_2') : t('app.in_the_reward_2'))
+          + (bonusPct > 0 ? t('app.with_the') + bonusPct + t('app.kidnapping_bonus_taken_now_on_top') : '')
           + (creatorFee > 0 && held === creatorFeeAccount
-            ? ' plus the ' + money(creatorFee) + ' anonymity fee,' : '')
-          + ' comes to ' + money(need[held]) + '. You hold ' + money(have) + '.');
+            ? t('app.plus_the') + money(creatorFee) + t('app.anonymity_fee') : '')
+          + t('app.comes_to') + money(need[held]) + t('app.you_hold_2') + money(have) + '.');
       }
     }
 
     var worth = totals.cash + totals.bank + totals.dirty;
     var maxValue = Number(caps.maxValue) || 0;
     if (maxValue > 0 && worth > maxValue) {
-      return say('This contract would be worth ' + money(worth)
-        + (bonusPct > 0 ? ' with its kidnapping bonus' : '')
-        + '; this server allows at most ' + money(maxValue) + '.');
+      return say(t('app.this_contract_would_be_worth') + money(worth)
+        + (bonusPct > 0 ? t('app.with_its_kidnapping_bonus') : '')
+        + t('app.this_server_allows_at_most_2') + money(maxValue) + '.');
     }
     // And the least, counted the same way: refused by the server as
     // reward_too_small, it is said here first with both figures.
     var minValue = Number(caps.minValue) || 0;
     if (minValue > 0 && worth < minValue) {
-      return say('This contract would be worth ' + money(worth) + ' in money'
-        + (bonusPct > 0 ? ' with its kidnapping bonus' : '') + '. '
+      return say(t('app.this_contract_would_be_worth') + money(worth) + t('app.in_money_2')
+        + (bonusPct > 0 ? t('app.with_its_kidnapping_bonus') : '') + '. '
         + minRewardText(minValue));
     }
 
@@ -10849,24 +10873,24 @@
     // reward with none it can only be nothing: the server placed it with
     // none, and the confirmation did not say so.
     if (num('penalty') > 0 && totals.cash + totals.bank === 0) {
-      return say('A hitman\'s stake is held against the cash and bank in the reward, '
-        + 'and this one has none, so it cannot carry a stake. Add cash or bank, or set '
-        + 'the stake to 0.');
+      return say(t('app.a_hitmans_stake_is_held_against')
+        + t('app.and_this_one_has_none_so')
+        + t('app.the_stake_to_0'));
     }
     // Something staged that says whose it is, on a contract placed
     // anonymously: the server refuses the whole contract for it.
     var named = placingAnonymously() ? stagedNamingOwner() : null;
     if (named) {
-      return say(itemLabel(named) + ' carries your name or number, and the hitman would '
-        + 'be handed it as it is, which would give you away. Take it out, or place the '
-        + 'contract under your name.');
+      return say(itemLabel(named) + t('app.carries_your_name_or_number_and')
+        + t('app.be_handed_it_as_it_is')
+        + t('app.contract_under_your_name'));
     }
     var maxLines = (state.wallet && state.wallet.caps && state.wallet.caps.maxLines) || Infinity;
     if (lines > maxLines) {
-      return say('This contract holds ' + lines + ' separate rewards and this '
-        + 'server takes at most ' + maxLines + '. ' + (numbered
-          ? 'Use fewer payouts, or take some of the items and weapons back out.'
-          : 'Take some of the items and weapons back out.'));
+      return say(t('app.this_contract_holds') + lines + t('app.separate_rewards_and_this')
+        + t('app.server_takes_at_most') + maxLines + '. ' + (numbered
+          ? t('app.use_fewer_payouts_or_take_some')
+          : t('app.take_some_of_the_items_and')));
     }
 
     // Asked, every time: with a bulletin on it stated a fact under a Yes
@@ -10876,15 +10900,15 @@
     // hear than do.
     var protectedTarget = state.draft.targetProtected === true;
     if (protectedTarget && settings().warnCreator !== false && !state.leoConfirmed) {
-      ask('That target ' + protectedWords(state.draft.targetProtectedAs).is + '.',
+      ask(t('app.that_target') + protectedWords(state.draft.targetProtectedAs).is + '.',
           (advised('posted')
-            ? 'Placing this will alert every officer in the city, by phone and over dispatch. '
+            ? t('app.placing_this_will_alert_every_officer')
             : advised('accepted')
-              ? 'Every officer in the city will be alerted when someone accepts it. '
+              ? t('app.every_officer_in_the_city_will')
               : '')
-            + 'Place a contract on them anyway?',
+            + t('app.place_a_contract_on_them_anyway'),
           function () { state.leoConfirmed = true; submitContract(); },
-          { yes: 'Place it', no: 'Cancel' });
+          { yes: t('app.place_it'), no: t('app.cancel') });
       return;
     }
     // Two taps, the second naming the total it takes, kidnapping bonus and
@@ -10898,7 +10922,7 @@
         && !(state.placeArmed && state.placeArmed.key === armKey)) {
       var armedAt = Date.now();
       state.placeArmed = { key: armKey, at: armedAt,
-        label: 'Tap again to place' + (totalTaken > 0 ? ' \u2014 ' + money(totalTaken) : '') };
+        label: t('app.tap_again_to_place') + (totalTaken > 0 ? ' \u2014 ' + money(totalTaken) : '') };
       setTimeout(function () {
         if (state.placeArmed && state.placeArmed.at === armedAt) {
           state.placeArmed = null;
@@ -10980,9 +11004,9 @@
         }
         // The item the server found naming its owner, by name.
         if (r.err === 'item_names_owner' && r.data && r.data.item) {
-          return say(itemLabel(r.data.item) + ' carries your name or number, and the hitman '
-            + 'would be handed it as it is, which would give you away. Take it out, or '
-            + 'place the contract under your name.');
+          return say(itemLabel(r.data.item) + t('app.carries_your_name_or_number_and_2')
+            + t('app.would_be_handed_it_as_it')
+            + t('app.place_the_contract_under_your_name'));
         }
         // The wallet is read once when the tab opens, so a staged weapon's
         // inventory slot can be stale by the time it is submitted. The
@@ -10993,8 +11017,8 @@
           state.wallet = null;
           state.walletFailed = null;
           state.picked = {};
-          say('Your pockets have changed since you opened this. '
-            + 'Pick the items and weapons again.');
+          say(t('app.your_pockets_have_changed_since_you')
+            + t('app.pick_the_items_and_weapons_again'));
           return render();
         }
         /* The person picked is no longer one the server can name: they left
@@ -11012,8 +11036,8 @@
           state.browse.data = null;
           state.browse.pending = null;
           state.browse.refusal = null;
-          say('That person cannot be picked any more — they may have left '
-            + 'the city. The list has been read again; choose who this is for.');
+          say(t('app.that_person_cannot_be_picked_any')
+            + t('app.the_city_the_list_has_been'));
           return render();
         }
         // Nothing staged, so it is the money: the balances this form checked
@@ -11021,9 +11045,9 @@
         if (r.err === 'insufficient_funds') {
           state.wallet = null;
           state.walletFailed = null;
-          say('The server could not take that much from you \u2014 your balances '
-            + 'may have changed since you opened this form. They have been read '
-            + 'again; check the amounts.');
+          say(t('app.the_server_could_not_take_that')
+            + t('app.may_have_changed_since_you_opened')
+            + t('app.again_check_the_amounts'));
           return render();
         }
         /* The reward rules moved under the form: a source switched off or
@@ -11039,21 +11063,21 @@
           if (stagedAnything()) { state.picked = {}; }
           render();
           return say(r.err === 'invalid_reward'
-            ? 'That reward does not fit this server\u2019s rules. They may have changed '
-              + 'since you opened this form, so it has been read again: check the reward.'
-            : failText(r) + ' The form has been read again.');
+            ? t('app.that_reward_does_not_fit_this')
+              + t('app.since_you_opened_this_form_so')
+            : failText(r) + t('app.the_form_has_been_read_again'));
         }
         // The limit is on contracts placed, counted across the account's
         // characters. "You are holding too many contracts" was said to a
         // client holding none.
         if (r.err === 'limit_reached') {
           var most = Number(r.data && r.data.max);
-          return say('You already have '
+          return say(t('app.you_already_have')
             + (most > 0 ? most + ' contract' + (most === 1 ? '' : 's')
-              + ' out, the most this server allows' : 'as many contracts out as this server allows')
-            + ', counting the ones placed from your other characters. '
-            + 'Wait for one to close, or withdraw one nobody has taken yet '
-            + 'under Mine.');
+              + t('app.out_the_most_this_server_allows') : t('app.as_many_contracts_out_as_this'))
+            + t('app.counting_the_ones_placed_from_your')
+            + t('app.wait_for_one_to_close_or')
+            + t('app.under_mine'));
         }
         return fail(r);
       }
@@ -11133,14 +11157,14 @@
      enforcement", the medic and the lawyer too. A server that sends no kind
      protected law enforcement only. */
   var PROTECTED_WORDS = {
-    law: { chip: 'Law enforcement', tag: 'Law', is: 'is a sworn officer',
-           noun: 'a sworn officer' },
-    emergency: { chip: 'Emergency services', tag: 'EMS', is: 'works in emergency services',
-                 noun: 'someone in emergency services' },
-    legal: { chip: 'Legal', tag: 'Legal', is: 'works in the legal system',
-             noun: 'someone in the legal system' },
-    other: { chip: 'Protected job', tag: 'Protected', is: 'works in a protected job',
-             noun: 'someone in a protected job' }
+    law: { chip: t('app.law_enforcement'), tag: t('app.law'), is: t('app.is_a_sworn_officer'),
+           noun: t('app.a_sworn_officer') },
+    emergency: { chip: t('app.emergency_services'), tag: 'EMS', is: t('app.works_in_emergency_services'),
+                 noun: t('app.someone_in_emergency_services') },
+    legal: { chip: t('app.legal'), tag: t('app.legal'), is: t('app.works_in_the_legal_system'),
+             noun: t('app.someone_in_the_legal_system') },
+    other: { chip: t('app.protected_job'), tag: t('app.protected'), is: t('app.works_in_a_protected_job'),
+             noun: t('app.someone_in_a_protected_job') }
   };
 
   function protectedWords(kind) {
@@ -11295,7 +11319,7 @@
     var wrap = el('div', 'target-picker');
     var browse = state.browse;
 
-    var input = textInput('target-query', 'Filter by name, or just browse', 32);
+    var input = textInput('target-query', t('app.filter_by_name_or_just_browse'), 32);
     // Seeded from the filter, not from whoever is currently chosen. The two
     // used to be the same box: a rebuild put the chosen name in it while the
     // remembered filter still narrowed the list, so the box read one thing
@@ -11318,7 +11342,7 @@
     var chosen = el('div', 'hint');
     function sayChosen() {
       show(chosen, state.draft.targetName
-        ? 'Contract will be placed on ' + state.draft.targetName + '.' : '');
+        ? t('app.contract_will_be_placed_on') + state.draft.targetName + '.' : '');
       chosen.hidden = !state.draft.targetName;
     }
 
@@ -11357,7 +11381,7 @@
     }
 
     if (canBrowse) {
-      allButton = el('button', 'ghost', 'Everyone');
+      allButton = el('button', 'ghost', t('app.everyone'));
       allButton.id = 'target-scope-all';
       allButton.onclick = function () { setScope('all'); };
       modes.appendChild(allButton);
@@ -11368,7 +11392,7 @@
       // target was thirty-one metres away saw an empty list and no reason.
       var radius = settings().nearbyRadius;
       nearButton = el('button', 'ghost',
-        radius ? 'Within ' + Math.round(radius) + 'm' : 'Near me');
+        radius ? 'Within ' + Math.round(radius) + 'm' : t('app.near_me'));
       nearButton.id = 'target-scope-nearby';
       nearButton.onclick = function () { setScope('nearby'); };
       modes.appendChild(nearButton);
@@ -11417,7 +11441,7 @@
     browse.showRefusal = function (text) {
       results.innerHTML = '';
       show(status, text);
-      var again = el('button', 'ghost', 'Try again');
+      var again = el('button', 'ghost', t('app.try_again'));
       again.onclick = function () { browse.refusal = null; browse.pending = null; load(); };
       results.appendChild(again);
     };
@@ -11444,7 +11468,7 @@
         if (query.length < minimum) {
           browse.pending = null;
           results.innerHTML = '';
-          show(status, 'Type at least ' + minimum + ' letters of their name.');
+          show(status, t('app.type_at_least') + minimum + t('app.letters_of_their_name'));
           return;
         }
         post('searchTargets', { query: query }).then(function (r) {
@@ -11472,10 +11496,10 @@
     function refused(r) {
       browse.data = null;
       browse.refusal = r.err === 'rate_limited'
-        ? 'Looking too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.'
+        ? t('app.looking_too_fast_try_again') + retryIn(r.data && r.data.retryAfter) + '.'
         // Named for the same reason as the wallet failure above: the code
         // is what an admin needs and the player is the one who can see it.
-        : 'Could not read who is online (' + (r.err || 'no reply') + ').';
+        : t('app.could_not_read_who_is_online') + (r.err || t('app.no_reply')) + ').';
       if (browse.showRefusal) { browse.showRefusal(browse.refusal); }
     }
 
@@ -11495,26 +11519,26 @@
       // together), so it cannot name the other side of it. Said, rather than
       // reading as an empty street.
       if (browse.scope === 'nearby' && paging && paging.closed) {
-        show(status, 'Nobody is listed near you while you are on a contract, '
-          + 'or for a while after one ends. '
-          + (canBrowse ? 'Look under Everyone.'
-            : 'Type at least ' + (settings().minQueryLength || 3) + ' letters of their name.'));
+        show(status, t('app.nobody_is_listed_near_you_while')
+          + t('app.or_for_a_while_after_one')
+          + (canBrowse ? t('app.look_under_everyone')
+            : t('app.type_at_least') + (settings().minQueryLength || 3) + t('app.letters_of_their_name')));
         return;
       }
 
       if (people.length === 0) {
         show(status, input.value
-          ? 'Nobody online by that name.'
+          ? t('app.nobody_online_by_that_name')
           : (browse.scope === 'nearby'
-              ? 'Nobody is standing near you.'
-              : 'Nobody else is in the city right now.'));
+              ? t('app.nobody_is_standing_near_you')
+              : t('app.nobody_else_is_in_the_city')));
         return;
       }
 
       if (paging && paging.total) {
         show(status, (browse.scope === 'nearby')
-          ? (paging.total + (paging.total === 1 ? ' person near you' : ' people near you'))
-          : ('Showing ' + people.length + ' of ' + paging.total + ' in the city'));
+          ? (paging.total + (paging.total === 1 ? t('app.person_near_you') : t('app.people_near_you')))
+          : ('Showing ' + people.length + ' of ' + paging.total + t('app.in_the_city_2')));
       } else {
         show(status, people.length + (people.length === 1 ? ' match' : ' matches'));
       }
@@ -11524,12 +11548,12 @@
       // Paging, only where there is more than one page.
       if (paging && paging.pages > 1) {
         var nav = el('div', 'row pager');
-        var back = el('button', 'ghost ico i-left', 'Back');
+        var back = el('button', 'ghost ico i-left', t('app.back'));
         back.disabled = paging.page <= 1;
         back.onclick = function () {
           browse.page = paging.page - 1; browse.data = null; browse.pending = null; load();
         };
-        var forward = el('button', 'ghost ico ico-end i-right', 'More');
+        var forward = el('button', 'ghost ico ico-end i-right', t('app.more'));
         forward.disabled = paging.page >= paging.pages;
         forward.onclick = function () {
           browse.page = paging.page + 1; browse.data = null; browse.pending = null; load();
@@ -11580,15 +11604,15 @@
         // had to guess that the already-lit Everyone button would undo it.
         // The list already read is drawn again with this pick still lit:
         // tapping another row replaces it, and nothing is asked twice.
-        var change = el('button', 'ghost ico i-swap', 'Choose someone else');
+        var change = el('button', 'ghost ico i-swap', t('app.choose_someone_else'));
         change.onclick = function () {
           if (browse.data) { browse.draw(browse.data); } else { setScope(browse.scope); }
         };
         results.appendChild(change);
         if (person.protected) {
-          say('That person ' + protectedWords(person.protectedAs).is + '.'
-            + (advised('posted') ? ' Placing this alerts every officer in the city.'
-              : advised('accepted') ? ' Every officer in the city is told when someone accepts it.' : ''),
+          say(t('app.that_person') + protectedWords(person.protectedAs).is + '.'
+            + (advised('posted') ? t('app.placing_this_alerts_every_officer_in')
+              : advised('accepted') ? t('app.every_officer_in_the_city_is') : ''),
             'caution');
         }
       };
@@ -11613,7 +11637,7 @@
     } else if (browse.refusal) {
       browse.showRefusal(browse.refusal);
     } else if (browse.pending === key()) {
-      show(status, 'Looking\u2026');
+      show(status, t('app.looking'));
     } else {
       load();
     }
@@ -11641,11 +11665,11 @@
 
   function reportToStaff(contract, thread) {
     var fromThread = !!thread || state.tab === 'thread';
-    askFields(fromThread ? 'Report this conversation to staff?' : 'Report this contract to staff?',
-      (fromThread ? 'Staff read your note and the last 20 messages here. '
-        : 'Staff read your note and look at this contract. ')
-        + 'Nobody on the contract is told it was reported, or by whom.',
-      [{ id: 'note', label: 'What happened (optional)', max: REPORT_NOTE_MAX, placeholder: 'Optional' }],
+    askFields(fromThread ? t('app.report_this_conversation_to_staff') : t('app.report_this_contract_to_staff'),
+      (fromThread ? t('app.staff_read_your_note_and_the')
+        : t('app.staff_read_your_note_and_look'))
+        + t('app.nobody_on_the_contract_is_told'),
+      [{ id: 'note', label: t('app.what_happened_optional'), max: REPORT_NOTE_MAX, placeholder: t('app.optional') }],
       function (values) {
         var payload = { id: contract.id };
         if (thread && thread.handle) { payload.thread = thread.handle; }
@@ -11654,17 +11678,17 @@
         once('report:' + contract.id, function () {
           return post('report', payload).then(function (r) {
             if (!r.ok) { return fail(r); }
-            say('Sent to staff. Thank you.', 'ok');
+            say(t('app.sent_to_staff_thank_you'), 'ok');
           });
         });
-      }, 'Send report');
+      }, t('app.send_report'));
   }
 
   /* The quiet Report button: among a card's other tools, or in a thread's
      head beside Mute. */
   function reportButton(contract, thread) {
     var key = 'report:' + contract.id;
-    var button = el('button', 'ghost', isBusy(key) ? 'Sending…' : 'Report');
+    var button = el('button', 'ghost', isBusy(key) ? t('app.sending') : t('app.report'));
     if (isBusy(key)) {
       button.disabled = true;
       return button;
@@ -11700,15 +11724,15 @@
     view.classList.toggle('has-dialog', false);
 
     var panel = el('div', 'card');
-    panel.appendChild(el('p', 'target', 'This screen could not be drawn.'));
+    panel.appendChild(el('p', 'target', t('app.this_screen_could_not_be_drawn')));
     panel.appendChild(el('p', 'reason',
-      'The fault has been sent to the server log. Nothing you did caused it '
-      + 'and nothing has been lost.'));
+      t('app.the_fault_has_been_sent_to')
+      + t('app.and_nothing_has_been_lost')));
 
     var row = el('div', 'row');
     // The whitelisted-job view has one screen and no board to go back to.
     var whitelisted = state.mode === 'whitelisted';
-    var back = el('button', 'primary', whitelisted ? 'Try again' : 'Back to the board');
+    var back = el('button', 'primary', whitelisted ? t('app.try_again') : t('app.back_to_the_board'));
     back.onclick = function () {
       navigated();
       state.dialog = null;
@@ -11717,7 +11741,7 @@
     };
     row.appendChild(back);
 
-    var look = el('button', 'ghost', 'What went wrong');
+    var look = el('button', 'ghost', t('app.what_went_wrong'));
     look.onclick = Diag.toggle;
     row.appendChild(look);
 
@@ -11884,9 +11908,9 @@
     }
     state.loadFinal[section] = finalRefusal(r.err);
     state.loadFailed[section] = (r.err === 'rate_limited' && r.data && r.data.retryAfter)
-      ? 'Asked too fast. Try again ' + retryIn(r.data.retryAfter) + '.'
+      ? t('app.asked_too_fast_try_again') + retryIn(r.data.retryAfter) + '.'
       : r.err === 'blacklisted_job' ? barredText(r)
-      : (ERRORS[r.err] || 'Something went wrong.');
+      : (ERRORS[r.err] || t('app.something_went_wrong'));
     redraw();
     return false;
   }
@@ -12161,7 +12185,7 @@
       // They have left the job: the whole app is theirs again.
       if (!r.ok && r.err === 'not_whitelisted') { return leaveJobView(); }
       if (opts && opts.keep && !r.ok && r.err === 'rate_limited' && state.loaded.jobview) {
-        return say('Asked too fast. Try again ' + retryIn(r.data && r.data.retryAfter) + '.',
+        return say(t('app.asked_too_fast_try_again') + retryIn(r.data && r.data.retryAfter) + '.',
           'caution');
       }
       var hadFailed = !!state.loadFailed.jobview;
@@ -12227,7 +12251,7 @@
          chance stays one chance; it is spent by Save or Delete, said on
          purpose. A photo kept in the app spends nothing by being left. */
       if (state.dialog && state.dialog.kind === 'proof' && !state.dialog.kept) {
-        say('Save or delete the photo first. You can only see it once.', 'caution');
+        say(t('app.save_or_delete_the_photo_first'), 'caution');
         return;
       }
       navigated();
@@ -12399,7 +12423,7 @@
         if (state.mode !== 'whitelisted') { state.tab = 'board'; }
         render();
         if (proofLost) {
-          say('Your access to the app changed, so the kill photo you had open was closed and deleted.');
+          say(t('app.your_access_to_the_app_changed'));
         }
         // Put away: read when shown again, everything, as here.
         if (pageShown()) { refresh(); } else { owe({ all: true }); }
@@ -12508,7 +12532,7 @@
     // the server has seen. It is the only way to read this side of the
     // bridge from outside the game.
     if (data.type === 'diagnostics') {
-      Diag.note('asked', 'the server asked what this page has seen');
+      Diag.note('asked', t('app.the_server_asked_what_this_page'));
       Diag.dump(Diag.asText());
       return;
     }
@@ -12556,12 +12580,12 @@
     // its thread and its meeting point. Listing them as ways to release it
     // offered what the server would refuse. Only the wait is said.
     if (hold.closed || !hold.missing) {
-      return lead + ' Payout held: released within '
-        + (minutes > 0 ? durationText(minutes) : 'a moment') + '.';
+      return lead + t('app.payout_held_released_within')
+        + (minutes > 0 ? durationText(minutes) : t('app.a_moment')) + '.';
     }
-    return lead + ' Your payout is held until you show intent: '
-      + (hold.missing || 'proof of intent') + '.'
-      + (minutes > 0 ? ' It is released anyway within ' + durationText(minutes) + '.' : '');
+    return lead + t('app.your_payout_is_held_until_you')
+      + (hold.missing || t('app.proof_of_intent')) + '.'
+      + (minutes > 0 ? t('app.it_is_released_anyway_within') + durationText(minutes) + '.' : '');
   }
 
   function reputationText(data) {
@@ -12571,7 +12595,7 @@
 
   function boardTabs() {
     var tabs = el('div', 'row target-modes board-tabs');
-    [['contracts', 'Contracts'], ['protection', 'Protection']].forEach(function (pair) {
+    [['contracts', t('app.contracts')], ['protection', t('app.protection')]].forEach(function (pair) {
       var on = (state.boardTab || 'contracts') === pair[0];
       var b = el('button', on ? 'primary' : 'ghost', pair[1]);
       b.onclick = function () {
@@ -12590,7 +12614,7 @@
     return post('protectionBoard', {}).then(function (r) {
       state.protection.pending = false;
       if (!r.ok) {
-        state.protection.failed = failText(r) || 'Could not read the protection jobs.';
+        state.protection.failed = failText(r) || t('app.could_not_read_the_protection_jobs');
       } else {
         state.protection.failed = null;
         state.protection.data = r.data;
@@ -12605,30 +12629,30 @@
     if (p.failed) {
       var failed = el('div', 'card');
       failed.appendChild(el('div', 'hint', p.failed));
-      failed.appendChild(actionButton('ghost ico i-refresh', 'Try again', 'protection:read',
-        'Reading…', readProtection));
+      failed.appendChild(actionButton('ghost ico i-refresh', t('app.try_again'), 'protection:read',
+        t('app.reading'), readProtection));
       view.appendChild(failed);
       return;
     }
     if (!p.data) {
-      view.appendChild(el('div', 'empty', 'Reading the protection jobs…'));
+      view.appendChild(el('div', 'empty', t('app.reading_the_protection_jobs')));
       return;
     }
     var data = p.data;
     var mine = asList(data.mine);
     if (mine.length) {
-      view.appendChild(el('h3', 'section', 'People you guard'));
+      view.appendChild(el('h3', 'section', t('app.people_you_guard')));
       mine.forEach(function (job) {
         var c = el('div', 'card protection-job');
-        c.appendChild(el('div', 'target', job.targetName || 'Your client'));
-        c.appendChild(el('div', 'hint', 'Paid ' + money(job.reward) + ' if the contract on them '
-          + 'ends without being carried out.'));
+        c.appendChild(el('div', 'target', job.targetName || t('app.your_client')));
+        c.appendChild(el('div', 'hint', 'Paid ' + money(job.reward) + t('app.if_the_contract_on_them')
+          + t('app.ends_without_being_carried_out')));
         if (job.pinSet) {
           var row = el('div', 'row actions');
-          row.appendChild(actionButton('ghost ico i-pin', 'Set GPS to the pin',
-            'protection:gps:' + job.job, 'Setting…', function () {
+          row.appendChild(actionButton('ghost ico i-pin', t('app.set_gps_to_the_pin'),
+            'protection:gps:' + job.job, t('app.setting'), function () {
               return post('gps', { kind: 'protection', job: job.job }).then(function (r) {
-                if (r.ok) { say('Waypoint set to the meeting pin.', 'ok'); } else { fail(r); }
+                if (r.ok) { say(t('app.waypoint_set_to_the_meeting_pin'), 'ok'); } else { fail(r); }
               });
             }));
           c.appendChild(row);
@@ -12636,37 +12660,37 @@
         view.appendChild(c);
       });
     }
-    view.appendChild(el('h3', 'section', 'Protection jobs'));
+    view.appendChild(el('h3', 'section', t('app.protection_jobs')));
     if (!data.enabled) {
-      view.appendChild(el('div', 'empty', 'This server is not taking protection jobs right now.'));
+      view.appendChild(el('div', 'empty', t('app.this_server_is_not_taking_protection')));
       return;
     }
     var open = asList(data.open);
     if (!open.length) {
-      view.appendChild(el('div', 'empty', 'Nobody is asking for protection right now.'));
+      view.appendChild(el('div', 'empty', t('app.nobody_is_asking_for_protection_right')));
       return;
     }
     open.forEach(function (job) {
       var c = el('div', 'card protection-job');
       c.appendChild(el('div', 'target', 'Protection: ' + money(job.reward)));
-      c.appendChild(el('div', 'hint', 'Somebody with a price on their head wants a bodyguard. '
-        + 'Take it and you get their name and where to meet them; you are paid if the contract '
-        + 'on them ends without being carried out.'));
-      var take = el('button', 'primary ico i-shield', 'Take the job');
+      c.appendChild(el('div', 'hint', t('app.somebody_with_a_price_on_their')
+        + t('app.take_it_and_you_get_their')
+        + t('app.on_them_ends_without_being_carried')));
+      var take = el('button', 'primary ico i-shield', t('app.take_the_job'));
       function takeJob(anonymous) {
         return once('protection:take:' + job.job, function () {
           return post('protectionAccept', { job: job.job, reward: job.reward,
             anonymous: anonymous === true }).then(function (r) {
             if (!r.ok) { fail(r); return readProtection(); }
             state.protection.data = r.data;
-            say('You took the job. Their name and the pin are under People you guard.', 'ok');
+            say(t('app.you_took_the_job_their_name'), 'ok');
             redraw();
           });
         });
       }
       take.onclick = function () {
-        var question = 'Take this protection job for ' + money(job.reward) + '?';
-        var detail = 'You get their name and a meeting pin. You never learn who wants them dead.';
+        var question = t('app.take_this_protection_job_for') + money(job.reward) + '?';
+        var detail = t('app.you_get_their_name_and_a');
         /* Taking it anonymously, as an operative takes a contract: offered
            only where the server allows it whatever job the person has (the
            board does not say whether they work a whitelisted one, and a
@@ -12674,16 +12698,16 @@
         if (anonymityOffered('hitman', false) && anonymityOffered('hitman', true)) {
           state.dialog = {
             kind: 'choice', question: question,
-            detail: detail + ' Anonymously, the person you guard is never told your name.',
+            detail: detail + t('app.anonymously_the_person_you_guard_is'),
             options: [
-              { label: 'Anonymously', primary: true, run: function () { takeJob(true); } },
-              { label: 'Under my name', run: function () { takeJob(false); } }
+              { label: t('app.anonymously'), primary: true, run: function () { takeJob(true); } },
+              { label: t('app.under_my_name'), run: function () { takeJob(false); } }
             ]
           };
           render();
           return;
         }
-        ask(question, detail, function () { return takeJob(false); }, { yes: 'Take it', no: 'Not now' });
+        ask(question, detail, function () { return takeJob(false); }, { yes: t('app.take_it'), no: t('app.not_now') });
       };
       c.appendChild(take);
       view.appendChild(c);
@@ -12695,64 +12719,64 @@
     var job = contract.protection;
     if (job) {
       row.appendChild(el('div', 'notice ok protection-state', job.state === 'taken'
-        ? 'Your protection job (' + money(job.reward) + ') was taken'
-          + (job.guardName ? ' by ' + job.guardName : '') + '. They have your name and your pin.'
-        : 'Your protection job (' + money(job.reward) + ') is waiting for a bodyguard.'));
-      more.appendChild(actionButton('ghost ico i-pin', 'Move the pin here',
-        'protection:pin:' + job.job, 'Moving…', function () {
+        ? t('app.your_protection_job') + money(job.reward) + t('app.was_taken')
+          + (job.guardName ? ' by ' + job.guardName : '') + t('app.they_have_your_name_and_your')
+        : t('app.your_protection_job') + money(job.reward) + t('app.is_waiting_for_a_bodyguard')));
+      more.appendChild(actionButton('ghost ico i-pin', t('app.move_the_pin_here'),
+        'protection:pin:' + job.job, t('app.moving'), function () {
           return post('protectionPin', { job: job.job }).then(function (r) {
-            if (r.ok) { say('The meeting pin is where you stand now.', 'ok'); } else { fail(r); }
+            if (r.ok) { say(t('app.the_meeting_pin_is_where_you'), 'ok'); } else { fail(r); }
           });
-        }, { question: 'Move the meeting pin to where you are standing?',
-             detail: job.state === 'taken' ? 'Your bodyguard sees the new spot on their GPS.'
-               : 'Whoever takes the job meets you at the new spot.',
-             yes: 'Move it', no: 'Not now' }));
+        }, { question: t('app.move_the_meeting_pin_to_where'),
+             detail: job.state === 'taken' ? t('app.your_bodyguard_sees_the_new_spot')
+               : t('app.whoever_takes_the_job_meets_you'),
+             yes: t('app.move_it'), no: t('app.not_now') }));
       if (job.state !== 'taken') {
-        var back = el('button', 'ghost ico i-xcircle', 'Cancel protection');
+        var back = el('button', 'ghost ico i-xcircle', t('app.cancel_protection'));
         back.onclick = function () {
-          ask('Cancel your protection job?', 'Nobody has taken it, so the ' + money(job.reward)
-            + ' comes back to you.', function () {
+          ask(t('app.cancel_your_protection_job'), t('app.nobody_has_taken_it_so_the') + money(job.reward)
+            + t('app.comes_back_to_you'), function () {
             return once('protection:cancel:' + job.job, function () {
               return post('protectionCancel', { job: job.job }).then(function (r) {
-                if (r.ok) { say('Cancelled. The money is on its way back to you.', 'ok'); refresh(); }
+                if (r.ok) { say(t('app.cancelled_the_money_is_on_its'), 'ok'); refresh(); }
                 else { fail(r); }
               });
             });
-          }, { yes: 'Cancel it', no: 'Keep it' });
+          }, { yes: t('app.cancel_it'), no: t('app.keep_it') });
         };
         more.appendChild(back);
       }
     } else if (contract.protectionOffer) {
       var offer = contract.protectionOffer;
-      var hire = el('button', 'ghost ico i-shield', 'Hire protection');
+      var hire = el('button', 'ghost ico i-shield', t('app.hire_protection'));
       hire.onclick = function () {
-        askFields('Hire a bodyguard?', 'Post an anonymous protection job. The reward is taken from '
-          + 'your ' + offer.account + ' now and held: the bodyguard is paid if the contract on you '
-          + 'ends without being carried out, and it comes back to you if nobody takes the job. '
-          + 'They get your name and a meeting pin where you stand.',
-          [{ id: 'amount', label: 'Reward (' + money(offer.min) + ' to ' + money(offer.max) + ')',
+        askFields(t('app.hire_a_bodyguard'), t('app.post_an_anonymous_protection_job_the')
+          + 'your ' + offer.account + t('app.now_and_held_the_bodyguard_is')
+          + t('app.ends_without_being_carried_out_and')
+          + t('app.they_get_your_name_and_a'),
+          [{ id: 'amount', label: t('app.reward_2') + money(offer.min) + ' to ' + money(offer.max) + ')',
              type: 'number', value: offer.min, min: offer.min, max: offer.max }],
           function (values) {
-            ask('Pay ' + money(values.amount) + ' from your ' + offer.account + '?',
-              'Held until the contract on you ends.', function () {
+            ask('Pay ' + money(values.amount) + t('app.from_your') + offer.account + '?',
+              t('app.held_until_the_contract_on_you'), function () {
                 return once('protection:post:' + contract.id, function () {
                   return post('protectionPost', { id: contract.id, amount: values.amount,
                                                   account: offer.account }).then(function (r) {
-                    if (r.ok) { say('Your protection job is posted.', 'ok'); refresh(); }
+                    if (r.ok) { say(t('app.your_protection_job_is_posted'), 'ok'); refresh(); }
                     else { fail(r); }
                   });
                 });
-              }, { yes: 'Pay ' + money(values.amount), no: 'Cancel' });
-          }, 'Next');
+              }, { yes: 'Pay ' + money(values.amount), no: t('app.cancel') });
+          }, t('app.next'));
       };
       more.appendChild(hire);
     }
-    asList(contract.counterTargets).forEach(function (t) {
-      var hit = el('button', 'ghost ico i-crosshair counter-hit', 'Place a contract on ' + (t.name || t.label));
+    asList(contract.counterTargets).forEach(function (tv) {
+      var hit = el('button', 'ghost ico i-crosshair counter-hit', t('app.place_a_contract_on') + (tv.name || tv.label));
       hit.onclick = function () {
         state.draft = state.draft || {};
-        state.draft.target = t.handle;
-        state.draft.targetName = t.name || t.label;
+        state.draft.target = tv.handle;
+        state.draft.targetName = tv.name || tv.label;
         state.draft.targetProtected = false;
         delete state.draft.targetProtectedAs;
         state.tab = 'place';
@@ -12767,14 +12791,14 @@
   /* The placer's record on a board card: three counts and the days they
      cover, never who. An anonymous placer's come as bands ('1-4'). */
   function placerRecordText(r) {
-    return 'Placer: placed ' + r.placed + ', paid out ' + r.paidOut + ', cancelled '
+    return 'Placer: placed ' + r.placed + t('app.paid_out') + r.paidOut + ', cancelled '
       + r.cancelled + ' (' + (Number(r.days) || 0) + ' days)';
   }
 
   /* A card in a tier above this player's level. */
   function tierLockedText(lock) {
-    return (lock.tier || 'Higher') + ' tier: you need level ' + (Number(lock.level) || 0)
-      + (Number(lock.yours) > 0 ? ' (you are level ' + Number(lock.yours) + ').' : '.');
+    return (lock.tier || t('app.higher')) + t('app.tier_you_need_level') + (Number(lock.level) || 0)
+      + (Number(lock.yours) > 0 ? t('app.you_are_level') + Number(lock.yours) + ').' : '.');
   }
 
   /* What contract decay does to the placer's untaken contract, and a way to
@@ -12785,36 +12809,36 @@
     // Placed anonymously: the reward never rises (server/imp_decay.lua).
     if (d.anonymous) {
       row.appendChild(el('div', 'notice decay-notice',
-        'Its reward does not rise while it waits: you placed it anonymously.'));
+        t('app.its_reward_does_not_rise_while')));
       return;
     }
     var what;
     if (d.mode === 'shorten') {
-      what = 'While nobody takes it, it runs out ' + d.percent + '% sooner every '
-        + d.hours + (d.hours === 1 ? ' hour.' : ' hours.');
+      what = t('app.while_nobody_takes_it_it_runs_2') + d.percent + t('app.sooner_every')
+        + d.hours + (d.hours === 1 ? t('app.hour') : t('app.hours'));
     } else {
-      what = 'While nobody takes it, its reward rises ' + d.percent + '% every '
-        + d.hours + (d.hours === 1 ? ' hour' : ' hours') + ', up to ' + d.maxPercent
-        + '%, taken from your ' + (d.account === 'cash' ? 'cash' : 'bank') + '.';
-      if (Number(d.added) > 0) { what += ' Added so far: ' + money(d.added) + '.'; }
+      what = t('app.while_nobody_takes_it_its_reward_2') + d.percent + '% every '
+        + d.hours + (d.hours === 1 ? ' hour' : ' hours') + t('app.up_to') + d.maxPercent
+        + t('app.taken_from_your') + (d.account === 'cash' ? 'cash' : 'bank') + '.';
+      if (Number(d.added) > 0) { what += t('app.added_so_far') + money(d.added) + '.'; }
     }
-    if (d.off) { what = 'You turned off the change for this contract.'; }
-    else if (d.stopped) { what += ' It has stopped for this contract.'; }
-    else if (d.taken) { what = 'Somebody took it, so it no longer changes.'; }
+    if (d.off) { what = t('app.you_turned_off_the_change_for'); }
+    else if (d.stopped) { what += t('app.it_has_stopped_for_this_contract'); }
+    else if (d.taken) { what = t('app.somebody_took_it_so_it_no'); }
     row.appendChild(el('div', 'notice decay-notice', what));
     if (d.off || d.stopped || d.taken) { return; }
     var stop = el('button', 'ghost ico i-xcircle decay-off',
-      d.mode === 'shorten' ? 'Stop the countdown' : 'Stop the rise');
+      d.mode === 'shorten' ? t('app.stop_the_countdown') : t('app.stop_the_rise'));
     stop.onclick = function () {
-      ask(d.mode === 'shorten' ? 'Stop bringing its deadline in?' : 'Stop its reward rising?',
-        'Only for this contract. It cannot be turned back on.', function () {
+      ask(d.mode === 'shorten' ? t('app.stop_bringing_its_deadline_in') : t('app.stop_its_reward_rising'),
+        t('app.only_for_this_contract_it_cannot'), function () {
           return once('decayOff:' + contract.id, function () {
             return post('decayOff', { id: contract.id }).then(function (r) {
-              if (r.ok) { say('Turned off for this contract.', 'ok'); refresh(); }
+              if (r.ok) { say(t('app.turned_off_for_this_contract'), 'ok'); refresh(); }
               else { fail(r); }
             });
           });
-        }, { yes: 'Turn it off', no: 'Keep it' });
+        }, { yes: t('app.turn_it_off'), no: t('app.keep_it') });
     };
     more.appendChild(stop);
   }

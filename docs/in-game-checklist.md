@@ -757,6 +757,8 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] With `Config.Locale = 'nonesuch'` the game, the phone and the panel read English, and the console says once that there is no such file
 - [ ] (part 3, the server) With `Config.Locale = 'en'`: `/ch-diag`, `/ch-stuck`, `/ch-void` without a reason, `/cleanse` with nothing out on you, an organisation hire refused, and the panel's Game rules (labels, help, group headings) read as before. In a copy `xx` change one text from each (`admin.*`, `bridges.*`, `org.*`, `settings.*`, `settings_group.*`): each reads your words; the Dashboard still lists the diagnosis lines that want doing (a review item waiting) and leaves out the console's own ("name a player to test...")
 
+- [ ] (part 4, the phone) With `Config.Locale = 'en'` every screen of the phone app reads as before (Board, Mine, Place, On Me, Ledger, a contract card, the place form, a buyout, messages, the organisation tab). In a copy `xx.json` change one `app.*` text on each screen (a tab name included): each reads your words after a restart
+
 ## Version check (X4, off as shipped)
 
 - [ ] As shipped (`Config.VersionCheck.Enabled = false`, `Url = ''`) the start asks nothing: no outbound request in the server's network log

@@ -48,8 +48,9 @@ are named by their place in `config/config.lua`; the README has the details.
   (`server/panel.lua`) is in `locales/en.lua` too, and so is every other
   sentence the server says: the staff commands and the diagnosis, the buyout
   command, every feature's refusals and notices, the organisation's, and the
-  panel's setting labels, help and group names. The pages' other labels
-  follow in later steps (README, Escrow, and where the words live, which
+  panel's setting labels, help and group names. The phone app's every
+  label, help line, button and dialog (its tabs included) is in
+  `locales/en.json` (`app`). The admin panel's follow in the next step (README, Escrow, and where the words live, which
   says step by step how to add a language).
 
 **Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)

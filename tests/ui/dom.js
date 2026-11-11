@@ -232,10 +232,15 @@ function localeXhr() {
   Xhr.prototype.send = function () {
     const m = /^\.\.\/locales\/([A-Za-z_-]+\.json)$/.exec(this.url);
     const file = m && path.join(dir, m[1]);
-    if (file && fs.existsSync(file)) { this.status = 200; this.responseText = fs.readFileSync(file, 'utf8'); }
+    if (m && Object.prototype.hasOwnProperty.call(localeXhr.extra, m[1])) {
+      this.status = 200; this.responseText = JSON.stringify(localeXhr.extra[m[1]]);
+    } else if (file && fs.existsSync(file)) { this.status = 200; this.responseText = fs.readFileSync(file, 'utf8'); }
     else { this.status = 404; this.responseText = ''; }
   };
   return Xhr;
 }
+/* A language file a test makes up ([name.json] = its table), answered as if
+ * it were on disk. */
+localeXhr.extra = {};
 
 module.exports = { Node: Node, makeDocument: makeDocument, localeXhr: localeXhr };
