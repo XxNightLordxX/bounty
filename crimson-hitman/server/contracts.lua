@@ -4630,6 +4630,16 @@ function Contracts.recoverJoining(contract)
     if undone > 0 and left == 0 and contract.state == CH.STATE.ACCEPTED then
         Contracts.transition(contract.id, CH.STATE.ACCEPTED, CH.STATE.ACTIVE, 'accept_interrupted')
     end
+    -- An acceptance confirmed (its row active, its stake held) whose
+    -- contract the crash left on the board: a competitive contract is moved
+    -- on only after the serialized accept (Contracts.accept), and a crash
+    -- between left an active hitman who could neither work it nor take it
+    -- again (step 7 BUG-2). Moved on now, as the accept would have; no
+    -- money moves, so nothing can be taken twice.
+    if left > 0 and contract.state == CH.STATE.ACTIVE
+        and Contracts.transition(contract.id, CH.STATE.ACTIVE, CH.STATE.ACCEPTED, 'accept_recovered') then
+        undone = undone + 1
+    end
     return undone
 end
 

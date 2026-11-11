@@ -2063,7 +2063,7 @@ function StartCrimsonHitman()
     -- Intel: the engine (the in-person gate's audit and the notices), the
     -- rumours and briefings, and the tip's and the target's informant's
     -- extra rules with going dark (server/intel/).
-    intel.init({ audit = audit, notify = notify })
+    intel.init({ audit = audit, notify = notify, review = review, bailout = bailout })
     intelRumours.init({ storage = Storage, identity = identity, audit = audit, notify = notify,
                         projection = projection, app = app })
     intelRules.init({ storage = Storage, audit = audit, notify = notify, contracts = contracts,

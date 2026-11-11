@@ -74,9 +74,11 @@ local function hitmanRow(contractId, who)
 end
 F.hitmanRow = hitmanRow
 
---- The audit row a flow must leave. Not asked after a crash: the queue is
---- held in memory between flushes (server/audit.lua), and a crash loses
---- what it held. That loss is its own test (step7 BUG-1, matrix spec).
+--- The audit row a flow must leave. Not asked after a crash: conduct and
+--- staff rows are held in memory between flushes (server/audit.lua), and a
+--- crash loses what the queue held of them. Financial rows are kept on the
+--- machine until written on mysql (step 8a, BUG-1): the matrix spec's
+--- pinned tests ask that of them.
 function F.audited(ctx, action)
     if ctx.crashed then return end
     truthy(#W.audit(action) >= 1, 'audited ' .. action)

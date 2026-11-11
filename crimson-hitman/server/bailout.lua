@@ -484,6 +484,8 @@ local function payOwed(contract, id, cid, amount, account, reason, metadata)
     end
 end
 
+Bailout.payOwed = payOwed
+
 --- What the person who placed it is told of a buyout: what came back, from
 --- what is still owed to them (Contracts.owedTo), as the cancel notice words
 --- it. "Escrow and premium have been returned" went to a client whose

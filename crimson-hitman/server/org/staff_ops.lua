@@ -40,7 +40,7 @@ StaffOps.ACTIONS = {
     'org_invite_answered', 'org_application_superseded', 'org_cut_unavailable',
     'org_codename', 'org_salary', 'org_salary_max', 'org_payroll_run', 'org_payroll_skipped',
     'org_salary_applied', 'org_payroll_unconfirmed', 'org_payroll_refund_failed', 'org_payroll_refunded',
-    'org_payroll_unmarked',
+    'org_payroll_unmarked', 'org_funds_put_back', 'org_funds_recorded',
     'org_contract_received', 'org_contract_assigned', 'org_contract_reassigned', 'org_contract_released',
     'org_accept_requested', 'org_accept_approved', 'org_accept_refused', 'org_accept_expired',
     'org_probation', 'org_probation_passed', 'org_duty', 'org_duty_forced', 'org_channel_post',

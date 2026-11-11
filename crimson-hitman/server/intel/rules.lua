@@ -553,6 +553,18 @@ DARK = Intel.define('goDark', {
         return nil
     end,
     uncharged = function(ctx) pcall(Storage.deleteRpRow, ctx.row.id) end,
+    -- A purchase a crash caught after the charge is kept where its window
+    -- was confirmed, refunded where it is still pending or gone
+    -- (Intel.decideUnrecorded; load drops the pending row).
+    intent = function(ctx) return { row = ctx.row.id, at = ctx.row.bought_at } end,
+    recorded = function(_, _, mark)
+        for _, r in ipairs(Storage.readRpRows(IntelRules.KIND_DARK) or {}) do
+            if r.id == mark.row and not r.pending and tonumber(r.bought_at) == tonumber(mark.at) then
+                return true
+            end
+        end
+        return false
+    end,
     confirm = function(ctx)
         local row = ctx.row
         -- And read once more: the row's write and the charge are awaits on

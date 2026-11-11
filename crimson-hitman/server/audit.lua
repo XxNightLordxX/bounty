@@ -71,6 +71,61 @@ local function forgetKept()
     keptKeys = {}
 end
 
+--- Financial rows, each kept on this machine as it is queued
+--- (`auditAhead:<mode>:<n>`, one row a key) and deleted once a flush has
+--- written it or handed it on: a crash between the money moving and the
+--- next flush (Config.Audit.FlushIntervalMs) lost every one the queue held,
+--- the money moved and nothing said so (step 7 BUG-1). The next start in
+--- that mode puts them back in the queue (Audit.init). Conduct rows stay in
+--- memory only, as before. Only where the store is a database the rows are
+--- sent to (mysql: Storage.remote): json writes the log with the rest of its
+--- files at the storage flush, and a crash before that loses the contracts'
+--- rows with the log's, and memory keeps nothing.
+local AHEAD = 'auditAhead:'
+local aheadSeq = 0
+--- The key each queued financial row is kept under, by row.
+local aheadOf = setmetatable({}, { __mode = 'k' })
+
+local function aheadPrefix()
+    return AHEAD .. tostring(Config.Database.Mode) .. ':'
+end
+
+local function keepAhead(entry)
+    if not (Storage and Storage.remote) or type(SetResourceKvp) ~= 'function' then return end
+    local encoded, text = pcall(json.encode, entry)
+    if not encoded or type(text) ~= 'string' then return end
+    aheadSeq = aheadSeq + 1
+    local key = aheadPrefix() .. aheadSeq
+    if pcall(SetResourceKvp, key, text) then aheadOf[entry] = key end
+end
+
+--- The row is in the store, handed on, or will never be sent again.
+local function dropAhead(entry)
+    local key = entry and aheadOf[entry]
+    if not key then return end
+    aheadOf[entry] = nil
+    if type(DeleteResourceKvp) == 'function' then pcall(DeleteResourceKvp, key) end
+end
+
+--- This mode's ahead keys, oldest first.
+local function aheadInOrder()
+    local keys = {}
+    if type(StartFindKvp) ~= 'function' or type(FindKvp) ~= 'function' then return keys end
+    local prefix = aheadPrefix()
+    local ok, handle = pcall(StartFindKvp, prefix)
+    if not ok or not handle or handle == -1 then return keys end
+    while true do
+        local key = FindKvp(handle)
+        if not key then break end
+        if tonumber(key:sub(#prefix + 1)) then keys[#keys + 1] = key end
+    end
+    if type(EndFindKvp) == 'function' then pcall(EndFindKvp, handle) end
+    table.sort(keys, function(a, b)
+        return tonumber(a:sub(#prefix + 1)) < tonumber(b:sub(#prefix + 1))
+    end)
+    return keys
+end
+
 function Audit.init(storage)
     Storage = storage
     queue, head, tail, dropped, unconfirmed, keptKeys = {}, 1, 0, 0, 0, {}
@@ -86,6 +141,24 @@ function Audit.init(storage)
                 tail = tail + 1
                 queue[tail] = row
             end
+        end
+    end
+    -- And the financial rows a crash left kept (keepAhead), each under its
+    -- own key until a flush writes it.
+    aheadSeq, aheadOf = 0, setmetatable({}, { __mode = 'k' })
+    if not (Storage and Storage.remote) then return end
+    local prefix = aheadPrefix()
+    for _, key in ipairs(aheadInOrder()) do
+        aheadSeq = math.max(aheadSeq, tonumber(key:sub(#prefix + 1)) or 0)
+        local text = type(GetResourceKvpString) == 'function' and GetResourceKvpString(key) or nil
+        local decoded, row = pcall(json.decode, text or '')
+        if decoded and type(row) == 'table' and row.action then
+            row.detail = type(row.detail) == 'table' and row.detail or {}
+            tail = tail + 1
+            queue[tail] = row
+            aheadOf[row] = key
+        elseif type(DeleteResourceKvp) == 'function' then
+            pcall(DeleteResourceKvp, key)
         end
     end
 end
@@ -144,16 +217,19 @@ local function push(kind, action, actorCid, contractId, detail)
     -- log went silent while the rows it never wrote stayed in memory.
     local cap = math.max(1, math.floor(tonumber(Config.Audit.MaxQueueSize) or 5000))
     if (tail - head + 1) >= cap then
+        dropAhead(queue[head])
         queue[head] = nil
         head = head + 1
         dropped = dropped + 1
     end
 
     tail = tail + 1
-    queue[tail] = {
+    local entry = {
         ts = os.time(), kind = kind, action = action,
         actor_cid = actorCid, contract_id = contractId, detail = cleaned(detail) or {},
     }
+    queue[tail] = entry
+    if kind == 'financial' then keepAhead(entry) end
 end
 
 --- Money moved. Always logged, even when Config.Audit.LogAllActions is off.
@@ -333,10 +409,12 @@ function Audit.flush(stopping)
             return false
         elseif unanswered(err) then
             unconfirmed = unconfirmed + 1
+            dropAhead(entry)
             return false, true
         else
             dropped = dropped + 1
         end
+        dropAhead(entry)
         return true
     end
 
@@ -353,10 +431,12 @@ function Audit.flush(stopping)
             local ok, err = pcall(several, chunk)
             if ok then
                 written = written + #chunk
+                for k = 1, #chunk do dropAhead(chunk[k]) end
             elseif Storage.notSent and Storage.notSent(err) then
                 stoppedAt = from
             elseif unanswered(err) then
                 unconfirmed = unconfirmed + #chunk
+                for k = 1, #chunk do dropAhead(chunk[k]) end
                 stoppedAt = last + 1
             else
                 for k = 1, #chunk do
@@ -388,6 +468,7 @@ function Audit.flush(stopping)
         end
         local cap = math.max(1, math.floor(tonumber(Config.Audit.MaxQueueSize) or 5000))
         while (tail - head + 1) > cap do
+            dropAhead(queue[head])
             queue[head] = nil
             head = head + 1
             dropped = dropped + 1
@@ -442,7 +523,11 @@ function Audit.spill()
         local chunk = table.move(rows, from, math.min(#rows, cap, from + KEPT_CHUNK - 1), 1, {})
         local encoded, text = pcall(json.encode, chunk)
         n = n + 1
-        if encoded and pcall(SetResourceKvp, keptPrefix() .. n, text) then kept = kept + #chunk end
+        if encoded and pcall(SetResourceKvp, keptPrefix() .. n, text) then
+            kept = kept + #chunk
+            -- Kept with the queue now, under the stop's key.
+            for k = 1, #chunk do dropAhead(chunk[k]) end
+        end
     end
     if kept > 0 then
         Log.debug(('the database is not answering at this stop: %d audit row(s) are kept on this '

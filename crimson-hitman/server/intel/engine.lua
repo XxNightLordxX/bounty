@@ -56,10 +56,17 @@ local Intel = {}
 --- Each purchase brings its product module's (Intel.buy's svc), so a test
 --- that starts one module over another store moves that one alone.
 local Audit, Notify
+--- The review queue a purchase caught by a crash is kept in, and the
+--- buyout path's owed lines its price is given back by (Intel.decideUnrecorded).
+local Review, Bailout
 
 function Intel.init(deps)
     deps = deps or {}
     Audit, Notify = deps.audit, deps.notify
+    Review, Bailout = deps.review, deps.bailout
+    if Review and Review.DECIDERS then
+        Review.DECIDERS.intel_unrecorded = function(item) return Intel.decideUnrecorded(item) end
+    end
 end
 
 -- ============================================================================
@@ -147,14 +154,22 @@ Intel.PRODUCTS = {
 ---                   false (or a raise) gives the price back first, `say`
 ---                   puts whether it came back in data.refunded
 ---   deliver(ctx)    the purchase stands: the answer to send
+---   intent(ctx)     before the confirm: what names this purchase's record
+---   recorded(contractId, cid, mark)  after a restart: whether the record
+---                   `intent` named was written (Intel.decideUnrecorded)
 ---@return table product
 function Intel.define(name, parts)
     local base = assert(Intel.PRODUCTS[name], 'no such intel product: ' .. tostring(name))
     local product = { name = name }
     for k, v in pairs(base) do product[k] = v end
     for k, v in pairs(parts) do product[k] = v end
+    Intel.defined[name] = product
     return product
 end
+
+--- The products defined, by name: the last module to define one is the one
+--- a purchase caught by a crash is asked about.
+Intel.defined = {}
 
 -- ============================================================================
 --                              THE CHECK
@@ -315,22 +330,71 @@ local function run(product, ctx)
             product.sayTerms and { cost = ctx.cost, account = ctx.account } or nil
     end
 
+    -- Kept on this machine before anything is awaited (Review.prepare): a
+    -- crash between the charge and the product's record kept the price
+    -- with nothing to show for it and nothing to give it back (step 7
+    -- BUG-3). The next start settles it (Intel.decideUnrecorded); a
+    -- purchase that ends here, either way, lets it go.
+    local intent
+    if Review and Review.prepare and ctx.cost > 0 and product.recorded then
+        intent = Review.prepare({
+            kind = 'intel_unrecorded', contract_id = ctx.contractId,
+            cids = { payer = ctx.actor.cid }, amount = ctx.cost, account = ctx.account,
+            known = { decide = true, product = product.name,
+                      mark = product.intent and product.intent(ctx) or {} },
+        })
+    end
+
     -- Anything that stops the purchase after the charge gives the money
     -- back first, a read that raised (a dropped connection) included.
     local okC, stands, cErr, cData, why, say = pcall(product.confirm, ctx)
     if not okC then
         Intel.refund(ctx, product, 'read_failed')
+        if intent then Review.discard(intent) end
         error(stands, 0)
     end
     if not stands then
         local back = Intel.refund(ctx, product, why or cErr)
+        if intent then Review.discard(intent) end
         if say then
             cData = cData or {}
             cData.refunded = back
         end
         return false, cErr, cData
     end
-    return product.deliver(ctx)
+    local out = table.pack(product.deliver(ctx))
+    if intent then Review.discard(intent) end
+    return table.unpack(out, 1, out.n)
+end
+
+--- intel_unrecorded, settled by the server at the next start: a purchase
+--- charged whose process stopped before it finished. Kept where the
+--- product's record is in the store (it stands, and is shown again as any
+--- is after a restart); otherwise its price is owed back to the buyer under
+--- an id that comes from the item, so a second decision gives nothing more
+--- (Bailout.payOwed), and handed over now or at their next login.
+---@param item table a review item
+---@return string verdict 'done' | 'staff'
+---@return string note
+function Intel.decideUnrecorded(item)
+    local known = type(item.known) == 'table' and item.known or {}
+    local product = Intel.defined[known.product]
+    local payer = type(item.cids) == 'table' and item.cids.payer or nil
+    local amount = math.floor(tonumber(item.amount) or 0)
+    if not (product and product.recorded and item.contract_id and payer and amount > 0) then
+        return 'staff', 'it does not carry the purchase\'s record'
+    end
+    if product.recorded(item.contract_id, payer, type(known.mark) == 'table' and known.mark or {}) then
+        return 'done', 'the purchase is on record, so it stands'
+    end
+    if not (Bailout and Bailout.payOwed) then return 'staff', 'nothing here can give the price back' end
+    Bailout.payOwed({ id = item.contract_id }, ('intel:%s'):format(tostring(item.id)), payer, amount,
+        item.account, product.refund.action)
+    if Audit then
+        Audit.financial(product.refund.action, payer, item.contract_id,
+            { amount = amount, account = item.account, reason = 'interrupted', review = item.id })
+    end
+    return 'done', 'the purchase was not on record, so its price was given back'
 end
 
 --- Buy one product on one contract, one purchase at a time per the

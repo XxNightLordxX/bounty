@@ -311,7 +311,7 @@ function Org.init(d)
     Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, nil, 0
     Paying, PaidHere = {}, {}
     Jobs.reset()
-    Funds.init({ storage = d.storage, audit = d.audit })
+    Funds.init({ storage = d.storage, audit = d.audit, review = d.review })
     Extras.init(d)
     Extras2.init(d)
     Places.attach(d.storage)
@@ -1895,12 +1895,17 @@ function Org.deposit(who, amount, account, nonce)
     local actor = deps.identity.resolve(who.source)
     if not actor or actor.cid ~= who.cid then return fail(ERR.NOT_MEMBER) end
     if not Util.charge(actor.player, account, amount) then return fail(CH.ERR.INSUFFICIENT) end
+    -- Kept before anything is awaited: a crash from here to the ledger row
+    -- makes the deposit at the next start (Funds.decideInterrupted).
+    local charged = Funds.charged(org, ref, amount, account, who.cid)
     local ok, ferr = Funds.credit(org, amount, { ref = ref, kind = 'deposit', actor = who.cid,
-        reason = account, title = 'Member deposit' })
+        reason = account, title = 'Member deposit', charged = charged })
     if not ok then
         Util.credit(actor.player, account, amount)
+        Funds.settled(charged)
         return fail(ferr == 'busy' and ERR.BUSY or ferr == 'bank_down' and ERR.BANK_DOWN or ERR.REFUSED)
     end
+    Funds.settled(charged)
     record('org_funds_deposit', who, { amount = amount, account = account })
     return true, nil, { amount = amount }
 end
@@ -2138,18 +2143,57 @@ local function tell(cid, text)
     end
 end
 
+--- Hand a salary the funds have already paid out to the member's bank,
+--- marked paid; given back to the funds if the bank refuses it. The give
+--- is kept before the marker is awaited (Funds.willMark), so a crash in
+--- between is marked at the next start rather than left for staff.
+local function payMember(org, member, amount, period, ref)
+    local paidOk, paid = pcall(function()
+        return Framework().AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
+    end)
+    if not paidOk or not paid then
+        local back, berr = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
+            reason = 'salary not paid', title = 'Salary returned' })
+        if not back then
+            -- Kept with the settings and tried again every tick (Org.payrollTick).
+            org.settings.payroll.refunds[ref] = { cid = member.cid, amount = amount, period = period }
+            saveOrgRow()
+            deps.audit.financial('org_payroll_refund_failed', member.cid, nil, { org = org.id, amount = amount,
+                period = period, ref = ref, why = berr or 'refused' })
+        end
+        return 'failed', 'bank'
+    end
+    local mark = { kind = 'salary_paid', actor = member.cid, reason = 'paid to bank' }
+    local kept = Funds.willMark(org, ref .. ':paid', mark)
+    if not Funds.mark(org, ref .. ':paid', mark) then
+        PaidHere[ref] = true
+        deps.audit.financial('org_payroll_unmarked', member.cid, nil, { org = org.id, amount = amount,
+            period = period, ref = ref })
+    else
+        Funds.settled(kept)
+    end
+    return 'paid'
+end
+
 --- A salary's funds row found already written (Funds.debit 'repeat'): what
 --- became of it. Paid (its marker, or paid in this process), given back
 --- (':back'), or a give-back waiting to be tried again: 'repeat'. Left
 --- for staff before: 'repeat'. Otherwise the server stopped between the
---- debit and the marker, and whether the bank took it is not known: never
---- paid again on a guess, audited and left for staff once ('unconfirmed').
+--- debit and the marker. Where every give is kept before its marker
+--- (Funds.marksKept, mysql), a debit with neither never reached the member
+--- (step 8a): paid now. Elsewhere whether the bank took it is not known:
+--- never paid again on a guess, audited and left for staff once
+--- ('unconfirmed').
 local function settleRepeat(org, member, amount, period, ref)
     if PaidHere[ref] or Funds.byRef(ref .. ':paid') or Funds.byRef(ref .. ':back')
-        or org.settings.payroll.refunds[ref] or Funds.byRef(ref .. ':review') then
+        or org.settings.payroll.refunds[ref] or Funds.byRef(ref .. ':review')
+        or Funds.markWaiting(ref .. ':paid') then
         return 'repeat'
     end
     local row = Funds.byRef(ref)
+    if row and Funds.marksKept() then
+        return payMember(org, member, math.abs(math.floor(tonumber(row.amount) or 0)), period, ref)
+    end
     local debited = row and math.abs(math.floor(tonumber(row.amount) or 0)) or amount
     deps.audit.financial('org_payroll_unconfirmed', member.cid, nil, { org = org.id, amount = debited,
         period = period, ref = ref })
@@ -2173,36 +2217,17 @@ local function payOne(org, member, amount, period)
     local ok, ferr, repeated = Funds.debit(org, amount, { ref = ref, kind = 'salary', actor = member.cid,
         reason = 'grade ' .. tostring(member.grade), title = 'Salary' })
     if repeated then
+        local how, why, debited = settleRepeat(org, member, amount, period, ref)
         Paying[ref] = nil
-        return settleRepeat(org, member, amount, period, ref)
+        return how, why, debited
     end
     if not ok then
         Paying[ref] = nil
         return ferr == 'short' and 'skipped' or 'failed', ferr
     end
-    local paidOk, paid = pcall(function()
-        return Framework().AddMoney(member.cid, 'bank', amount, 'crimson-hitman organisation salary')
-    end)
-    if not paidOk or not paid then
-        local back, berr = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
-            reason = 'salary not paid', title = 'Salary returned' })
-        if not back then
-            -- Kept with the settings and tried again every tick (Org.payrollTick).
-            org.settings.payroll.refunds[ref] = { cid = member.cid, amount = amount, period = period }
-            saveOrgRow()
-            deps.audit.financial('org_payroll_refund_failed', member.cid, nil, { org = org.id, amount = amount,
-                period = period, ref = ref, why = berr or 'refused' })
-        end
-        Paying[ref] = nil
-        return 'failed', 'bank'
-    end
-    if not Funds.mark(org, ref .. ':paid', { kind = 'salary_paid', actor = member.cid, reason = 'paid to bank' }) then
-        PaidHere[ref] = true
-        deps.audit.financial('org_payroll_unmarked', member.cid, nil, { org = org.id, amount = amount,
-            period = period, ref = ref })
-    end
+    local how, why = payMember(org, member, amount, period, ref)
     Paying[ref] = nil
-    return 'paid'
+    return how, why
 end
 
 --- Give back the salaries a bank refused whose give-back failed, where the

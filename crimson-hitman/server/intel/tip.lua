@@ -272,6 +272,11 @@ function LocationTip.buy(actor, contractId, shown)
     return Intel.buy(TIP, services(), actor, contractId, shown)
 end
 
+--- The row a purchase writes, named before it is charged.
+local function tipId(ctx)
+    return ('%s:%s:%03d'):format(ctx.contractId, ctx.actor.cid, ctx.count + 1)
+end
+
 TIP = Intel.define('locationTip', {
     -- Read once: the figure checked against the quote is the figure charged.
     terms = function(ctx)
@@ -340,6 +345,15 @@ TIP = Intel.define('locationTip', {
         if not open then return err end
         return nil
     end,
+    -- A purchase a crash caught after the charge is kept where its row is
+    -- in the store, refunded where not (Intel.decideUnrecorded).
+    intent = function(ctx) return { row = tipId(ctx) } end,
+    recorded = function(contractId, _, mark)
+        for _, r in ipairs(Storage.readLocationTips(contractId) or {}) do
+            if r.id == mark.row then return true end
+        end
+        return false
+    end,
     confirm = function(ctx)
         local contractId, actor, now = ctx.contractId, ctx.actor, ctx.now
         -- The target went dark (Config.Intel.GoDark): the informant finds
@@ -351,7 +365,7 @@ TIP = Intel.define('locationTip', {
 
         local cx, cy = LocationTip.areaAround(ctx.x, ctx.y, ctx.radius)
         local row = {
-            id = ('%s:%s:%03d'):format(contractId, actor.cid, ctx.count + 1),
+            id = tipId(ctx),
             contract_id = contractId, buyer_cid = actor.cid,
             bought_at = now, expires_at = now + ctx.show,
             centre_x = cx, centre_y = cy, radius = ctx.radius,

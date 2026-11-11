@@ -66,7 +66,15 @@ Review.KINDS = {
         .. 'what did not arrive',
     location_tip_refund_failed = 'an informant tip that could not be delivered was owed back, '
         .. 'and could not be credited: refund what did not arrive',
-    org_payroll_unconfirmed = 'an organisation salary left the funds and the server stopped before '
+    intel_unrecorded = 'an intel purchase was charged and the server stopped before it finished. '
+        .. 'The server settles it by itself at the next start: kept where the purchase is on record, '
+        .. 'its price owed back to the buyer where not. Left here, it could not tell: check whether '
+        .. 'the buyer has what they paid for, and refund them if not',
+    org_funds_interrupted = 'money moved in or out of the organisation\'s Renewed-Banking account and '
+        .. 'the server stopped before the ledger recorded it. The server settles it by itself at the '
+        .. 'next start (a debit put back, a credit\'s row written, a member\'s deposit made). Left '
+        .. 'here, it could not: check the account against the ledger, as the note says',
+    org_payroll_unconfirmed ='an organisation salary left the funds and the server stopped before '
         .. 'it said whether the member\'s bank took it: check the member\'s bank (the transaction '
         .. '"crimson-hitman organisation salary"); pay them if it never arrived, else dismiss',
     escrow_take_unverified = 'escrow was taken and the store would not say whether it was '

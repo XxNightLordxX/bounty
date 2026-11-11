@@ -728,6 +728,15 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] An exclusive contract held and not worked for a few minutes, then `restart crimson-hitman`: the hold is still released at `Config.Limits.ExclusiveIdleReleaseSeconds` counted across the restart (on `json`, `data/clocks.json` holds its clock; `records.json` is not rewritten every tick)
 - [ ] `ch-diag` lists every job with its interval as before, and `contracts.releaseIdleHolds` stays a few ms at worst with many holds
 
+## A crash in the middle of a money move (step 8a, mysql, on a copy)
+
+Kill the server process (not `stop`: end FXServer from the task manager or `kill -9`) right after each, then start it again.
+
+- [ ] A handover payout: after the start, the admin panel's log has its `escrow_released` and `slot_claimed` rows, once each
+- [ ] A hitman accepting a competitive contract: after the start the contract shows as accepted on their phone, and they can work it and be paid
+- [ ] An informant tip bought: after the start the hitman has the tip and paid for it once, or has their money back; never both, never neither
+- [ ] The organisation with Renewed-Banking: a member deposit, a withdrawal, a pay day. After the start the society account and the organisation's funds screen agree, and each member was paid their salary once
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

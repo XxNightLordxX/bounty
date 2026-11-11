@@ -398,6 +398,13 @@ TARGET_LOOKUP = Intel.define('informant', {
     -- Read again with nothing between this and the charge: the state above
     -- was read before every await since.
     ready = readyOn,
+    -- A purchase a crash caught after the charge is kept where its count is
+    -- in the store, refunded where not (Intel.decideUnrecorded).
+    intent = function(ctx) return { purchases = ctx.purchases } end,
+    recorded = function(contractId, cid, mark)
+        local stored = Storage.readReveal(contractId, cid)
+        return stored ~= nil and (tonumber(stored.purchases) or 0) > (tonumber(mark.purchases) or 0)
+    end,
     confirm = confirmOn,
     deliver = function(ctx)
         local row, now, actor, contractId = ctx.row, ctx.now, ctx.actor, ctx.contractId
@@ -625,6 +632,15 @@ PLACER_LOOKUP = Intel.define('placerInformant', {
         end,
     },
     ready = readyOn,
+    -- Kept where its look-up is in the store, refunded where not
+    -- (Intel.decideUnrecorded).
+    intent = function(ctx) return { seq = #ctx.rows + 1 } end,
+    recorded = function(contractId, cid, mark)
+        for _, r in ipairs(Storage.readPlacerInformants and Storage.readPlacerInformants(contractId, cid) or {}) do
+            if tonumber(r.seq) == tonumber(mark.seq) then return true end
+        end
+        return false
+    end,
     -- The contract ending or the operative leaving between the charge and
     -- the roll gives the money back: there is nobody left to look up. So
     -- does a read that raised.

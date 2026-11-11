@@ -32,6 +32,20 @@ are named by their place in `config/config.lua`; the README has the details.
 - Seven new Boss permissions rows (K4-K7, M8, M9, N3), off until staff allow
   them; staff do all of it from Hitman organisation, Work & channel.
 
+**A crash no longer loses money or its record** (`mysql`)
+- Money audit rows (payouts, buyouts, tips, deposits) are kept on the
+  server machine the moment they are made, and written at the next start
+  if the server crashes before the log is written.
+- A crash part-way through an acceptance no longer leaves the hitman stuck
+  on a contract still shown as open: the next start puts it right.
+- An intel purchase (tip, informant, going dark) a crash interrupts is kept
+  if it was recorded and refunded if not, once.
+- The organisation's Renewed-Banking account and its ledger no longer
+  drift apart in a crash: a salary or withdrawal that left without a ledger
+  row is put back (so the pay day pays once), a salary taken from the funds
+  but not yet handed over is paid (it was left for staff), a deposit that
+  arrived gets its row, and a member's deposit that was charged is made.
+
 **Lighter loops**
 - The condition sampler no longer runs while no contract is running; it
   starts again the moment one is placed. `ch-diag` says `idle` meanwhile.

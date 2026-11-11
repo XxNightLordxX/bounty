@@ -43,7 +43,11 @@ local Integrations = CrimsonBoot.require('server.adapters.init')
 
 local Funds = {}
 
-local Storage, Audit
+local Storage, Audit, Review
+
+--- Markers a start found kept and could not write yet, by reference: what
+--- they mark happened (Funds.willMark).
+local markWaiting = {}
 
 --- The internal balance by organisation id, and the references written
 --- (so a repeat is answered without a read): [org] = n; [ref] = row.
@@ -81,9 +85,13 @@ local CODE = { internal = 1, bank = 2 }
 Funds.META = META
 
 function Funds.init(deps)
-    Storage, Audit = deps.storage, deps.audit
+    Storage, Audit, Review = deps.storage, deps.audit, deps.review
+    markWaiting = {}
     balances, known, inFlight, pending, absent, loaded = {}, {}, {}, {}, {}, false
     backend, accountMade, switching = nil, false, false
+    if Review and Review.DECIDERS then
+        Review.DECIDERS.org_funds_interrupted = function(item) return Funds.decideInterrupted(item) end
+    end
 end
 
 --- Whether a banking adapter's resource is installed at all (started,
@@ -328,10 +336,135 @@ local function blocked(org)
     return nil
 end
 
+--------------------------------------------------------------------------
+-- A crash between the bank and the ledger (step 7 BUG-4, BUG-5)
+--------------------------------------------------------------------------
+
+--- Renewed-Banking's account moves at once and the ledger row is an await
+--- after it, so a crash in between moved money the ledger never named: a
+--- debit's salary was paid again from the funds at the next pay day, a
+--- credit (row first, then) left a row for money the account never had,
+--- and a member's deposit was charged with nothing written. Each is kept on
+--- this machine the moment the money moves, before anything is awaited
+--- (Review.prepare, as escrow's take is), let go once the row is answered,
+--- and settled at the next start by Funds.decideInterrupted.
+---@param spec table { how = 'debit' | 'credit' | 'deposit', ref, amount, org, row, payer, account }
+---@return table|nil item
+local function intent(spec)
+    if not (Review and Review.prepare) then return nil end
+    spec.decide = true
+    return Review.prepare({
+        kind = 'org_funds_interrupted', cids = spec.payer and { payer = spec.payer } or {},
+        amount = spec.amount, account = spec.account or 'bank', known = spec,
+    })
+end
+
+local function letGo(item)
+    if item and Review then Review.discard(item) end
+end
+
+local function orgRef(org)
+    return { id = org.id, job = org.job, label = org.label }
+end
+
+--- org_funds_interrupted, settled by the server at the next start:
+---   debit   the money left the account: the row is there (the debit
+---           stands), or the money is put back, so the caller's next try
+---           (the pay day's) pays from the funds once;
+---   credit  the money is in the account: its row is written now if it is
+---           not, so a retry is answered as the first was;
+---   deposit a member was charged: their deposit is made now (once, by its
+---           reference) if the ledger does not have it.
+--- Never twice: the row decides, and a debit put back is let go from this
+--- machine before anything is awaited again.
+---@param item table a review item
+---@return string verdict 'done' | 'wait' | 'staff'
+---@return string note
+function Funds.decideInterrupted(item)
+    local known_ = type(item.known) == 'table' and item.known or {}
+    local ref, amount = known_.ref, Funds.amount(known_.amount)
+    local org = type(known_.org) == 'table' and known_.org.id and known_.org.job and known_.org or nil
+    if type(ref) ~= 'string' or not org or (not amount and known_.how ~= 'mark') then
+        return 'staff', 'it does not carry the movement\'s record'
+    end
+    if Storage.readOrgRow('funds', ref) then return 'done', 'the ledger has it' end
+    if known_.how == 'mark' and type(known_.mark) == 'table' then
+        if not Funds.mark(org, ref, known_.mark) then
+            -- What it marks happened all the same: nothing pays it again
+            -- meanwhile (Funds.markWaiting).
+            markWaiting[ref] = true
+            return 'wait', 'the marker could not be written yet'
+        end
+        markWaiting[ref] = nil
+        return 'done', 'what it marks happened, so its marker was written'
+    end
+    local row = type(known_.row) == 'table' and known_.row or {}
+    if known_.how == 'debit' then
+        if not Bank() then
+            return 'staff', ('Renewed-Banking is not started: check the %s account, and put back %d if '
+                .. 'it left without a ledger row (%s)'):format(org.job, amount, ref)
+        end
+        local ok, added = pcall(function() return Bank().addAccountMoney(org.job, amount) end)
+        if not ok or not added then return 'staff', 'Renewed-Banking would not take the debit back' end
+        letGo(item)
+        Audit.financial('org_funds_put_back', row.actor, row.contract_id, { ref = ref, amount = amount })
+        return 'done', 'the debit had no ledger row, so the money was put back'
+    elseif known_.how == 'credit' and row.id == ref then
+        Storage.insertOrgRowOnce('funds', row)
+        known[ref], absent[ref] = row, nil
+        Audit.financial('org_funds_recorded', row.actor, row.contract_id, { ref = ref, amount = amount })
+        return 'done', 'the account had it, so its ledger row was written'
+    elseif known_.how == 'deposit' then
+        local ok, err, repeated = Funds.credit(org, amount, { ref = ref, kind = 'deposit',
+            actor = known_.payer, reason = known_.account, title = 'Member deposit' })
+        if ok or repeated then return 'done', 'the member\'s deposit was made' end
+        if err == 'busy' or err == 'bank_down' then return 'wait', 'the funds cannot move now' end
+        return 'staff', 'the funds refused the member\'s deposit: refund the member'
+    end
+    return 'staff', 'it does not carry the movement\'s record'
+end
+
+--- A member was charged for a deposit (Org.deposit): kept before anything
+--- is awaited, let go by Funds.settled once the deposit has answered.
+---@return table|nil item
+function Funds.charged(org, ref, amount, account, payer)
+    return intent({ how = 'deposit', ref = ref:sub(1, 96), amount = amount, org = orgRef(org),
+        payer = payer, account = account })
+end
+
+---@param item table|nil from Funds.charged
+function Funds.settled(item) letGo(item) end
+
+--- What a marker (Funds.MARKS) will say has happened, kept the moment it
+--- happens and before the marker is awaited: a salary handed to the
+--- member's bank is marked at the next start if a crash stops the write
+--- (Funds.decideInterrupted). Let go by Funds.settled once it is written.
+---@param spec table { kind, actor, reason } as Funds.mark takes it
+---@return table|nil item
+function Funds.willMark(org, ref, spec)
+    return intent({ how = 'mark', ref = ref:sub(1, 96), org = orgRef(org), mark = spec })
+end
+
+--- Whether a marker kept before a restart is waiting to be written: what
+--- it marks happened.
+---@param ref string
+---@return boolean
+function Funds.markWaiting(ref)
+    return markWaiting[type(ref) == 'string' and ref:sub(1, 96) or ref] == true
+end
+
+--- Whether every marker is kept before it is written (Funds.willMark): on a
+--- database the server sends to (mysql), with the review queue wired. A
+--- debit with no marker then never reached the member.
+---@return boolean
+function Funds.marksKept()
+    return Review ~= nil and Review.prepare ~= nil and Storage ~= nil and Storage.remote == true
+end
+
 --- Put money into the funds, once per reference.
 ---@param org table
 ---@param amount integer above zero
----@param spec table { ref, kind, actor, reason, contract }
+---@param spec table { ref, kind, actor, reason, contract, charged }
 ---@return boolean ok
 ---@return string|nil err 'invalid' | 'busy' | 'refused' | 'bank_down'
 ---@return boolean|nil repeated true when the reference was already written
@@ -349,19 +482,33 @@ function Funds.credit(org, amount, spec)
     local row = { id = ref, org_id = org.id, kind = spec.kind or 'credit', amount = amount,
         actor = spec.actor, reason = spec.reason, contract_id = spec.contract, created_at = os.time(),
         backend = bank and 'bank' or 'internal' }
-    local wrote, inserted = pcall(Storage.insertOrgRowOnce, 'funds', row)
-    if not wrote or not inserted then
-        inFlight[ref] = nil
-        return false, wrote and 'busy' or 'refused', wrote and true or nil
-    end
+    -- The bank: the account first, kept on this machine before the row is
+    -- awaited (intent), then the row. Row first, a crash in between left a
+    -- row for money the account never had, and every retry was answered
+    -- 'repeated' (step 7 BUG-5); now the next start writes the row.
+    local item
     if bank then
         local ok, added = pcall(function() return Bank().addAccountMoney(org.job, amount) end)
         if not ok or not added then
-            pcall(Storage.deleteOrgRow, 'funds', ref)
             inFlight[ref] = nil
             Log.debug(('Renewed-Banking refused %d into %s: %s'):format(amount, org.job, tostring(added)))
             return false, 'refused'
         end
+        item = intent({ how = 'credit', ref = ref, amount = amount, row = row, org = orgRef(org) })
+        -- The member's deposit is in the account now: this item is what
+        -- the next start settles, never both.
+        letGo(spec.charged)
+    end
+    local wrote, inserted = pcall(Storage.insertOrgRowOnce, 'funds', row)
+    if not wrote or not inserted then
+        -- Taken back out of the account: the row is not this credit's.
+        if bank then pcall(function() return Bank().removeAccountMoney(org.job, amount) end) end
+        letGo(item)
+        inFlight[ref] = nil
+        return false, wrote and 'busy' or 'refused', wrote and true or nil
+    end
+    letGo(item)
+    if bank then
         history(org, spec.title or 'Organisation', amount, spec.actor, spec.kind)
     else
         balances[org.id] = (balances[org.id] or 0) + amount
@@ -423,16 +570,22 @@ function Funds.debit(org, amount, spec)
         if not ok and not bank then balances[org.id] = (balances[org.id] or 0) + amount end
         return ok, err
     end
+    local row = { id = ref, org_id = org.id, kind = spec.kind or 'debit', amount = -amount,
+        actor = spec.actor, reason = spec.reason, contract_id = spec.contract, created_at = now,
+        backend = bank and 'bank' or 'internal' }
+    -- The bank: kept on this machine as the money leaves, before the row is
+    -- awaited (intent). A crash in between lost it: no row named the
+    -- reference, and the pay day paid the member from the funds again (step
+    -- 7 BUG-4). Now the next start puts it back where the row is missing.
+    local item
     if bank then
         local balance = bankBalance(org)
         if not balance or balance < amount then return done(false, 'short') end
         local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, amount) end)
         if not ok or not removed then return done(false, ok and 'short' or 'refused') end
+        item = intent({ how = 'debit', ref = ref, amount = amount, row = row, org = orgRef(org) })
         history(org, spec.title or 'Organisation', -amount, spec.actor, spec.kind)
     end
-    local row = { id = ref, org_id = org.id, kind = spec.kind or 'debit', amount = -amount,
-        actor = spec.actor, reason = spec.reason, contract_id = spec.contract, created_at = now,
-        backend = bank and 'bank' or 'internal' }
     local wrote, inserted = pcall(Storage.insertOrgRowOnce, 'funds', row)
     if not wrote or not inserted then
         -- The money left the account and the row would not be written: put
@@ -441,9 +594,11 @@ function Funds.debit(org, amount, spec)
         if bank then
             pcall(function() return Bank().addAccountMoney(org.job, amount) end)
         end
+        letGo(item)
         Audit.financial('org_funds_unrecorded', spec.actor, spec.contract, { ref = ref, amount = amount })
         return done(false, 'refused')
     end
+    letGo(item)
     known[ref] = row
     return done(true)
 end
