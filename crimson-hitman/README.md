@@ -162,8 +162,9 @@ options, every answer and refusal of the admin panel's requests, the staff
 commands and the diagnosis (`/ch-diag`, Run the diagnosis), the buyout
 command, every feature's refusals and notices, the organisation's, and the
 panel's setting labels, help lines and group names. `locales/en.json` holds
-the pages': the phone app's every label, help line, button and dialog
-(`app`, its tabs included), and both pages' refusals by code (`errors`,
+the pages': every label, help line, button and dialog of the phone app
+(`app`, its tabs included) and of the admin panel (`admin`, its sections
+and header included), and both pages' refusals by code (`errors`,
 `panel_errors`). `Config.Locale` (`'en'`) names the language.
 
 To add a language (say German, `de`):
@@ -179,9 +180,7 @@ To add a language (say German, `de`):
 
 A key your file leaves out reads in English, and the console says so once;
 you can translate a few screens and leave the rest. The pages show their
-texts as plain text: write `&` and `<` as they are. Still written in its own
-file, and moving there in the next step: the admin panel's labels, help
-lines and buttons (`ui/admin.js`).
+texts as plain text: write `&` and `<` as they are.
 Console lines stay English, and so do the files that only ever print to the
 console (the stores, `server/boot.lua`, `server/versioncheck.lua`). Labels a
 server owner sets are in `config/config.lua` (titles of advisories, bulletins

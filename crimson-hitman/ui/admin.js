@@ -71,8 +71,13 @@
       }
       return sections[name];
     }
+    /* What the page builds from its words as it loads (a table of labels),
+       run now and again once a language is applied: the panel learns its
+       language from its first open message, after it has loaded. */
+    var laters = [], applied = 'en';
+    function later(fn) { laters.push(fn); fn(); }
     function use(lang) {
-      if (typeof lang !== 'string' || !/^[A-Za-z_-]+$/.test(lang) || lang === 'en') { return; }
+      if (typeof lang !== 'string' || !/^[A-Za-z_-]+$/.test(lang) || lang === 'en' || lang === applied) { return; }
       var chosen = load(lang);
       if (!chosen) { warn('there is no locales/' + lang + '.json (Config.Locale); English is used.'); return; }
       var missing = 0;
@@ -83,16 +88,35 @@
         });
       });
       if (missing > 0) { warn(lang + ' lacks ' + missing + ' text(s); those read in English.'); }
+      applied = lang;
+      laters.forEach(function (fn) { fn(); });
     }
-    function t(key) {
+    function tv(key) {
       var at = String(key).indexOf('.');
       var value = at > 0 ? section(key.slice(0, at))[key.slice(at + 1)] : undefined;
       if (typeof value === 'string') { return value; }
       warn('no text for ' + key + '; the key is shown.');
       return String(key);
     }
-    return { t: t, section: section, use: use };
+    return { t: tv, section: section, use: use, later: later };
   })();
+  /* The one way this page reads a word: t('section.key'). */
+  var t = Text.t;
+  /* The words the page's own HTML shows, by key like the rest: data-t (the
+     text), data-t-title, data-t-placeholder and data-t-aria-label. */
+  Text.later(function () {
+    try {
+      var root = document.body || document;
+      Array.prototype.forEach.call(root.querySelectorAll('[data-t]'), function (node) {
+        node.textContent = t(node.getAttribute('data-t'));
+      });
+      ['title', 'placeholder', 'aria-label'].forEach(function (name) {
+        Array.prototype.forEach.call(root.querySelectorAll('[data-t-' + name + ']'), function (node) {
+          node.setAttribute(name, t(node.getAttribute('data-t-' + name)));
+        });
+      });
+    } catch (err) { /* a page with no document of its own */ }
+  });
 
   /** Every interpolated string goes through this. */
   function esc(value) {
@@ -221,18 +245,18 @@
 
   /** A server time (os.time seconds) as a local date and time. */
   function when(ts) {
-    var t = Number(ts);
-    if (!t) return '—';
-    var d = new Date(t * 1000);
+    var tv = Number(ts);
+    if (!tv) return '—';
+    var d = new Date(tv * 1000);
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate())
       + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
   }
 
   /** A server time as the local time of day, to the second. */
   function clock(ts) {
-    var t = Number(ts);
-    if (!t) return '--:--:--';
-    var d = new Date(t * 1000);
+    var tv = Number(ts);
+    if (!tv) return '--:--:--';
+    var d = new Date(tv * 1000);
     return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
   }
 
@@ -240,13 +264,13 @@
 
   /** How long ago, or how long until, a server time. */
   function ago(ts) {
-    var t = Number(ts);
-    if (!t) return '';
-    var delta = nowSeconds() - t;
+    var tv = Number(ts);
+    if (!tv) return '';
+    var delta = nowSeconds() - tv;
     var future = delta < 0;
     var s = Math.abs(delta);
     var text;
-    if (s < 45) text = future ? 'in a moment' : 'just now';
+    if (s < 45) text = future ? t('admin.in_a_moment') : t('admin.just_now');
     else if (s < 3600) text = Math.round(s / 60) + ' min';
     else if (s < 86400) text = Math.round(s / 3600) + ' h';
     else text = Math.round(s / 86400) + ' d';
@@ -266,16 +290,28 @@
     return n >= 1 && n <= 1000000000 ? n : null;
   }
 
-  var STATE_LABEL = {
-    active: 'Active', accepted: 'Accepted', completing: 'Completing', completed: 'Completed',
-    bailed_out: 'Bought out', expired: 'Expired', cancelled: 'Cancelled', voided: 'Voided'
+  var STATE_LABEL;
+  Text.later(function () {
+    STATE_LABEL = {
+    active: t('admin.active'), accepted: t('admin.accepted'), completing: t('admin.completing'), completed: t('admin.completed'),
+    bailed_out: t('admin.bought_out'), expired: t('admin.expired'), cancelled: t('admin.cancelled'), voided: t('admin.voided')
   };
+  });
   var STATE_ORDER = ['active', 'accepted', 'completing', 'completed', 'bailed_out', 'expired',
                      'cancelled', 'voided'];
   var LIVE_STATES = { active: true, accepted: true, completing: true };
-  var RULE_LABEL = { alive: 'Alive only', either: 'Kill or alive' };
-  var MODE_LABEL = { exclusive: 'Exclusive', competitive: 'Competitive' };
-  var SOURCE_LABEL = { cash: 'cash', bank: 'bank', dirty: 'dirty money', item: 'item', weapon: 'weapon' };
+  var RULE_LABEL;
+  Text.later(function () {
+    RULE_LABEL = { alive: t('admin.alive_only'), either: t('admin.kill_or_alive') };
+  });
+  var MODE_LABEL;
+  Text.later(function () {
+    MODE_LABEL = { exclusive: t('admin.exclusive'), competitive: t('admin.competitive') };
+  });
+  var SOURCE_LABEL;
+  Text.later(function () {
+    SOURCE_LABEL = { cash: 'cash', bank: 'bank', dirty: t('admin.dirty_money'), item: 'item', weapon: 'weapon' };
+  });
   var MONEY = { cash: true, bank: true, dirty: true };
 
   function stateChip(state) {
@@ -292,9 +328,9 @@
   function holds(line) {
     if (!line) return '—';
     if (MONEY[line.source]) return money(line.amount) + ' ' + SOURCE_LABEL[line.source];
-    if (line.source === 'weapon') return String(line.item || 'a weapon') + ' (weapon)';
+    if (line.source === 'weapon') return String(line.item || t('admin.a_weapon')) + ' (weapon)';
     var count = Number(line.quantity) || 0;
-    return (count ? num(count) + ' × ' : '') + String(line.item || 'an item');
+    return (count ? num(count) + ' × ' : '') + String(line.item || t('admin.an_item'));
   }
 
   /** A log row's or a proposal's detail, short, as one line. */
@@ -335,102 +371,113 @@
      Help is the header's (?) button. A view has one name: there are no old
      names kept for it. Developer is only for staff the server says may open
      it (access.canDevelop). */
-  var GROUPS = [
-    { id: 'home', head: 'Daily', label: 'Home', icon: 'house', views: ['overview', 'inbox', 'announce'] },
-    { id: 'players', head: 'Daily', label: 'Players', icon: 'user',
+  var GROUPS;
+  Text.later(function () {
+    GROUPS = [
+    { id: 'home', head: 'Daily', label: t('admin.home'), icon: 'house', views: ['overview', 'inbox', 'announce'] },
+    { id: 'players', head: 'Daily', label: t('admin.players'), icon: 'user',
       views: ['players', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag', 'measures'] },
-    { id: 'contracts', head: 'Daily', label: 'Contracts', icon: 'file-contract', views: ['contracts'] },
+    { id: 'contracts', head: 'Daily', label: t('admin.contracts'), icon: 'file-contract', views: ['contracts'] },
     // How often one person may be targeted (server/targetlimits.lua).
-    { id: 'targets', head: 'Daily', label: 'Target limits', icon: 'user-clock',
-      views: ['tldefaults', 'tljobs', 'tlplayer'], logs: ['logs:targets', 'History'],
+    { id: 'targets', head: 'Daily', label: t('admin.target_limits'), icon: 'user-clock',
+      views: ['tldefaults', 'tljobs', 'tlplayer'], logs: ['logs:targets', t('admin.history')],
       // The live contracts on each target: the one list of contracts, grouped.
-      list: ['contracts:bytarget', 'Live contracts by target'] },
-    { id: 'rules', head: 'Setup', label: 'Game rules', icon: 'scale-balanced', views: ['rules', 'presets', 'changed'],
-      logs: ['logs:settings', 'Change history'] },
+      list: ['contracts:bytarget', t('admin.live_contracts_by_target')] },
+    { id: 'rules', head: 'Setup', label: t('admin.game_rules'), icon: 'scale-balanced', views: ['rules', 'presets', 'changed'],
+      logs: ['logs:settings', t('admin.change_history')] },
     // The hitman organisation (server/org/), off as shipped.
-    { id: 'org', head: 'Setup', label: 'Hitman organisation', icon: 'people-group',
+    { id: 'org', head: 'Setup', label: t('admin.hitman_organisation'), icon: 'people-group',
       views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork',
         'orgarmory', 'orgrecord', 'orgturf'],
-      logs: ['logs:org', 'Org audit'] },
-    { id: 'bossperms', head: 'Setup', label: 'Boss permissions', icon: 'key',
-      views: ['bpmatrix', 'bplimits', 'bpoffice'], logs: ['logs:grants', 'Grant history'] },
-    { id: 'locations', head: 'Setup', label: 'Locations', icon: 'location-dot', views: ['locations'] },
-    { id: 'logs', head: 'Records', label: 'Logs', icon: 'list-ul', views: ['logs', 'alerts'] },
-    { id: 'developer', head: 'Developer', label: 'Developer', icon: 'code',
+      logs: ['logs:org', t('admin.org_audit')] },
+    { id: 'bossperms', head: 'Setup', label: t('admin.boss_permissions'), icon: 'key',
+      views: ['bpmatrix', 'bplimits', 'bpoffice'], logs: ['logs:grants', t('admin.grant_history')] },
+    { id: 'locations', head: 'Setup', label: t('admin.locations'), icon: 'location-dot', views: ['locations'] },
+    { id: 'logs', head: 'Records', label: t('admin.logs'), icon: 'list-ul', views: ['logs', 'alerts'] },
+    { id: 'developer', head: 'Developer', label: t('admin.developer'), icon: 'code',
       views: ['health', 'devsettings', 'console', 'tools', 'setup', 'transfer'], developer: true },
-    { id: 'help', head: null, label: 'Help', icon: 'circle-question', views: ['help', 'howto', 'permissions'] }
+    { id: 'help', head: null, label: t('admin.help'), icon: 'circle-question', views: ['help', 'howto', 'permissions'] }
   ];
+  });
   /** Each view's name on its sub-tab, its icon, and on the breadcrumb. */
-  var VIEW_LABEL = {
-    inbox: ['Inbox', 'inbox'], overview: ['Dashboard', 'gauge-high'], announce: ['Announce', 'bullhorn'],
-    players: ['Find & summary', 'magnifying-glass'],
-    pmeasures: ['Measures', 'snowflake'], pmoney: ['Money', 'sack-dollar'], pplaytime: ['Playtime', 'clock'],
-    phistory: ['History', 'clock-rotate-left'], pdiag: ['Why can’t they see…', 'stethoscope'],
-    measures: ['All measures', 'list-check'],
-    contracts: ['Contracts', 'file-contract'],
-    tldefaults: ['Defaults', 'sliders'], tljobs: ['Per job', 'briefcase'], tlplayer: ['Per player', 'user-clock'],
-    rules: ['Areas', 'layer-group'], presets: ['Presets', 'box-archive'], changed: ['Changed from the panel', 'pen'],
-    orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
-    orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
-    orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'],
-    orgwork: ['Work & channel', 'briefcase'], orgarmory: ['Armory', 'box-open'],
-    orgrecord: ['Record & discipline', 'ranking-star'],
-    orgturf: ['Reputation, drops & garage', 'map'],
-    bpmatrix: ['Matrix', 'table-cells'], bplimits: ['Limits', 'sliders'], bpoffice: ['Delegation & office', 'building'],
-    locations: ['Map points', 'location-dot'],
-    logs: ['Logs', 'list-ul'], alerts: ['Alerts', 'bell'],
-    health: ['Health', 'heart-pulse'], devsettings: ['Engine settings', 'gear'], console: ['Console', 'terminal'],
-    tools: ['Test tools', 'screwdriver-wrench'], setup: ['First-start setup', 'wand-magic-sparkles'],
-    transfer: ['Export & import', 'right-left'],
-    help: ['How it works', 'circle-question'], howto: ['How do I…', 'hand'], permissions: ['Who can do what', 'key']
+  var VIEW_LABEL;
+  Text.later(function () {
+    VIEW_LABEL = {
+    inbox: [t('admin.inbox'), 'inbox'], overview: [t('admin.dashboard'), 'gauge-high'], announce: [t('admin.announce'), 'bullhorn'],
+    players: [t('admin.find_summary'), 'magnifying-glass'],
+    pmeasures: [t('admin.measures'), 'snowflake'], pmoney: [t('admin.money'), 'sack-dollar'], pplaytime: [t('admin.playtime'), 'clock'],
+    phistory: [t('admin.history'), 'clock-rotate-left'], pdiag: [t('admin.why_can_t_they_see'), 'stethoscope'],
+    measures: [t('admin.all_measures'), 'list-check'],
+    contracts: [t('admin.contracts'), 'file-contract'],
+    tldefaults: [t('admin.defaults'), 'sliders'], tljobs: [t('admin.per_job'), 'briefcase'], tlplayer: [t('admin.per_player'), 'user-clock'],
+    rules: [t('admin.areas'), 'layer-group'], presets: [t('admin.presets'), 'box-archive'], changed: [t('admin.changed_from_the_panel'), 'pen'],
+    orgsetup: [t('admin.setup'), 'gear'], orgroles: [t('admin.roles_pay'), 'id-badge'], orgmembers: [t('admin.members'), 'users'],
+    orgapps: [t('admin.applications'), 'envelope-open-text'], orgfunds: [t('admin.funds_cuts'), 'vault'],
+    orgaccess: [t('admin.contract_access'), 'door-open'], orgnotices: [t('admin.notices'), 'thumbtack'],
+    orgwork: [t('admin.work_channel'), 'briefcase'], orgarmory: [t('admin.armory'), 'box-open'],
+    orgrecord: [t('admin.record_discipline'), 'ranking-star'],
+    orgturf: [t('admin.reputation_drops_garage'), 'map'],
+    bpmatrix: [t('admin.matrix'), 'table-cells'], bplimits: [t('admin.limits'), 'sliders'], bpoffice: [t('admin.delegation_office'), 'building'],
+    locations: [t('admin.map_points'), 'location-dot'],
+    logs: [t('admin.logs'), 'list-ul'], alerts: [t('admin.alerts'), 'bell'],
+    health: [t('admin.health'), 'heart-pulse'], devsettings: [t('admin.engine_settings'), 'gear'], console: [t('admin.console'), 'terminal'],
+    tools: [t('admin.test_tools'), 'screwdriver-wrench'], setup: [t('admin.first_start_setup'), 'wand-magic-sparkles'],
+    transfer: [t('admin.export_import'), 'right-left'],
+    help: [t('admin.how_it_works'), 'circle-question'], howto: [t('admin.how_do_i'), 'hand'], permissions: [t('admin.who_can_do_what'), 'key']
   };
+  });
   /** One line of help under every view's title (drawn with the breadcrumb). */
-  var VIEW_HELP = {
-    overview: 'Everything at a glance: what waits for you, live counts, quick actions and the server\'s health.',
-    inbox: 'What waits for staff: reviews no rule could settle, money left for you, alerts not seen yet.',
-    announce: 'Send one notice to every hitman holding a contract, or to everybody with the app.',
-    players: 'Look a player up by player id, citizen id or name, then act from their card.',
-    pmeasures: 'Freeze, suspend or protect this player, and their standing in Target limits.',
-    pmoney: 'What this player is owed, notices waiting for their next login, and Pay.',
-    pplaytime: 'The hours counted for this player, for the new-player rule.',
-    phistory: 'This player\'s contracts, money and measures over time.',
-    pdiag: 'Why a contract, the board or a feature is not showing for this player.',
-    measures: 'Everybody frozen, suspended, protected or with target limits of their own.',
-    contracts: 'Every contract: search, filter by state or by one person, then open one to act on it.',
-    tldefaults: 'How often one person may have a contract placed on them, for everybody.',
-    tljobs: 'A job\'s own target limits, and one action for every player of a job.',
-    tlplayer: 'One target\'s cooldown and counts, exactly, with Reset, Extend and Exempt.',
-    rules: 'Every game rule by the area it is about; pick an area or a type of setting.',
-    changed: 'The settings changed from this panel, each with Reset to config.lua.',
-    presets: 'Named bundles of settings, shipped and your own: see every change one makes, then apply it with two clicks.',
-    orgsetup: 'The hitman organisation\'s switch, its job and how it runs.',
-    orgroles: 'The organisation\'s roles, their rank and their pay.',
-    orgmembers: 'Who is in the organisation, their role and duty.',
-    orgapps: 'Applications to join the organisation, to accept or turn down.',
-    orgfunds: 'The organisation\'s money and the cut it takes of contracts.',
-    orgaccess: 'Which contracts the organisation\'s members may take.',
-    orgnotices: 'Notices pinned for the organisation\'s members.',
-    orgwork: 'Contracts sent to the organisation, accepts waiting, probation, duty, the channel and dossiers.',
-    orgarmory: 'The organisation\'s armory: what it holds, the limits a day by role, and every move.',
-    orgrecord: 'Each member\'s record and the leaderboard; strikes and written warnings, and overturning them.',
-    orgturf: 'Reputation and tiers, dead drops, territory, the garage, internal contracts and the activity log.',
-    bpmatrix: 'What each boss role, and each boss, may do in the organisation.',
-    bplimits: 'The limits on each boss power.',
-    bpoffice: 'Which powers bosses may hand down, and which need the boss office.',
-    locations: 'Every place on the map this resource uses, set where you stand or by hand.',
-    logs: 'Every staff and game action on the record, filtered by area, player or time.',
-    alerts: 'Problems the server raised, to acknowledge once handled.',
-    health: 'What the server itself is doing: jobs, stores, other resources.',
-    devsettings: 'Engine settings: storage, timings and limits only developers change.',
-    console: 'Run a staff console command from the panel.',
-    tools: 'Test tools: try a feature without a real player.',
-    setup: 'The first-start setup: storage, your other scripts, permissions, the panel command and the key switches.',
-    transfer: 'Every setting changed here and your own presets as one text: copy it out, or paste one in, see every change, then apply.',
-    help: 'How the contract app works, in plain words, each card linked to its settings.',
-    howto: 'Short answers to how do I…, each with a button to where it is done.',
-    permissions: 'Who can do what: every permission this resource checks.'
+  var VIEW_HELP;
+  Text.later(function () {
+    VIEW_HELP = {
+    overview: t('admin.everything_at_a_glance_what_waits'),
+    inbox: t('admin.what_waits_for_staff_reviews_no'),
+    announce: t('admin.send_one_notice_to_every_hitman'),
+    players: t('admin.look_a_player_up_by_player'),
+    pmeasures: t('admin.freeze_suspend_or_protect_this_player'),
+    pmoney: t('admin.what_this_player_is_owed_notices'),
+    pplaytime: t('admin.the_hours_counted_for_this_player'),
+    phistory: t('admin.this_players_contracts_money_and_measures'),
+    pdiag: t('admin.why_a_contract_the_board_or'),
+    measures: t('admin.everybody_frozen_suspended_protected_or_with'),
+    contracts: t('admin.every_contract_search_filter_by_state'),
+    tldefaults: t('admin.how_often_one_person_may_have'),
+    tljobs: t('admin.a_jobs_own_target_limits_and'),
+    tlplayer: t('admin.one_targets_cooldown_and_counts_exactly'),
+    rules: t('admin.every_game_rule_by_the_area'),
+    changed: t('admin.the_settings_changed_from_this_panel'),
+    presets: t('admin.named_bundles_of_settings_shipped_and'),
+    orgsetup: t('admin.the_hitman_organisations_switch_its_job'),
+    orgroles: t('admin.the_organisations_roles_their_rank_and'),
+    orgmembers: t('admin.who_is_in_the_organisation_their'),
+    orgapps: t('admin.applications_to_join_the_organisation_to'),
+    orgfunds: t('admin.the_organisations_money_and_the_cut'),
+    orgaccess: t('admin.which_contracts_the_organisations_members_may'),
+    orgnotices: t('admin.notices_pinned_for_the_organisations_members'),
+    orgwork: t('admin.contracts_sent_to_the_organisation_accepts'),
+    orgarmory: t('admin.the_organisations_armory_what_it_holds'),
+    orgrecord: t('admin.each_members_record_and_the_leaderboard'),
+    orgturf: t('admin.reputation_and_tiers_dead_drops_territory'),
+    bpmatrix: t('admin.what_each_boss_role_and_each'),
+    bplimits: t('admin.the_limits_on_each_boss_power'),
+    bpoffice: t('admin.which_powers_bosses_may_hand_down'),
+    locations: t('admin.every_place_on_the_map_this'),
+    logs: t('admin.every_staff_and_game_action_on'),
+    alerts: t('admin.problems_the_server_raised_to_acknowledge'),
+    health: t('admin.what_the_server_itself_is_doing'),
+    devsettings: t('admin.engine_settings_storage_timings_and_limits'),
+    console: t('admin.run_a_staff_console_command_from'),
+    tools: t('admin.test_tools_try_a_feature_without'),
+    setup: t('admin.the_first_start_setup_storage_your'),
+    transfer: t('admin.every_setting_changed_here_and_your'),
+    help: t('admin.how_the_contract_app_works_in'),
+    howto: t('admin.short_answers_to_how_do_i'),
+    permissions: t('admin.who_can_do_what_every_permission')
   };
-  window.CH_ADMIN_VIEW_HELP = VIEW_HELP;
+  });
+  Text.later(function () {
+    window.CH_ADMIN_VIEW_HELP = VIEW_HELP;
+  });
 
   /** The views only the Developer section's staff see. */
   var DEV_VIEWS = { health: true, devsettings: true, console: true, transfer: true };
@@ -526,15 +573,15 @@
   function whyNoWrite() {
     if (!canWrite()) {
       if (canModerate()) {
-        return 'Moderator: you may freeze, suspend, protect, void and move deadlines; this needs the staff '
-          + 'ACE itself (Config.Admin.Ace).';
+        return t('admin.moderator_you_may_freeze_suspend_protect')
+          + t('admin.ace_itself_config_admin_ace');
       }
-      return 'Read only: changing anything needs the staff ACE itself (Config.Admin.Ace); '
-        + 'the extra ACEs only read.';
+      return t('admin.read_only_changing_anything_needs_the')
+        + t('admin.the_extra_aces_only_read');
     }
-    if (S.recovery === 'recovering') return 'Still recovering from the restart: try again in a moment.';
+    if (S.recovery === 'recovering') return t('admin.still_recovering_from_the_restart_try');
     if (S.recovery === 'recovery_failed') {
-      return 'Recovery failed at the last start: restart the resource once the cause in the console is fixed.';
+      return t('admin.recovery_failed_at_the_last_start');
     }
     return '';
   }
@@ -549,7 +596,7 @@
     node.className = 'toast is-' + kind;
     node.setAttribute('role', kind === 'error' ? 'alert' : 'status');
     node.setAttribute('data-act', 'toast-close');
-    node.setAttribute('title', 'Click to dismiss');
+    node.setAttribute('title', t('admin.click_to_dismiss'));
     setHtml(node, frag(
       icon(kind === 'ok' ? 'circle-check' : kind === 'error' ? 'circle-exclamation' : 'circle-info'),
       h('span.toast-text', String(text))));
@@ -566,8 +613,8 @@
   function words(reply) {
     if (!reply) return WORDS.no_answer;
     if (reply.message) return String(reply.message);
-    if (reply.ok) return Text.t('panel.done');
-    return WORDS[reply.err] || Text.t('panel.refused_without_saying');
+    if (reply.ok) return t('panel.done');
+    return WORDS[reply.err] || t('panel.refused_without_saying');
   }
   /** For the tests. */
   window.CH_ADMIN_WORDS = words;
@@ -810,7 +857,7 @@
 
   function empty(text) { return h('p.empty', text); }
 
-  function loading(text) { return h('p.loading', icon('spinner'), ' ', text || 'Loading…'); }
+  function loading(text) { return h('p.loading', icon('spinner'), ' ', text || t('admin.loading')); }
 
   function answerBox(answer) {
     if (!answer) return null;
@@ -823,13 +870,16 @@
   }
 
   /** A date range, as presets and two typed dates. */
-  var RANGES = [
-    { value: '', label: 'Any time' },
+  var RANGES;
+  Text.later(function () {
+    RANGES = [
+    { value: '', label: t('admin.any_time') },
     { value: '1d', label: 'Last 24 hours' },
     { value: '7d', label: 'Last 7 days' },
     { value: '30d', label: 'Last 30 days' },
-    { value: 'custom', label: 'Between dates…' }
+    { value: 'custom', label: t('admin.between_dates') }
   ];
+  });
 
   /** A typed date ('2026-10-26', or '2026-10-26 14:30') as a server time;
       null when nothing was typed, false when it cannot be read. */
@@ -874,11 +924,11 @@
 
   function rangeInputs(prefix, range, live) {
     return h('span.range', { id: prefix + '-range', hidden: range !== 'custom' },
-      field(prefix + '.from', { id: prefix + '-from', class: 'is-date', placeholder: 'From YYYY-MM-DD',
-        'data-live': live, 'aria-label': 'From date' }),
+      field(prefix + '.from', { id: prefix + '-from', class: 'is-date', placeholder: t('admin.from_yyyy_mm_dd'),
+        'data-live': live, 'aria-label': t('admin.from_date') }),
       h('span.range-sep', 'to'),
-      field(prefix + '.to', { id: prefix + '-to', class: 'is-date', placeholder: 'To YYYY-MM-DD',
-        'data-live': live, 'aria-label': 'To date' }));
+      field(prefix + '.to', { id: prefix + '-to', class: 'is-date', placeholder: t('admin.to_yyyy_mm_dd'),
+        'data-live': live, 'aria-label': t('admin.to_date') }));
   }
 
   /* ---------- the frame: badges, banner, navigation -------------------- */
@@ -888,15 +938,15 @@
     if (version) version.textContent = S.access.version ? 'v' + S.access.version : '';
     setHtml(byId('badges'), frag(
       canWrite()
-        ? h('span.badge.is-write', { title: 'You can change things here' }, icon('pen'), 'Can change')
+        ? h('span.badge.is-write', { title: t('admin.you_can_change_things_here') }, icon('pen'), t('admin.can_change'))
         : canModerate()
-          ? h('span.badge.is-moderator', { title: whyNoWrite() }, icon('gavel'), 'Moderator')
-          : h('span.badge.is-read', { title: whyNoWrite() }, icon('eye'), 'Read only'),
+          ? h('span.badge.is-moderator', { title: whyNoWrite() }, icon('gavel'), t('admin.moderator'))
+          : h('span.badge.is-read', { title: whyNoWrite() }, icon('eye'), t('admin.read_only')),
       canIdentify()
-        ? h('span.badge.is-identity', { title: 'You see who is behind anonymous parties; every lookup is on the record' },
-          icon('user-secret'), 'Sees identities')
-        : h('span.badge', { title: 'Anonymous parties show as Anonymous, and citizen ids as roles' },
-          icon('mask'), 'Identities hidden')));
+        ? h('span.badge.is-identity', { title: t('admin.you_see_who_is_behind_anonymous') },
+          icon('user-secret'), t('admin.sees_identities'))
+        : h('span.badge', { title: t('admin.anonymous_parties_show_as_anonymous_and') },
+          icon('mask'), t('admin.identities_hidden'))));
     drawBanner();
     var current = groupOf(S.section);
     var heads = {};
@@ -919,7 +969,7 @@
     var menu = byId('nav-menu');
     if (menu) {
       var lbl = menu.querySelector('.lbl');
-      if (lbl) lbl.textContent = current ? current.label : 'Sections';
+      if (lbl) lbl.textContent = current ? current.label : t('admin.sections');
       menu.setAttribute('aria-expanded', S.navOpen ? 'true' : 'false');
     }
     var nav = byId('nav');
@@ -948,7 +998,7 @@
         icon(label[1]), h('span.lbl', label[0]),
         counts[view] ? h('span.nav-count.is-warn', { id: counts[view], hidden: true }) : null);
     }), g && g.logs ? h('button.sub-btn.is-link', { id: 'nav-' + g.logs[0].replace(':', '-'), type: 'button',
-      'data-act': 'section', 'data-section': g.logs[0], title: 'Records \u203a Logs, ' + g.logs[1] },
+      'data-act': 'section', 'data-section': g.logs[0], title: t('admin.records_logs') + g.logs[1] },
       icon('list-ul'), h('span.lbl', g.logs[1] + ' \u25b8')) : null,
       g && g.list ? h('button.sub-btn.is-link', { id: 'nav-' + g.list[0].replace(':', '-'), type: 'button',
         'data-act': 'section', 'data-section': g.list[0], title: 'Contracts, ' + g.list[1] },
@@ -972,8 +1022,8 @@
     }), VIEW_HELP[S.section] ? h('div.view-help-row', h('p.view-help', VIEW_HELP[S.section]),
       VIEW_SETTINGS[S.section] ? frag(h('button.link.gear-btn', { type: 'button', 'data-act': 'gear',
         'aria-expanded': S.gearOpen === S.section ? 'true' : 'false', 'aria-controls': 'gear',
-        title: 'This screen\'s settings, here' }, icon('gear'), ' ', S.gearOpen === S.section
-        ? 'Hide its settings' : 'Settings for this screen')) : null) : null));
+        title: t('admin.this_screens_settings_here') }, icon('gear'), ' ', S.gearOpen === S.section
+        ? t('admin.hide_its_settings') : t('admin.settings_for_this_screen'))) : null) : null));
   }
 
   /** Whether a player is selected: looked up, with a handle to act on. */
@@ -991,8 +1041,8 @@
 
   function playerChipText() {
     var p = (S.players.data && S.players.data.player) || {};
-    return String(p.name || 'No name on record')
-      + (p.online ? ' (in city · ' + String(p.server) + ')' : ' (offline)');
+    return String(p.name || t('admin.no_name_on_record'))
+      + (p.online ? t('admin.in_city') + String(p.server) + ')' : ' (offline)');
   }
 
   /** The header's chips: the selected player (with the minutes left of the
@@ -1005,18 +1055,18 @@
       var left = refMinutesLeft();
       parts.push(h('span.ctx-chip' + (left <= 0 ? '.is-stale' : ''),
         h('button.ctx-open', { type: 'button', 'data-act': left <= 0 ? 'ctx-relookup' : 'ctx-player',
-          title: left <= 0 ? 'The lookup ran out: look them up again' : 'Open their card' },
-          icon('user'), h('span.lbl', 'Player: ' + String((S.players.data.player || {}).name || 'No name on record')),
-          h('span.ctx-left', left <= 0 ? 'look up again' : left + ' min')),
-        h('button.ctx-x', { type: 'button', 'data-act': 'ctx-player-clear', 'aria-label': 'Clear the player',
-          title: 'Clear the player' }, icon('xmark'), h('span.lbl', 'Clear'))));
+          title: left <= 0 ? t('admin.the_lookup_ran_out_look_them') : t('admin.open_their_card') },
+          icon('user'), h('span.lbl', 'Player: ' + String((S.players.data.player || {}).name || t('admin.no_name_on_record'))),
+          h('span.ctx-left', left <= 0 ? t('admin.look_up_again') : left + ' min')),
+        h('button.ctx-x', { type: 'button', 'data-act': 'ctx-player-clear', 'aria-label': t('admin.clear_the_player'),
+          title: t('admin.clear_the_player') }, icon('xmark'), h('span.lbl', t('admin.clear')))));
     }
     if (S.ctx.contract) {
       parts.push(h('span.ctx-chip',
-        h('button.ctx-open', { type: 'button', 'data-act': 'ctx-contract', title: 'Open the contract' },
+        h('button.ctx-open', { type: 'button', 'data-act': 'ctx-contract', title: t('admin.open_the_contract') },
           icon('file-contract'), h('span.lbl', 'Contract: ' + S.ctx.contract)),
-        h('button.ctx-x', { type: 'button', 'data-act': 'ctx-contract-clear', 'aria-label': 'Clear the contract',
-          title: 'Clear the contract' }, icon('xmark'), h('span.lbl', 'Clear'))));
+        h('button.ctx-x', { type: 'button', 'data-act': 'ctx-contract-clear', 'aria-label': t('admin.clear_the_contract'),
+          title: t('admin.clear_the_contract') }, icon('xmark'), h('span.lbl', t('admin.clear')))));
     }
     node.hidden = !parts.length;
     setHtml(node, frag(parts));
@@ -1029,15 +1079,15 @@
       banner.hidden = false;
       banner.className = 'notice gold banner';
       setHtml(banner, frag(icon('hourglass-half'), h('span',
-        'Still recovering from the restart. Everything reads; void, settle, resolve, settings and the '
-        + 'timer refresh wait until it finishes.')));
+        t('admin.still_recovering_from_the_restart_everything')
+        + t('admin.timer_refresh_wait_until_it_finishes'))));
     } else if (S.recovery === 'recovery_failed') {
       banner.hidden = false;
       banner.className = 'notice banner';
       setHtml(banner, frag(icon('triangle-exclamation'), h('span',
-        'Recovery failed at the last start (the console says why, after BOOT RECOVERY FAILED). Nothing '
-        + 'can be voided, settled, resolved or changed until the resource is restarted once the cause '
-        + 'is fixed. Flushing the log still works.')));
+        t('admin.recovery_failed_at_the_last_start_2')
+        + t('admin.can_be_voided_settled_resolved_or')
+        + t('admin.is_fixed_flushing_the_log_still'))));
     } else {
       banner.hidden = true;
       setHtml(banner, frag());
@@ -1060,15 +1110,15 @@
     var stuck = o.stuck ? Number(o.stuck.leftForStaff) || 0 : 0;
     var alerts = o.alerts ? Number(o.alerts.open) || 0 : 0;
     var changed = Number(o.overrides) || 0;
-    setCount('count-home', reviews + stuck + alerts, 'waiting in the inbox: reviews, money left for staff and alerts');
-    setCount('count-inbox', reviews + stuck + alerts, 'waiting in the inbox');
-    setCount('count-reviews', reviews, 'open in the review queue');
-    setCount('count-stuck', stuck, 'escrow line(s) left for you to settle');
-    setCount('count-ialerts', alerts, 'open alerts, not acknowledged yet');
-    setCount('count-rules', changed, 'setting(s) changed from the panel');
-    setCount('count-settings', changed, 'setting(s) changed from the panel');
-    setCount('count-logs', alerts, 'open alerts, not acknowledged yet');
-    setCount('count-alerts', alerts, 'open alerts, not acknowledged yet');
+    setCount('count-home', reviews + stuck + alerts, t('admin.waiting_in_the_inbox_reviews_money'));
+    setCount('count-inbox', reviews + stuck + alerts, t('admin.waiting_in_the_inbox'));
+    setCount('count-reviews', reviews, t('admin.open_in_the_review_queue'));
+    setCount('count-stuck', stuck, t('admin.escrow_line_left_for_you_to'));
+    setCount('count-ialerts', alerts, t('admin.open_alerts_not_acknowledged_yet'));
+    setCount('count-rules', changed, t('admin.setting_changed_from_the_panel'));
+    setCount('count-settings', changed, t('admin.setting_changed_from_the_panel'));
+    setCount('count-logs', alerts, t('admin.open_alerts_not_acknowledged_yet'));
+    setCount('count-alerts', alerts, t('admin.open_alerts_not_acknowledged_yet'));
   }
 
   /** Every write button drawn, enabled or not as recovery and the ACEs now
@@ -1286,7 +1336,7 @@
 
   /** The overview's foot: when it was read and how often it is. */
   function overviewStamp() {
-    return ' Updated ' + (S.overviewAt ? when(S.overviewAt).slice(11) : '\u2014') + ' \u00b7 refreshes every '
+    return ' Updated ' + (S.overviewAt ? when(S.overviewAt).slice(11) : '\u2014') + t('admin.refreshes_every')
       + Math.round(refreshMs() / 1000) + ' s';
   }
 
@@ -1322,31 +1372,34 @@
   function moneyRows(bucket) {
     var b = bucket || {};
     return h('dl.facts',
-      h('dt', 'Cash'), h('dd.figure', money(b.cash)),
-      h('dt', 'Bank'), h('dd.figure', money(b.bank)),
-      h('dt', 'Dirty money'), h('dd.figure', money(b.dirty)),
-      h('dt', 'Items'), h('dd', num(b.items)),
-      h('dt', 'Weapons'), h('dd', num(b.weapons)),
-      h('dt', 'Escrow lines'), h('dd', num(b.lines)));
+      h('dt', t('admin.cash')), h('dd.figure', money(b.cash)),
+      h('dt', t('admin.bank')), h('dd.figure', money(b.bank)),
+      h('dt', t('admin.dirty_money_2')), h('dd.figure', money(b.dirty)),
+      h('dt', t('admin.items')), h('dd', num(b.items)),
+      h('dt', t('admin.weapons')), h('dd', num(b.weapons)),
+      h('dt', t('admin.escrow_lines')), h('dd', num(b.lines)));
   }
 
-  var WHY_SHORT = {
-    interrupted: 'stopped while being given', unknown: 'arrival unknown', raised: 'raised, nothing arrived',
-    stalled: 'stopped part-way', unqueued: 'in no retry queue', stalled_claim: 'stalled claim',
-    stopped: 'stopped by a raise', releasing: 'left mid-release', ending_unfinished: 'ending unfinished',
-    orphan: 'contract never stored', never_given_release: 'left mid-release, never given',
-    owed_to_nobody: 'owed to nobody', owed_to_unchecked: 'owed to an id not checked'
+  var WHY_SHORT;
+  Text.later(function () {
+    WHY_SHORT = {
+    interrupted: t('admin.stopped_while_being_given'), unknown: t('admin.arrival_unknown'), raised: t('admin.raised_nothing_arrived'),
+    stalled: t('admin.stopped_part_way'), unqueued: t('admin.in_no_retry_queue'), stalled_claim: t('admin.stalled_claim'),
+    stopped: t('admin.stopped_by_a_raise'), releasing: t('admin.left_mid_release'), ending_unfinished: t('admin.ending_unfinished'),
+    orphan: t('admin.contract_never_stored'), never_given_release: t('admin.left_mid_release_never_given'),
+    owed_to_nobody: t('admin.owed_to_nobody'), owed_to_unchecked: t('admin.owed_to_an_id_not_checked')
   };
+  });
 
   /** Why Stuck escrow lists nothing, from where recovery stands. After a
       recovery that failed, "while the server is recovering" told staff to
       wait for something that never finishes. */
   function notListed(recovery) {
     if (recovery === 'recovery_failed') {
-      return 'Not listed: recovery failed at the last start; restart the resource once the cause in '
-        + 'the console is fixed.';
+      return t('admin.not_listed_recovery_failed_at_the')
+        + t('admin.the_console_is_fixed');
     }
-    return 'Not listed while the server is recovering from the restart.';
+    return t('admin.not_listed_while_the_server_is');
   }
 
   function tile(title, body, cls) {
@@ -1361,23 +1414,23 @@
     var listed = o.stuck ? Number(o.stuck.total) || 0 : 0;
     return frag(
       h('p.big' + (forYou + reviewsOpen + alertsOpen > 0 ? '.is-warn' : ''), num(forYou + reviewsOpen + alertsOpen)),
-      h('p.sub', 'waiting for you'),
+      h('p.sub', t('admin.waiting_for_you')),
       h('div.chips',
         h('button.chip.is-link', { type: 'button', 'data-act': 'ib-go', 'data-value': 'reviews' },
-          'Needs review ' + num(reviewsOpen)),
+          t('admin.needs_review') + num(reviewsOpen)),
         h('button.chip.is-link', { type: 'button', 'data-act': 'ib-go', 'data-value': 'stuck' },
-          'Money waiting ' + num(forYou)),
+          t('admin.money_waiting') + num(forYou)),
         h('button.chip.is-link', { type: 'button', 'data-act': 'ib-go', 'data-value': 'alerts' },
           'Alerts ' + num(alertsOpen))),
       !o.stuck ? h('p.note', notListed(o.recovery))
-        : o.stuck.error ? h('p.note.is-error', 'Money waiting could not be read just now; the inbox reads it again.')
-          : listed > forYou ? h('p.note', num(listed - forYou) + ' more line' + (listed - forYou === 1 ? '' : 's')
-            + ' listed need nothing from you.') : null);
+        : o.stuck.error ? h('p.note.is-error', t('admin.money_waiting_could_not_be_read'))
+          : listed > forYou ? h('p.note', num(listed - forYou) + t('admin.more_line') + (listed - forYou === 1 ? '' : 's')
+            + t('admin.listed_need_nothing_from_you')) : null);
   }
 
   function overviewBody() {
     var o = S.overview;
-    if (!o) return S.overviewError ? empty(S.overviewError) : loading('Reading the overview…');
+    if (!o) return S.overviewError ? empty(S.overviewError) : loading(t('admin.reading_the_overview'));
     var contracts = o.contracts || {};
     var byState = contracts.byState || {};
     var states = STATE_ORDER.slice();
@@ -1394,68 +1447,68 @@
     var problems = canWrite() ? warnings.length : 0;
     return frag(
       h('div.tiles',
-        tile('Inbox', inboxCounts(o)),
-        tile('Quick actions', h('div.btn-row.quick',
-          btn('.is-small', 'section', { 'data-section': 'players' }, 'Find a player', 'magnifying-glass'),
-          btn('.is-small', 'section', { 'data-section': 'contracts' }, 'Contracts', 'file-contract'),
-          btn('.is-small', 'section', { 'data-section': 'contracts:bytarget' }, 'Live by target', 'crosshairs'),
-          btn('.is-small', 'section', { 'data-section': 'announce' }, 'Announce', 'bullhorn'),
-          btn('.is-small', 'section', { 'data-section': 'rules' }, 'Game rules', 'scale-balanced'))),
-        tile('Health', frag(
+        tile(t('admin.inbox'), inboxCounts(o)),
+        tile(t('admin.quick_actions'), h('div.btn-row.quick',
+          btn('.is-small', 'section', { 'data-section': 'players' }, t('admin.find_a_player'), 'magnifying-glass'),
+          btn('.is-small', 'section', { 'data-section': 'contracts' }, t('admin.contracts'), 'file-contract'),
+          btn('.is-small', 'section', { 'data-section': 'contracts:bytarget' }, t('admin.live_by_target'), 'crosshairs'),
+          btn('.is-small', 'section', { 'data-section': 'announce' }, t('admin.announce'), 'bullhorn'),
+          btn('.is-small', 'section', { 'data-section': 'rules' }, t('admin.game_rules'), 'scale-balanced'))),
+        tile(t('admin.health'), frag(
           h('p.big' + (o.recovery !== 'ready' || problems ? '.is-warn' : '') + '.is-word',
-            o.recovery === 'recovering' ? 'Recovering' : o.recovery !== 'ready' ? 'Recovery failed'
-              : problems ? num(problems) + ' problem' + (problems === 1 ? '' : 's') : 'All well'),
+            o.recovery === 'recovering' ? t('admin.recovering') : o.recovery !== 'ready' ? t('admin.recovery_failed')
+              : problems ? num(problems) + ' problem' + (problems === 1 ? '' : 's') : t('admin.all_well')),
           h('dl.facts',
-            h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'finished'
-              : o.recovery === 'recovering' ? 'still running' : 'FAILED'),
-            h('dt', 'Storage'), h('dd', String(o.storage || '—')),
-            h('dt', 'Setup problems'), h('dd', canWrite() ? num(warnings.length) : '—'),
-            h('dt', 'Changed here'), h('dd', Number(o.overrides) > 0 ? h('button.link', { type: 'button',
+            h('dt', t('admin.recovery')), h('dd', o.recovery === 'ready' ? 'finished'
+              : o.recovery === 'recovering' ? t('admin.still_running') : 'FAILED'),
+            h('dt', t('admin.storage')), h('dd', String(o.storage || '—')),
+            h('dt', t('admin.setup_problems')), h('dd', canWrite() ? num(warnings.length) : '—'),
+            h('dt', t('admin.changed_here')), h('dd', Number(o.overrides) > 0 ? h('button.link', { type: 'button',
               'data-act': 'section', 'data-section': 'changed' }, num(o.overrides) + ' setting'
               + (Number(o.overrides) === 1 ? '' : 's')) : 'none')),
-          o.storage === 'memory' ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are '
-            + 'gone at the next start' }, 'memory mode: nothing is kept across a restart') : null,
+          o.storage === 'memory' ? h('span.chip.is-warn', { title: t('admin.contracts_escrow_review_items_and_settings')
+            + t('admin.gone_at_the_next_start') }, t('admin.memory_mode_nothing_is_kept_across')) : null,
           canDevelop() ? h('div.btn-row', btn('.is-small.ghost', 'section', { 'data-section': 'health' },
-            'Server health', 'heart-pulse')) : null),
+            t('admin.server_health'), 'heart-pulse')) : null),
           o.recovery !== 'ready' || problems ? '.is-warn' : ''),
-        tile('Contracts', frag(
+        tile(t('admin.contracts'), frag(
           h('p.big', num(contracts.total)),
           h('div.chips', states.filter(function (s) { return byState[s]; }).map(function (s) {
             return h('button.chip.is-link', { type: 'button', 'data-act': 'ov-state', 'data-value': s },
               (STATE_LABEL[s] || s) + ' ' + num(byState[s]));
           })),
-          h('p.sub', 'new ones placed under ' + (RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—'))))),
-        tile('Operatives', frag(
+          h('p.sub', t('admin.new_ones_placed_under') + (RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—'))))),
+        tile(t('admin.operatives'), frag(
           h('p.big', num(hitmen.operatives)),
-          h('p.sub', 'on contracts now, holding ' + num(hitmen.contracts) + ' contract'
+          h('p.sub', t('admin.on_contracts_now_holding') + num(hitmen.contracts) + ' contract'
             + (Number(hitmen.contracts) === 1 ? '' : 's')))),
-        tile('Held in escrow', moneyRows(o.held)),
-        tile('Owed to players', frag(moneyRows(owed),
+        tile(t('admin.held_in_escrow'), moneyRows(o.held)),
+        tile(t('admin.owed_to_players'), frag(moneyRows(owed),
           h('p.sub', num(owed.players) + ' player' + (Number(owed.players) === 1 ? '' : 's') + ' · '
-            + num(owed.queued) + ' line' + (Number(owed.queued) === 1 ? '' : 's') + ' in a retry queue'))),
-        tile('Measures on players', frag(
+            + num(owed.queued) + ' line' + (Number(owed.queued) === 1 ? '' : 's') + t('admin.in_a_retry_queue')))),
+        tile(t('admin.measures_on_players'), frag(
           h('dl.facts',
-            h('dt', 'Frozen'), h('dd', h('span' + (held ? '.is-warn' : ''), { id: 'ov-frozen' },
-              frozenUnknown ? 'Unknown' : num(frozenCount))),
-            h('dt', 'Suspended'), h('dd', measures.suspend == null ? '—' : num(measures.suspend)),
-            h('dt', 'Protected'), h('dd', measures.protect == null ? '—' : num(measures.protect)),
-            h('dt', 'Own target limits'), h('dd', measures.limit == null ? '—' : num(measures.limit))),
-          frozenUnknown ? h('p.sub', 'the store\'s freezes could not be read: every live contract is held until '
-            + 'they can be') : null,
+            h('dt', t('admin.frozen')), h('dd', h('span' + (held ? '.is-warn' : ''), { id: 'ov-frozen' },
+              frozenUnknown ? t('admin.unknown') : num(frozenCount))),
+            h('dt', t('admin.suspended')), h('dd', measures.suspend == null ? '—' : num(measures.suspend)),
+            h('dt', t('admin.protected')), h('dd', measures.protect == null ? '—' : num(measures.protect)),
+            h('dt', t('admin.own_target_limits')), h('dd', measures.limit == null ? '—' : num(measures.limit))),
+          frozenUnknown ? h('p.sub', t('admin.the_stores_freezes_could_not_be')
+            + t('admin.they_can_be')) : null,
           h('div.btn-row',
-            btn('.is-small', 'ms-open', { 'data-value': '' }, 'All measures', 'arrow-right'),
-            btn('.is-small.ghost', 'ms-open', { 'data-value': 'freeze' }, 'Frozen', 'arrow-right'),
-            btn('.is-small.ghost', 'ms-open', { 'data-value': 'suspend' }, 'Suspended', 'arrow-right'),
-            btn('.is-small.ghost', 'ms-open', { 'data-value': 'protect' }, 'Protected', 'arrow-right'))),
+            btn('.is-small', 'ms-open', { 'data-value': '' }, t('admin.all_measures'), 'arrow-right'),
+            btn('.is-small.ghost', 'ms-open', { 'data-value': 'freeze' }, t('admin.frozen'), 'arrow-right'),
+            btn('.is-small.ghost', 'ms-open', { 'data-value': 'suspend' }, t('admin.suspended'), 'arrow-right'),
+            btn('.is-small.ghost', 'ms-open', { 'data-value': 'protect' }, t('admin.protected'), 'arrow-right'))),
           held ? '.is-warn' : '')),
-      warnings.length && canWrite() ? card('Setup problems (' + num(warnings.length) + ')', frag(
+      warnings.length && canWrite() ? card(t('admin.setup_problems_2') + num(warnings.length) + ')', frag(
         h('ul.warnings', warnings.map(function (line) { return h('li', String(line)); })),
         S.tools.diag && S.section === 'overview' ? linesBox(S.tools.diag.lines, S.tools.diag.later) : null),
-        '.is-warn', btn('.is-small', 'ov-diag', {}, 'Run the diagnosis', 'stethoscope')) : null,
+        '.is-warn', btn('.is-small', 'ov-diag', {}, t('admin.run_the_diagnosis'), 'stethoscope')) : null,
       h('p.foot', icon('rotate'),
         h('span', { id: 'ov-at' }, overviewStamp()),
-        S.overviewError ? h('span.is-error', ' · last refresh: ' + S.overviewError) : null,
-        ' ', btn('.is-small.ghost', 'ov-refresh', {}, 'Refresh now')));
+        S.overviewError ? h('span.is-error', t('admin.last_refresh') + S.overviewError) : null,
+        ' ', btn('.is-small.ghost', 'ov-refresh', {}, t('admin.refresh_now'))));
   }
 
   SHELL.overview = function () {
@@ -1467,97 +1520,104 @@
 
   function healthBody() {
     var o = S.overview;
-    if (!o) return S.overviewError ? empty(S.overviewError) : loading('Reading the overview…');
+    if (!o) return S.overviewError ? empty(S.overviewError) : loading(t('admin.reading_the_overview'));
     var photos = o.photos;
     var slowest = asList(o.slowest);
     var slowMs = Number(o.slowMs) || 0;
-    var t = S.tools;
+    var tv = S.tools;
     return frag(
       S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null,
       h('div.tiles',
-        tile('Server', h('dl.facts',
-          h('dt', 'Storage'), h('dd', String(o.storage || '—'), o.storage === 'memory'
-            ? h('span.chip.is-warn', { title: 'Contracts, escrow, review items and settings are gone at '
-              + 'the next start' }, 'nothing is kept across a restart') : null),
-          h('dt', 'New contracts'), h('dd', RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—')),
-          h('dt', 'Kill photos'), h('dd', o.killPhotos === false ? 'Off'
-            : 'On, kept on ' + String(o.photoStorage || '—')),
-          h('dt', 'Recovery'), h('dd', o.recovery === 'ready' ? 'Finished'
-            : o.recovery === 'recovering' ? 'Still running' : 'FAILED'),
-          h('dt', 'Settings changed here'), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
+        tile(t('admin.server'), h('dl.facts',
+          h('dt', t('admin.storage')), h('dd', String(o.storage || '—'), o.storage === 'memory'
+            ? h('span.chip.is-warn', { title: t('admin.contracts_escrow_review_items_and_settings_2')
+              + t('admin.the_next_start') }, t('admin.nothing_is_kept_across_a_restart')) : null),
+          h('dt', t('admin.new_contracts')), h('dd', RULE_LABEL[o.fulfilment] || String(o.fulfilment || '—')),
+          h('dt', t('admin.kill_photos')), h('dd', o.killPhotos === false ? t('admin.off')
+            : t('admin.on_kept_on') + String(o.photoStorage || '—')),
+          h('dt', t('admin.recovery')), h('dd', o.recovery === 'ready' ? t('admin.finished')
+            : o.recovery === 'recovering' ? t('admin.still_running_2') : 'FAILED'),
+          h('dt', t('admin.settings_changed_here')), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
             'data-section': 'changed' }, (Number(o.overrides) > 0 ? num(o.overrides) + ' changed'
-              : 'None changed') + ' — open Game rules'),
-            Number(o.notApplied) > 0 ? h('span.chip.is-error', num(o.notApplied) + ' not applied') : null),
-          h('dt', 'Log rows queued'), h('dd', num(o.auditQueued)))),
-        tile('Kill photos', photos ? h('dl.facts',
-          h('dt', 'Waiting'), h('dd', num(photos.waiting && photos.waiting.count) + ' · '
+              : t('admin.none_changed')) + t('admin.open_game_rules')),
+            Number(o.notApplied) > 0 ? h('span.chip.is-error', num(o.notApplied) + t('admin.not_applied')) : null),
+          h('dt', t('admin.log_rows_queued')), h('dd', num(o.auditQueued)))),
+        tile(t('admin.kill_photos'), photos ? h('dl.facts',
+          h('dt', t('admin.waiting')), h('dd', num(photos.waiting && photos.waiting.count) + ' · '
             + bytes(photos.waiting && photos.waiting.bytes)),
-          h('dt', 'Kept in the app'), h('dd', num(photos.kept && photos.kept.count) + ' · '
+          h('dt', t('admin.kept_in_the_app')), h('dd', num(photos.kept && photos.kept.count) + ' · '
             + bytes(photos.kept && photos.kept.bytes)),
-          h('dt', 'Served to Photos'), h('dd', num(photos.served && photos.served.count) + ' · '
+          h('dt', t('admin.served_to_photos')), h('dd', num(photos.served && photos.served.count) + ' · '
             + bytes(photos.served && photos.served.bytes)))
-          : h('p.note', 'The photo store did not answer.'))),
-      card('Slowest maintenance jobs', slowest.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Job'), h('th.num', 'Worst'), h('th.num', 'Average'),
-          h('th.num', 'Last'), h('th.num', 'Runs'))),
+          : h('p.note', t('admin.the_photo_store_did_not_answer')))),
+      card(t('admin.slowest_maintenance_jobs'), slowest.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.job')), h('th.num', t('admin.worst')), h('th.num', t('admin.average')),
+          h('th.num', t('admin.last')), h('th.num', t('admin.runs')))),
         h('tbody', slowest.map(function (job) {
           var slow = slowMs > 0 && Number(job.max) > slowMs;
           return h('tr' + (slow ? '.is-warn' : ''), h('td.mono.wrap', String(job.name)),
             h('td.num', ms(job.max)), h('td.num', ms(job.avg)), h('td.num', ms(job.last)),
             h('td.num', num(job.runs)));
-        })))) : empty('No job has run yet.'),
-        '', slowMs > 0 ? h('span.sub', 'over ' + slowMs + ' ms is marked') : null),
-      card('What the diagnosis says', asList(o.warnings).length
+        })))) : empty(t('admin.no_job_has_run_yet')),
+        '', slowMs > 0 ? h('span.sub', 'over ' + slowMs + t('admin.ms_is_marked')) : null),
+      card(t('admin.what_the_diagnosis_says'), asList(o.warnings).length
         ? h('ul.warnings', asList(o.warnings).map(function (line) { return h('li', String(line)); }))
-        : empty('Nothing that wants doing.')),
-      card('Diagnosis', frag(
-        h('p.about', 'Why the app is not showing something, the server-wide checks, the settings that need '
-          + 'attention, and what the console said. Name a player id to run the app\'s own reads as them, or run '
-          + 'it from a player\'s card in Players.'),
-        h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: 'Player id', inputmode: 'numeric',
-          'data-enter': 'tl-diag', 'aria-label': 'Player id (optional)' }),
-          btn('.primary', 'tl-diag', {}, 'Run the diagnosis', 'stethoscope'),
-          btn('', 'tl-config', {}, 'Check the config', 'list-check')),
-        t.diag && t.diag.error ? answerBox({ ok: false, text: t.diag.error }) : null,
-        t.diag ? linesBox(t.diag.lines, t.diag.later) : null)),
+        : empty(t('admin.nothing_that_wants_doing'))),
+      card(t('admin.diagnosis'), frag(
+        h('p.about', t('admin.why_the_app_is_not_showing')
+          + t('admin.attention_and_what_the_console_said')
+          + t('admin.it_from_a_players_card_in')),
+        h('div.btn-row', field('tl.subject', { class: 'is-short', placeholder: t('admin.player_id'), inputmode: 'numeric',
+          'data-enter': 'tl-diag', 'aria-label': t('admin.player_id_optional') }),
+          btn('.primary', 'tl-diag', {}, t('admin.run_the_diagnosis'), 'stethoscope'),
+          btn('', 'tl-config', {}, t('admin.check_the_config'), 'list-check')),
+        tv.diag && tv.diag.error ? answerBox({ ok: false, text: tv.diag.error }) : null,
+        tv.diag ? linesBox(tv.diag.lines, tv.diag.later) : null)),
       h('p.foot', icon('rotate'), h('span', { id: 'ov-at' }, overviewStamp()),
-        ' ', btn('.is-small.ghost', 'ov-refresh', {}, 'Refresh now')));
+        ' ', btn('.is-small.ghost', 'ov-refresh', {}, t('admin.refresh_now'))));
   }
   SHELL.health = function () { return h('section.view', h('div.stack', { id: 'dg' }, healthBody())); };
   LOAD.health = function () { loadOverview(false); };
 
   /* ---- contracts ---- */
 
-  DD['ct-state'] = {
-    prefix: 'State',
+  Text.later(function () {
+    DD['ct-state'] = {
+    prefix: t('admin.state'),
     options: function () {
-      return [{ value: 'live', label: 'Live only' }, { value: '', label: 'Any' }].concat(STATE_ORDER.map(function (s) {
+      return [{ value: 'live', label: t('admin.live_only') }, { value: '', label: t('admin.any') }].concat(STATE_ORDER.map(function (s) {
         return { value: s, label: STATE_LABEL[s] };
       }));
     },
     value: function () { return S.contracts.state; },
     pick: function (v) { S.contracts.state = v; S.contracts.page = 1; loadContracts(); }
   };
-  DD['ct-as'] = {
-    prefix: 'Their part',
+  });
+  Text.later(function () {
+    DD['ct-as'] = {
+    prefix: t('admin.their_part'),
     options: function () {
-      return [{ value: '', label: 'Any' }, { value: 'target', label: PART_LABEL.target },
+      return [{ value: '', label: t('admin.any') }, { value: 'target', label: PART_LABEL.target },
               { value: 'client', label: PART_LABEL.client }, { value: 'hitman', label: PART_LABEL.hitman }];
     },
     value: function () { return S.contracts.as; },
     pick: function (v) { S.contracts.as = v; S.contracts.page = 1; loadContracts(); }
   };
-  DD['ct-rule'] = {
-    prefix: 'Rule',
+  });
+  Text.later(function () {
+    DD['ct-rule'] = {
+    prefix: t('admin.rule'),
     options: function () {
-      return [{ value: '', label: 'Any' }, { value: 'alive', label: RULE_LABEL.alive },
+      return [{ value: '', label: t('admin.any') }, { value: 'alive', label: RULE_LABEL.alive },
               { value: 'either', label: RULE_LABEL.either }];
     },
     value: function () { return S.contracts.rule; },
     pick: function (v) { S.contracts.rule = v; S.contracts.page = 1; loadContracts(); }
   };
-  DD['ct-range'] = {
-    prefix: 'Placed',
+  });
+  Text.later(function () {
+    DD['ct-range'] = {
+    prefix: t('admin.placed'),
     options: function () { return RANGES; },
     value: function () { return S.contracts.range; },
     pick: function (v) {
@@ -1568,6 +1628,7 @@
       loadContracts();
     }
   };
+  });
 
   function contractQuery() {
     var c = S.contracts;
@@ -1621,13 +1682,16 @@
     setHtml(byId('ct-pager'), contractPager());
   }
 
-  var PART_LABEL = { target: 'Target', client: 'Placer', hitman: 'Hitman' };
+  var PART_LABEL;
+  Text.later(function () {
+    PART_LABEL = { target: t('admin.target'), client: t('admin.placer'), hitman: t('admin.hitman') };
+  });
 
   function contractRows() {
     var d = S.contracts.data;
-    if (!d) return loading('Reading contracts…');
+    if (!d) return loading(t('admin.reading_contracts'));
     var rows = asList(d.rows);
-    if (!rows.length) return empty(S.contracts.byTarget ? 'No live contract matches.' : 'No contract matches.');
+    if (!rows.length) return empty(S.contracts.byTarget ? t('admin.no_live_contract_matches') : t('admin.no_contract_matches'));
     var c = S.contracts;
     var person = !!c.person;
     var whoisCol = person && canIdentify();
@@ -1639,7 +1703,7 @@
       if (c.byTarget && row.group !== last) {
         last = row.group;
         out.push(h('tr.tl-group', h('td', { colspan: String(cols) }, icon('crosshairs'), ' ',
-          String(row.target || '—'), h('span.sub', ' · ' + num(row.onTarget) + ' live on them'))));
+          String(row.target || '—'), h('span.sub', ' · ' + num(row.onTarget) + t('admin.live_on_them')))));
       }
       var id = String(row.id);
       // Relative, to scan down a page of them; the date itself on hover.
@@ -1648,27 +1712,27 @@
         ? String(row.resolution || STATE_LABEL[row.state] || 'ended') + ' · ' + ago(row.resolved_at)
         : (row.deadline_at ? 'due ' + ago(row.deadline_at) : '—');
       out.push(h('tr.row', { 'data-act': 'contract', 'data-id': id, tabindex: '0',
-        title: 'Open contract ' + row.id },
+        title: t('admin.open_contract') + row.id },
         h('td.mono.nowrap', id), h('td', stateChip(row.state),
-          row.frozen ? h('span.chip.is-warn.is-frozen', c.byTarget ? 'On hold' : 'Frozen') : null),
+          row.frozen ? h('span.chip.is-warn.is-frozen', c.byTarget ? t('admin.on_hold') : t('admin.frozen')) : null),
         person ? h('td', PART_LABEL[row.role] || String(row.role || '—'),
           row.roleAnonymous ? h('span.chip.is-anon', 'anonymous') : null) : null,
         person ? null : h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
         h('td.name', String(row.target || '—')),
-        h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || 'Anonymous'))
+        h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || t('admin.anonymous')))
           : String(row.client || '—')),
         person ? null : h('td.num', num(row.claimed) + ' / ' + num(row.slots)),
         h('td.nowrap', when(row.created_at)), h('td', { title: endAt ? when(endAt) : null }, ended),
         whoisCol ? h('td', btn('.is-small.ghost', 'whois', { 'data-id': id, 'data-where': 'contracts' },
-          'Whois', 'user-secret')) : null));
+          t('admin.whois'), 'user-secret')) : null));
       var who = c.whois[id];
       if (who) out.push(h('tr.more', h('td', { colspan: String(cols) }, whoisBody(who))));
     });
     return h('div.table-wrap', h('table.grid.is-rows',
-      h('thead', h('tr', h('th', 'Contract'), h('th', 'State'), person ? h('th', 'Their part') : null,
-        person ? null : h('th', 'Rule'), h('th', 'Target'), h('th', 'Client'),
-        person ? null : h('th.num', 'Payouts'), h('th', 'Placed'),
-        h('th', 'Deadline or end'), whoisCol ? h('th', '') : null)),
+      h('thead', h('tr', h('th', t('admin.contract')), h('th', t('admin.state')), person ? h('th', t('admin.their_part')) : null,
+        person ? null : h('th', t('admin.rule')), h('th', t('admin.target')), h('th', t('admin.client')),
+        person ? null : h('th.num', t('admin.payouts')), h('th', t('admin.placed')),
+        h('th', t('admin.deadline_or_end')), whoisCol ? h('th', '') : null)),
       h('tbody', out)));
   }
 
@@ -1677,11 +1741,11 @@
     if (!d) return frag();
     var page = Number(d.page) || 1, pages = Number(d.pages) || 1;
     return frag(
-      btn('.is-small', 'ct-page', { 'data-value': String(page - 1), disabled: page <= 1 }, 'Previous', 'chevron-left'),
+      btn('.is-small', 'ct-page', { 'data-value': String(page - 1), disabled: page <= 1 }, t('admin.previous'), 'chevron-left'),
       h('span.pager-text', 'Page ' + page + ' of ' + pages + ' · ' + num(d.total)
-        + (S.contracts.byTarget ? ' live contract' : ' contract') + (Number(d.total) === 1 ? '' : 's')
+        + (S.contracts.byTarget ? t('admin.live_contract') : ' contract') + (Number(d.total) === 1 ? '' : 's')
         + (S.contracts.byTarget ? ' on ' + num(d.targets) + ' target' + (Number(d.targets) === 1 ? '' : 's') : '')),
-      btn('.is-small', 'ct-page', { 'data-value': String(page + 1), disabled: page >= pages }, 'Next', 'chevron-right'));
+      btn('.is-small', 'ct-page', { 'data-value': String(page + 1), disabled: page >= pages }, t('admin.next'), 'chevron-right'));
   }
 
   /** Whose contracts the list shows, and their part on them. */
@@ -1689,32 +1753,32 @@
     var c = S.contracts;
     return h('div.toolbar.ct-person',
       c.person
-        ? frag(h('span.chip.is-link.st-chip', icon('user'), ' ', String(c.person.name || 'One person'),
-            h('button.st-chip-x', { type: 'button', 'data-act': 'ct-person-clear', title: 'Show everybody\'s',
-              'aria-label': 'Show everybody\'s contracts' }, icon('xmark'))),
+        ? frag(h('span.chip.is-link.st-chip', icon('user'), ' ', String(c.person.name || t('admin.one_person')),
+            h('button.st-chip-x', { type: 'button', 'data-act': 'ct-person-clear', title: t('admin.show_everybodys'),
+              'aria-label': t('admin.show_everybodys_contracts') }, icon('xmark'))),
           dropdown('ct-as'))
         : h('label.search', icon('user'),
-          field('ct.who', { id: 'ct-who', placeholder: 'One person: player id, citizen id or name',
-            'data-enter': 'ct-person-set', 'aria-label': 'Show one person\'s contracts' })),
-      segmented('ct-bytarget', [{ value: 'list', label: 'Newest first' },
-        { value: 'bytarget', label: 'Live, by target' }], c.byTarget ? 'bytarget' : 'list'));
+          field('ct.who', { id: 'ct-who', placeholder: t('admin.one_person_player_id_citizen_id'),
+            'data-enter': 'ct-person-set', 'aria-label': t('admin.show_one_persons_contracts') })),
+      segmented('ct-bytarget', [{ value: 'list', label: t('admin.newest_first') },
+        { value: 'bytarget', label: t('admin.live_by_target_2') }], c.byTarget ? 'bytarget' : 'list'));
   }
 
   SHELL.contracts = function () {
     return h('section.view',
       h('div.toolbar',
         h('label.search', icon('magnifying-glass'),
-          field('ct.q', { id: 'ct-q', placeholder: S.contracts.byTarget ? 'Target name or citizen id'
-            : 'Contract id, citizen id or name',
-            'data-live': 'ct-search', 'data-enter': 'ct-search-now', 'aria-label': 'Search contracts' })),
+          field('ct.q', { id: 'ct-q', placeholder: S.contracts.byTarget ? t('admin.target_name_or_citizen_id')
+            : t('admin.contract_id_citizen_id_or_name'),
+            'data-live': 'ct-search', 'data-enter': 'ct-search-now', 'aria-label': t('admin.search_contracts') })),
         dropdown('ct-state'), dropdown('ct-rule'), dropdown('ct-range'),
         rangeInputs('ct', S.contracts.range, 'ct-search'),
-        btn('.ghost', 'ct-clear', {}, 'Clear', 'eraser')),
+        btn('.ghost', 'ct-clear', {}, t('admin.clear'), 'eraser')),
       contractPerson(),
       h('p.hint', canIdentify()
-        ? 'You see who is behind anonymous parties. Every search and every contract you open is on the record.'
-        : 'Anonymous placers and operatives show as Anonymous, and a search by citizen id or name never '
-          + 'finds a contract through a party who stayed anonymous.'),
+        ? t('admin.you_see_who_is_behind_anonymous_2')
+        : t('admin.anonymous_placers_and_operatives_show_as')
+          + t('admin.finds_a_contract_through_a_party')),
       h('div.stack', { id: 'dp-list' }, disposalBody('contracts')),
       h('div.results', { id: 'ct-results' }, contractRows()),
       h('div.pager', { id: 'ct-pager' }, contractPager()));
@@ -1782,17 +1846,20 @@
   }
 
   /** The words the stuck listing uses for why a line waits. */
-  var WHY_LONG = {
-    interrupted: 'the server stopped while it was being given',
-    unknown: 'raised, and what arrived could not be read',
-    stalled: 'giving it stopped part-way, and nothing will try it again',
-    unqueued: 'owed and in no retry queue, so nothing will give it',
-    stalled_claim: 'stalled claim: the claim that owed it raised before paying it, so nothing will give it',
-    stopped: 'a raise stopped it while it was being given',
-    releasing: 'left mid-release by a call that raised, and nothing is finishing it',
-    never_given_release: 'left mid-release by a call that raised before it named anyone, so nothing of it was given',
-    ending_unfinished: 'ending unfinished; it settles itself within a minute'
+  var WHY_LONG;
+  Text.later(function () {
+    WHY_LONG = {
+    interrupted: t('admin.the_server_stopped_while_it_was'),
+    unknown: t('admin.raised_and_what_arrived_could_not'),
+    stalled: t('admin.giving_it_stopped_part_way_and'),
+    unqueued: t('admin.owed_and_in_no_retry_queue'),
+    stalled_claim: t('admin.stalled_claim_the_claim_that_owed'),
+    stopped: t('admin.a_raise_stopped_it_while_it'),
+    releasing: t('admin.left_mid_release_by_a_call'),
+    never_given_release: t('admin.left_mid_release_by_a_call_2'),
+    ending_unfinished: t('admin.ending_unfinished_it_settles_itself_within')
   };
+  });
   var NEVER_GIVEN = { unqueued: true, stalled_claim: true };
 
   /** Whether nothing of a line was given, so only Pay settles it: one the
@@ -1801,45 +1868,51 @@
   function neverGiven(entry) {
     return !!NEVER_GIVEN[entry.why] || (entry.why === 'never_given_release' && !!entry.owed);
   }
-  var SETTLES = {
-    queued: 'queued for them since: nothing to settle',
-    return_owner: 'does not say whose it is: return it to a citizen id once you know who put it up',
-    pay_or_return: 'pay (to them) or return (to whoever put it up)',
-    'return': 'names nobody to pay: only a return settles it, to whoever put it up'
+  var SETTLES;
+  Text.later(function () {
+    SETTLES = {
+    queued: t('admin.queued_for_them_since_nothing_to'),
+    return_owner: t('admin.does_not_say_whose_it_is'),
+    pay_or_return: t('admin.pay_to_them_or_return_to'),
+    'return': t('admin.names_nobody_to_pay_only_a')
   };
+  });
 
   function stuckWhy(entry) {
     if (entry.unfinished) return WHY_LONG.ending_unfinished;
-    if (entry.orphan) return 'escrow of a contract never stored, and it does not say whose it is';
+    if (entry.orphan) return t('admin.escrow_of_a_contract_never_stored');
     if (entry.why === 'owed_to_nobody') {
-      return 'owed and queued to a citizen id no character has, so nothing will give it: return it '
-        + 'to the citizen id it should go to';
+      return t('admin.owed_and_queued_to_a_citizen')
+        + t('admin.to_the_citizen_id_it_should');
     }
     if (entry.why === 'owed_to_unchecked') {
-      return 'owed and queued to a citizen id the server could not check (qbx_core did not answer), '
-        + 'so it stays queued for them and is not moved';
+      return t('admin.owed_and_queued_to_a_citizen_2')
+        + t('admin.so_it_stays_queued_for_them');
     }
     if (entry.raised !== undefined && entry.raised !== null) {
-      var text = entry.why === 'raised' ? 'raised ' + num(entry.raised) + ' times with nothing arriving'
-        : (WHY_LONG[entry.why] || 'why is no longer in the log');
-      if (Number(entry.arrived) > 0) text += '; ' + num(entry.arrived) + ' of it arrived';
-      if (entry.paidAs) text += '; paid as ' + String(entry.paidAs) + ', so check that, not their account';
+      var text = entry.why === 'raised' ? 'raised ' + num(entry.raised) + t('admin.times_with_nothing_arriving')
+        : (WHY_LONG[entry.why] || t('admin.why_is_no_longer_in_the'));
+      if (Number(entry.arrived) > 0) text += '; ' + num(entry.arrived) + t('admin.of_it_arrived');
+      if (entry.paidAs) text += t('admin.paid_as') + String(entry.paidAs) + t('admin.so_check_that_not_their_account');
       if (entry.why === 'never_given_release' && !entry.owed) {
-        text += '; owed to nobody, so Return puts it back to its contract, which keeps it while it '
-          + 'is live and hands it back once it is closed';
+        text += t('admin.owed_to_nobody_so_return_puts')
+          + t('admin.is_live_and_hands_it_back');
       }
       return text;
     }
-    return 'was mid-release at a shutdown: ' + (SETTLES[entry.settles] || SETTLES['return']);
+    return t('admin.was_mid_release_at_a_shutdown') + (SETTLES[entry.settles] || SETTLES['return']);
   }
 
-  var SETTLE_LABEL = {
-    pay: ['Pay', 'Click again to pay'],
-    pay_amount: ['Pay amount', 'Click again to pay it'],
-    'return': ['Return', 'Click again to return'],
-    return_owner: ['Return to', 'Click again to return'],
-    delivered: ['Delivered', 'Click again: delivered']
+  var SETTLE_LABEL;
+  Text.later(function () {
+    SETTLE_LABEL = {
+    pay: [t('admin.pay'), t('admin.click_again_to_pay')],
+    pay_amount: [t('admin.pay_amount'), t('admin.click_again_to_pay_it')],
+    'return': [t('admin.return'), t('admin.click_again_to_return')],
+    return_owner: [t('admin.return_to'), t('admin.click_again_to_return')],
+    delivered: [t('admin.delivered'), t('admin.click_again_delivered')]
   };
+  });
 
   /** The settle buttons of one stuck line: in the contract's view
       (`where` 'drawer') or in Stuck escrow ('stuck'), each answering
@@ -1857,13 +1930,13 @@
         'data-where': where || 'drawer', 'data-contract': entry.contract ? String(entry.contract) : null },
         label[0], label[1]);
       if (how === 'pay_amount') {
-        return h('span.inline-form', field('dr.amount.' + line, { class: 'is-short', placeholder: 'Amount',
-          inputmode: 'numeric', 'aria-label': 'Amount to pay for line ' + line,
+        return h('span.inline-form', field('dr.amount.' + line, { class: 'is-short', placeholder: t('admin.amount'),
+          inputmode: 'numeric', 'aria-label': t('admin.amount_to_pay_for_line') + line,
           disabled: !writesOpen() }), button);
       }
       if (how === 'return_owner') {
-        return h('span.inline-form', field('dr.owner.' + line, { class: 'is-mid', placeholder: 'Citizen id',
-          'aria-label': 'Citizen id to return line ' + line + ' to', disabled: !writesOpen() }), button);
+        return h('span.inline-form', field('dr.owner.' + line, { class: 'is-mid', placeholder: t('admin.citizen_id'),
+          'aria-label': t('admin.citizen_id_to_return_line') + line + ' to', disabled: !writesOpen() }), button);
       }
       return button;
     }));
@@ -1878,16 +1951,16 @@
     return h('li.stuck-line',
       h('p.stuck-head', h('span.mono', String(entry.line)), ' ', h('b', holds(entry)),
         entry.portion ? h('span.chip', String(entry.portion)) : null,
-        entry.intended ? h('span.sub', ' owed to ' + entry.intended) : null,
+        entry.intended ? h('span.sub', t('admin.owed_to') + entry.intended) : null,
         entry.at ? h('span.sub', ' · ' + when(entry.at)) : null,
         where === 'stuck' && entry.contract
-          ? h('span.sub', ' · contract ', h('button.link.mono', { type: 'button', 'data-act': 'contract',
-            'data-id': String(entry.contract), title: 'Open contract ' + entry.contract }, String(entry.contract)))
+          ? h('span.sub', t('admin.contract_2'), h('button.link.mono', { type: 'button', 'data-act': 'contract',
+            'data-id': String(entry.contract), title: t('admin.open_contract') + entry.contract }, String(entry.contract)))
           : null),
       h('p.stuck-why', stuckWhy(entry)),
-      unknownArrival ? h('p.note.is-warn', 'Arrival unknown: check what they received, then pay the rest '
-        + 'with Pay amount, or Delivered.') : null,
-      neverGiven(entry) ? h('p.note', 'Never given: only Pay settles it, to them, in full.') : null,
+      unknownArrival ? h('p.note.is-warn', t('admin.arrival_unknown_check_what_they_received')
+        + t('admin.with_pay_amount_or_delivered')) : null,
+      neverGiven(entry) ? h('p.note', t('admin.never_given_only_pay_settles_it')) : null,
       stuckActions(entry, where),
       answerBox(answer));
   }
@@ -1903,7 +1976,7 @@
       if (b === 'other') return -1;
       return Number(a) - Number(b);
     });
-    if (!keys.length) return empty('No escrow is recorded for this contract.');
+    if (!keys.length) return empty(t('admin.no_escrow_is_recorded_for_this'));
     var claimed = Number(contract.claimed) || 0;
     return h('div.slots', keys.map(function (key) {
       var lines = slots[key];
@@ -1917,8 +1990,8 @@
           goods.push(holds(line));
         }
       });
-      var title = key === 'other' ? 'Stakes and owed lines' : 'Payout ' + key;
-      var status = key === 'other' ? '' : (Number(key) <= claimed ? 'claimed' : 'to claim');
+      var title = key === 'other' ? t('admin.stakes_and_owed_lines') : 'Payout ' + key;
+      var status = key === 'other' ? '' : (Number(key) <= claimed ? 'claimed' : t('admin.to_claim'));
       return h('div.slot', h('p.slot-title', title, status ? h('span.chip', status) : null),
         h('p.slot-body', Object.keys(totals).sort().map(function (portion) {
           return h('span.slot-part', portion + ' ' + money(totals[portion]));
@@ -1927,10 +2000,13 @@
   }
 
   /* The drawer's tabs, safest first; only the one open is drawn. */
-  var DRAWER_TABS = [
-    { id: 'summary', label: 'Summary' }, { id: 'money', label: 'Money' }, { id: 'people', label: 'People' },
-    { id: 'notes', label: 'Notes & text' }, { id: 'record', label: 'Record' }
+  var DRAWER_TABS;
+  Text.later(function () {
+    DRAWER_TABS = [
+    { id: 'summary', label: t('admin.summary') }, { id: 'money', label: t('admin.money') }, { id: 'people', label: t('admin.people') },
+    { id: 'notes', label: t('admin.notes_text') }, { id: 'record', label: t('admin.record') }
   ];
+  });
 
   function drawerBody() {
     var d = S.drawer.data;
@@ -1941,14 +2017,14 @@
       h('div.drawer-title', h('h2', 'Contract ', h('span.mono', id)),
         c0 ? stateChip(c0.state) : null,
         c0 ? h('span.chip', RULE_LABEL[c0.rule] || String(c0.rule || '')) : null,
-        d && d.frozen ? h('span.chip.is-warn.is-frozen', { title: 'On hold: frozen by staff ('
-          + asList(d.frozen).join(', ') + ')' }, 'Frozen') : null),
+        d && d.frozen ? h('span.chip.is-warn.is-frozen', { title: t('admin.on_hold_frozen_by_staff')
+          + asList(d.frozen).join(', ') + ')' }, t('admin.frozen')) : null),
       h('div.drawer-tools',
         canVoid ? btn('.ghost.is-small', 'dr-more', { 'aria-expanded': S.drawer.more ? 'true' : 'false',
-          title: 'More: void this contract' }, S.drawer.more ? 'Less' : 'More', 'ellipsis') : null,
-        btn('.ghost', 'drawer-close', { 'aria-label': 'Close the contract' }, 'Close', 'xmark')));
+          title: t('admin.more_void_this_contract') }, S.drawer.more ? t('admin.less') : t('admin.more'), 'ellipsis') : null,
+        btn('.ghost', 'drawer-close', { 'aria-label': t('admin.close_the_contract') }, t('admin.close'), 'xmark')));
     if (!d) {
-      return frag(head, answerBox(S.drawer.answer), S.drawer.answer ? null : loading('Reading the contract…'));
+      return frag(head, answerBox(S.drawer.answer), S.drawer.answer ? null : loading(t('admin.reading_the_contract')));
     }
     var c = d.contract || {};
     var escrow = asList(d.escrow);
@@ -1960,21 +2036,21 @@
     // An id with escrow and no contract record: its lines alone, settled
     // here as Stuck escrow settles them.
     var stub = c.neverStored === true;
-    var actions = stub ? h('div.drawer-actions', h('p.note', 'Never stored: escrow under this id has no '
-        + 'contract record, so nothing here names who put it up. Settle each line below; Return to sends '
-        + 'it to the citizen id of whoever did.')) : null;
+    var actions = stub ? h('div.drawer-actions', h('p.note', t('admin.never_stored_escrow_under_this_id')
+        + t('admin.contract_record_so_nothing_here_names')
+        + t('admin.it_to_the_citizen_id_of'))) : null;
 
     var stuckPart = null;
     if (stuck === null) {
-      stuckPart = card('Waiting for staff', h('p.note', notListed(S.recovery)));
+      stuckPart = card(t('admin.waiting_for_staff'), h('p.note', notListed(S.recovery)));
     } else if (stuck.length) {
-      stuckPart = card('Waiting for staff', h('ul.stuck', stuck.map(function (entry) {
+      stuckPart = card(t('admin.waiting_for_staff'), h('ul.stuck', stuck.map(function (entry) {
         return stuckItem(entry, 'drawer');
       })), '.is-warn');
     }
 
-    var whois = S.drawer.whois ? card('Who is behind it', whoisBody(S.drawer.whois), '.is-identity') : null;
-    var deadlinePart = stub ? null : card('Deadline', deadlineBody(d.deadline));
+    var whois = S.drawer.whois ? card(t('admin.who_is_behind_it'), whoisBody(S.drawer.whois), '.is-identity') : null;
+    var deadlinePart = stub ? null : card(t('admin.deadline'), deadlineBody(d.deadline));
 
     /* Look up / Freeze beside each party it names: the Players view on
        them, where Freeze is. Named by the contract and the role, which the
@@ -1982,67 +2058,67 @@
        for a party who is anonymous on it to staff without IdentityAce. */
     function partyButton(role, opId) {
       return btn('.is-small.ghost', 'party-lookup', { 'data-subject': 'contract:' + id + ':' + role
-        + (opId ? ':' + opId : '') }, 'Look up / Freeze', 'magnifying-glass');
+        + (opId ? ':' + opId : '') }, t('admin.look_up_freeze'), 'magnifying-glass');
     }
     var clientHidden = c.anonymous && !canIdentify();
     var terms = h('dl.facts.is-terms',
-      h('dt', 'Mode'), h('dd', MODE_LABEL[c.mode] || String(c.mode || '—')),
-      h('dt', 'Completes by'), h('dd', RULE_LABEL[c.rule] || String(c.rule || '—')),
-      h('dt', 'Reason'), h('dd.text', String(c.reason || '—')),
-      h('dt', 'Client'), h('dd', personCell(c.client), c.anonymous ? h('span.chip.is-anon', 'anonymous') : null,
+      h('dt', t('admin.mode')), h('dd', MODE_LABEL[c.mode] || String(c.mode || '—')),
+      h('dt', t('admin.completes_by')), h('dd', RULE_LABEL[c.rule] || String(c.rule || '—')),
+      h('dt', t('admin.reason')), h('dd.text', String(c.reason || '—')),
+      h('dt', t('admin.client')), h('dd', personCell(c.client), c.anonymous ? h('span.chip.is-anon', 'anonymous') : null,
         clientHidden ? null : partyButton('client')),
-      h('dt', 'Target'), h('dd', personCell(c.target), c.target_protected ? h('span.chip.is-warn', 'law enforcement') : null,
+      h('dt', t('admin.target')), h('dd', personCell(c.target), c.target_protected ? h('span.chip.is-warn', t('admin.law_enforcement')) : null,
         partyButton('target')),
-      h('dt', 'Placed'), h('dd', when(c.created_at)),
-      h('dt', 'Deadline'), h('dd', c.deadline_at ? when(c.deadline_at) + ' (' + ago(c.deadline_at) + ')' : '—'),
-      h('dt', 'Expires'), h('dd', when(c.expires_at)),
-      c.paused_since ? h('dt', 'Paused since') : null, c.paused_since ? h('dd', when(c.paused_since)) : null,
-      h('dt', 'Ended'), h('dd', c.resolved_at ? String(c.resolution || '') + ' ' + when(c.resolved_at) : 'not yet'),
-      h('dt', 'Payouts'), h('dd', num(c.claimed) + ' of ' + num(c.slots) + ' claimed'
-        + (c.next_slot ? ' · next ' + c.next_slot : '')),
-      h('dt', 'Bonus'), h('dd', num(c.bonus_percent) + '%'),
-      h('dt', 'Stake'), h('dd', money(c.penalty_amount)),
-      h('dt', 'Buyout price'), h('dd', money(c.bailout_amount) + (c.buyout_queued ? ' · a buyout is queued' : '')),
+      h('dt', t('admin.placed')), h('dd', when(c.created_at)),
+      h('dt', t('admin.deadline')), h('dd', c.deadline_at ? when(c.deadline_at) + ' (' + ago(c.deadline_at) + ')' : '—'),
+      h('dt', t('admin.expires')), h('dd', when(c.expires_at)),
+      c.paused_since ? h('dt', t('admin.paused_since')) : null, c.paused_since ? h('dd', when(c.paused_since)) : null,
+      h('dt', t('admin.ended')), h('dd', c.resolved_at ? String(c.resolution || '') + ' ' + when(c.resolved_at) : t('admin.not_yet')),
+      h('dt', t('admin.payouts')), h('dd', num(c.claimed) + ' of ' + num(c.slots) + ' claimed'
+        + (c.next_slot ? t('admin.next_2') + c.next_slot : '')),
+      h('dt', t('admin.bonus')), h('dd', num(c.bonus_percent) + '%'),
+      h('dt', t('admin.stake')), h('dd', money(c.penalty_amount)),
+      h('dt', t('admin.buyout_price')), h('dd', money(c.bailout_amount) + (c.buyout_queued ? t('admin.a_buyout_is_queued') : '')),
       // The handover's meeting point: where the client stood, sent to staff
       // with the identity ACE alone, as who they are is.
-      c.meeting ? h('dt', 'Meeting point') : null,
+      c.meeting ? h('dt', t('admin.meeting_point')) : null,
       c.meeting ? h('dd', 'x ' + String(Number(c.meeting.x)) + ', y '
         + String(Number(c.meeting.y))) : null);
 
-    var escrowCard = card('Escrow lines', escrow.length ? h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Line'), h('th', 'Payout'), h('th', 'Holds'),
-        h('th', 'State'), h('th', 'Owed to'), h('th.num', 'Arrived'), h('th.num', 'Still owed'))),
+    var escrowCard = card(t('admin.escrow_lines'), escrow.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', t('admin.line')), h('th', t('admin.payout')), h('th', t('admin.holds')),
+        h('th', t('admin.state')), h('th', t('admin.owed_to_2')), h('th.num', t('admin.arrived')), h('th.num', t('admin.still_owed')))),
       h('tbody', escrow.map(function (line) {
         return h('tr' + (line.parked ? '.is-warn' : ''),
           h('td.mono.wrap', String(line.id)),
           h('td', (line.slot == null ? '' : line.slot + ' · ') + String(line.portion || '—')),
           h('td', holds(line)),
-          h('td', String(line.state || '—'), line.parked ? h('span.chip.is-warn', 'left for staff') : null,
+          h('td', String(line.state || '—'), line.parked ? h('span.chip.is-warn', t('admin.left_for_staff')) : null,
             Number(line.raised) > 0 ? h('span.chip', 'raised ' + num(line.raised)) : null,
             line.settled_by_staff ? h('span.chip', 'staff: ' + line.settled_by_staff) : null),
           h('td.name', String(line.owed_to || line.releasing_to || line.settled_to || '—')),
           h('td.num', line.arrived == null ? '—' : num(line.arrived)),
           h('td.num', MONEY[line.source] ? money(line.owes) : num(line.owes)));
-      })))) : empty('No escrow lines.'));
+      })))) : empty(t('admin.no_escrow_lines')));
 
-    var operatives = card('Operatives', hitmen.length ? h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Alias'), h('th', 'Name'), canIdentify() ? h('th', 'Citizen id') : null,
-        h('th', 'State'), h('th', 'Accepted'), h('th', 'Left'), h('th.num', 'Claims'), h('th.num', 'Stake'))),
+    var operatives = card(t('admin.operatives'), hitmen.length ? h('div.table-wrap', h('table.grid',
+      h('thead', h('tr', h('th', t('admin.alias')), h('th', t('admin.name')), canIdentify() ? h('th', t('admin.citizen_id')) : null,
+        h('th', t('admin.state')), h('th', t('admin.accepted')), h('th', t('admin.left')), h('th.num', t('admin.claims')), h('th.num', t('admin.stake')))),
       h('tbody', hitmen.map(function (m) {
         // Look up / Freeze under the name, where the name may be shown.
         return h('tr', h('td', String(m.alias || '—')),
-          h('td.name', m.anonymous && !m.cid ? h('span.anon', icon('mask'), ' ', String(m.name || 'Anonymous'))
+          h('td.name', m.anonymous && !m.cid ? h('span.anon', icon('mask'), ' ', String(m.name || t('admin.anonymous')))
             : String(m.name || '—'),
             (m.anonymous && !canIdentify()) || m.id == null ? null
               : h('div.party', partyButton('op', String(m.id)))),
           canIdentify() ? h('td.mono', String(m.cid || '—')) : null,
           h('td', String(m.state || '—')), h('td', when(m.accepted_at)), h('td', when(m.left_at)),
           h('td.num', num(m.claims)), h('td.num', money(m.stake)));
-      })))) : empty('Nobody has taken it.'));
+      })))) : empty(t('admin.nobody_has_taken_it')));
 
-    var proposals = amendments.length ? card('Open proposals', h('ul.plain', amendments.map(function (a) {
+    var proposals = amendments.length ? card(t('admin.open_proposals'), h('ul.plain', amendments.map(function (a) {
       return h('li', h('b', String(a.kind || 'proposal')), ' by ' + String(a.proposer || '—'),
-        a.expires_at ? ' · runs out ' + when(a.expires_at) : '',
+        a.expires_at ? t('admin.runs_out') + when(a.expires_at) : '',
         a.payload ? h('span.detail', ' ' + detailText(a.payload)) : null);
     }))) : null;
 
@@ -2050,51 +2126,51 @@
     var tab = S.drawer.tab || 'summary';
     if (stub && tab !== 'money' && tab !== 'record') tab = 'money';
     var waiting = stuck ? stuck.length : 0;
-    var tabs = h('div.drawer-tabs', { role: 'tablist' }, DRAWER_TABS.filter(function (t) {
-      return !stub || t.id === 'money' || t.id === 'record';
-    }).map(function (t) {
-      var on = t.id === tab;
+    var tabs = h('div.drawer-tabs', { role: 'tablist' }, DRAWER_TABS.filter(function (tv) {
+      return !stub || tv.id === 'money' || tv.id === 'record';
+    }).map(function (tv) {
+      var on = tv.id === tab;
       return h('button.drawer-tab' + (on ? '.is-on' : ''), { type: 'button', role: 'tab', 'data-act': 'dr-tab',
-        'data-value': t.id, 'aria-selected': on ? 'true' : 'false' }, h('span.lbl', t.label),
-        t.id === 'money' && waiting > 0 ? h('span.nav-count.is-warn', { title: num(waiting)
-          + ' line(s) waiting for staff' }, num(waiting)) : null);
+        'data-value': tv.id, 'aria-selected': on ? 'true' : 'false' }, h('span.lbl', tv.label),
+        tv.id === 'money' && waiting > 0 ? h('span.nav-count.is-warn', { title: num(waiting)
+          + t('admin.line_waiting_for_staff') }, num(waiting)) : null);
     }));
 
     var voidForm = canVoid ? h('div.drawer-void', { id: 'dr-void' },
       h('div.inline-form.is-wide',
-        field('dr.reason', { class: 'is-grow', placeholder: 'Reason for the void (kept in the log)',
-          maxlength: '120', disabled: !modOpen(), 'aria-label': 'Reason for the void' }),
-        modBtn('.danger', 'void', {}, 'Void contract', 'Click again to void', 'ban')),
-      h('p.note', 'Voiding closes it and refunds what it holds, by the rules every ending follows.')) : null;
+        field('dr.reason', { class: 'is-grow', placeholder: t('admin.reason_for_the_void_kept_in'),
+          maxlength: '120', disabled: !modOpen(), 'aria-label': t('admin.reason_for_the_void') }),
+        modBtn('.danger', 'void', {}, t('admin.void_contract'), t('admin.click_again_to_void'), 'ban')),
+      h('p.note', t('admin.voiding_closes_it_and_refunds_what'))) : null;
 
     var body;
     if (tab === 'money') {
-      body = frag(actions, stuckPart, stub ? null : card('Payouts', slotSummary(escrow, c)),
-        staff && !stub ? card('Change reward', rewardBody(d), '.ct-reward') : null, escrowCard);
+      body = frag(actions, stuckPart, stub ? null : card(t('admin.payouts'), slotSummary(escrow, c)),
+        staff && !stub ? card(t('admin.change_reward'), rewardBody(d), '.ct-reward') : null, escrowCard);
     } else if (tab === 'people') {
       body = frag(
-        canIdentify() ? h('div.drawer-actions', btn('.ghost', 'whois', { 'data-id': id }, 'Whois', 'user-secret'))
+        canIdentify() ? h('div.drawer-actions', btn('.ghost', 'whois', { 'data-id': id }, t('admin.whois'), 'user-secret'))
           : null,
         whois, operatives,
-        staff ? card('Remove an operative', removeBody(d, staff), '.ct-remove') : null,
-        staff ? card('Reassign to another hitman', reassignBody(d), '.ct-reassign') : null,
-        staff ? card('As a player sees it', playerViewBody(d), '.ct-view') : null);
+        staff ? card(t('admin.remove_an_operative'), removeBody(d, staff), '.ct-remove') : null,
+        staff ? card(t('admin.reassign_to_another_hitman'), reassignBody(d), '.ct-reassign') : null,
+        staff ? card(t('admin.as_a_player_sees_it'), playerViewBody(d), '.ct-view') : null);
     } else if (tab === 'notes') {
-      body = staff ? frag(card('Staff notes', notesBody(staff), '.ct-notes'),
-        card('Edit text', textBody(d, staff), '.ct-text')) : empty('Staff notes and text edits are not available here.');
+      body = staff ? frag(card(t('admin.staff_notes'), notesBody(staff), '.ct-notes'),
+        card(t('admin.edit_text'), textBody(d, staff), '.ct-text')) : empty(t('admin.staff_notes_and_text_edits_are'));
     } else if (tab === 'record') {
       body = frag(
-        staff && !stub ? card('Export the record', exportBody(), '.ct-export') : null,
-        card('Timeline', timeline.length ? h('ol.timeline', timeline.map(function (row) {
+        staff && !stub ? card(t('admin.export_the_record'), exportBody(), '.ct-export') : null,
+        card(t('admin.timeline'), timeline.length ? h('ol.timeline', timeline.map(function (row) {
           return h('li', h('span.time', when(row.ts)), h('span.chip.kind-' + String(row.kind || 'system'), String(row.kind || '')),
             h('b', String(row.action || '')), row.actor ? h('span.sub', ' ' + row.actor) : null,
             h('span.detail', detailText(row.detail)));
-        })) : empty('The log keeps nothing for it.')));
+        })) : empty(t('admin.the_log_keeps_nothing_for_it'))));
     } else {
       body = frag(
-        d.canVoid ? null : h('p.note', 'Closed: a closed contract is never voided.'),
-        card('Terms', terms), deadlinePart, proposals,
-        canVoid && !S.drawer.more ? h('div.btn-row', btn('.is-small.ghost', 'dr-more', {}, 'Void this contract…',
+        d.canVoid ? null : h('p.note', t('admin.closed_a_closed_contract_is_never')),
+        card(t('admin.terms'), terms), deadlinePart, proposals,
+        canVoid && !S.drawer.more ? h('div.btn-row', btn('.is-small.ghost', 'dr-more', {}, t('admin.void_this_contract'),
           'ban')) : null);
     }
 
@@ -2113,8 +2189,8 @@
 
   /** Run time as staff read it, to the second: '1 h 05 min', '25 min 10 s'. */
   function exactSpan(seconds) {
-    var t = Math.max(0, Math.floor(Number(seconds) || 0));
-    var hours = Math.floor(t / 3600), mins = Math.floor((t % 3600) / 60), secs = t % 60;
+    var tv = Math.max(0, Math.floor(Number(seconds) || 0));
+    var hours = Math.floor(tv / 3600), mins = Math.floor((tv % 3600) / 60), secs = tv % 60;
     var out = [];
     if (hours > 0) out.push(hours + ' h');
     if (mins > 0 || (hours > 0 && secs > 0)) out.push((hours > 0 ? pad(mins) : String(mins)) + ' min');
@@ -2139,25 +2215,25 @@
     var info = (S.drawer.data || {}).deadline || {};
     var left = deadlineLeft(info);
     var minutes = deadlineMinutes();
-    if (!minutes) return h('span', 'Pick a time or type a number of minutes to see the time left after.');
+    if (!minutes) return h('span', t('admin.pick_a_time_or_type_a'));
     var by = minutes * 60;
     var max = Number(info.maxAdjust) || 0;
-    if (max && by > max) return h('span.is-warn', 'At most ' + exactSpan(max) + ' either way.');
+    if (max && by > max) return h('span.is-warn', t('admin.at_most') + exactSpan(max) + t('admin.either_way'));
     var most = Math.max(0, left - (Number(info.minLeft) || 0));
-    return frag(h('span', 'Extend: ', h('b', exactSpan(left + by)), ' left after.'), ' ',
+    return frag(h('span', 'Extend: ', h('b', exactSpan(left + by)), t('admin.left_after')), ' ',
       by > most
-        ? h('span', 'Shorten: not by this much; at least ' + exactSpan(info.minLeft) + ' must remain, so the most is '
+        ? h('span', t('admin.shorten_not_by_this_much_at') + exactSpan(info.minLeft) + t('admin.must_remain_so_the_most_is')
           + exactSpan(most) + '.')
-        : h('span', 'Shorten: ', h('b', exactSpan(left - by)), ' left after.'));
+        : h('span', 'Shorten: ', h('b', exactSpan(left - by)), t('admin.left_after')));
   }
 
   function deadlineBody(info) {
-    if (!info) return h('p.note', 'Not sent by this server.');
+    if (!info) return h('p.note', t('admin.not_sent_by_this_server'));
     var left = deadlineLeft(info);
-    var now = h('p', 'Time left now: ', h('b', { id: 'dr-dl-left' }, exactSpan(left)),
-      info.stopped ? ' (its clock is stopped)' : '');
+    var now = h('p', t('admin.time_left_now'), h('b', { id: 'dr-dl-left' }, exactSpan(left)),
+      info.stopped ? t('admin.its_clock_is_stopped') : '');
     if (!info.adjustable) {
-      return frag(now, h('p.note', 'Only a live contract (active or accepted) has a deadline to move.'));
+      return frag(now, h('p.note', t('admin.only_a_live_contract_active_or')));
     }
     var open = modOpen();
     var current = deadlineMinutes();
@@ -2167,27 +2243,27 @@
           return { value: m, label: m < 60 ? m + ' min' : (m / 60) + ' h', disabled: !open,
                    title: open ? null : whyNoMod() };
         }), current == null ? '' : current),
-        field('dr.dl.min', { class: 'is-short', placeholder: 'Minutes', inputmode: 'numeric', maxlength: '5',
-          'data-live': 'dl-preview', disabled: !open, 'aria-label': 'Minutes to move the deadline by' })),
+        field('dr.dl.min', { class: 'is-short', placeholder: t('admin.minutes'), inputmode: 'numeric', maxlength: '5',
+          'data-live': 'dl-preview', disabled: !open, 'aria-label': t('admin.minutes_to_move_the_deadline_by') })),
       h('p.note', { id: 'dr-dl-preview', 'aria-live': 'polite' }, deadlinePreview()),
       h('div.inline-form.is-wide',
-        field('dr.dl.reason', { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
-          maxlength: '120', disabled: !open, 'aria-label': 'Reason for moving the deadline' }),
-        modBtn('', 'dl-extend', {}, 'Extend', 'Click again to extend', 'plus'),
-        modBtn('', 'dl-shorten', {}, 'Shorten', 'Click again to shorten', 'minus')));
+        field('dr.dl.reason', { class: 'is-grow', placeholder: t('admin.reason_required_kept_in_the_log'),
+          maxlength: '120', disabled: !open, 'aria-label': t('admin.reason_for_moving_the_deadline') }),
+        modBtn('', 'dl-extend', {}, t('admin.extend'), t('admin.click_again_to_extend'), 'plus'),
+        modBtn('', 'dl-shorten', {}, t('admin.shorten'), t('admin.click_again_to_shorten'), 'minus')));
   }
 
   function whoisBody(who) {
     var creator = who.creator || {}, target = who.target || {};
     return frag(h('dl.facts',
-      h('dt', 'Client'), h('dd', String(creator.name || '—'), creator.cid ? h('span.cid', String(creator.cid)) : null,
-        creator.anonymous ? h('span.chip.is-anon', 'paid to stay anonymous') : null),
-      h('dt', 'Target'), h('dd', String(target.name || '—'), target.cid ? h('span.cid', String(target.cid)) : null)),
+      h('dt', t('admin.client')), h('dd', String(creator.name || '—'), creator.cid ? h('span.cid', String(creator.cid)) : null,
+        creator.anonymous ? h('span.chip.is-anon', t('admin.paid_to_stay_anonymous')) : null),
+      h('dt', t('admin.target')), h('dd', String(target.name || '—'), target.cid ? h('span.cid', String(target.cid)) : null)),
       asList(who.hitmen).length ? h('ul.plain', asList(who.hitmen).map(function (m) {
         return h('li', h('b', String(m.alias || '—')), ' ' + String(m.name || '—') + ' ',
           m.cid ? h('span.cid', String(m.cid)) : null, ' · ' + String(m.state || ''),
           m.anonymous ? h('span.chip.is-anon', 'anonymous') : null);
-      })) : h('p.note', 'No operatives.'));
+      })) : h('p.note', t('admin.no_operatives')));
   }
 
   /* ---- stuck escrow ---- */
@@ -2215,16 +2291,16 @@
 
   function stuckBody() {
     var d = S.stuck.data;
-    if (!d) return S.stuck.error ? empty(S.stuck.error) : loading('Reading what waits for staff…');
+    if (!d) return S.stuck.error ? empty(S.stuck.error) : loading(t('admin.reading_what_waits_for_staff'));
     if (d.lines === undefined || d.lines === null) return h('p.note', notListed(d.recovery));
     var lines = asList(d.lines);
-    if (!lines.length) return empty('No escrow line is waiting for staff.');
+    if (!lines.length) return empty(t('admin.no_escrow_line_is_waiting_for'));
     var forYou = lines.filter(function (entry) { return asList(entry.actions).length > 0; }).length;
     return frag(
-      h('p.hint', num(forYou) + ' left for you to settle, of ' + num(lines.length) + ' listed. One queued '
-        + 'since for whom it is owed, or an ending settling itself within a minute, needs nothing from you. '
-        + 'Check what the player has before you settle one: Delivered if it is there, Pay if it is not.'),
-      card('Waiting for staff', h('ul.stuck', lines.map(function (entry) {
+      h('p.hint', num(forYou) + t('admin.left_for_you_to_settle_of') + num(lines.length) + t('admin.listed_one_queued')
+        + t('admin.since_for_whom_it_is_owed')
+        + t('admin.check_what_the_player_has_before')),
+      card(t('admin.waiting_for_staff'), h('ul.stuck', lines.map(function (entry) {
         return stuckItem(entry, 'stuck');
       })), forYou > 0 ? '.is-warn' : ''));
   }
@@ -2244,12 +2320,15 @@
     return false;
   }
 
-  var INBOX_FILTERS = [
-    { value: 'all', label: 'Everything', count: 'count-inbox-all' },
-    { value: 'reviews', label: 'Needs review', count: 'count-reviews' },
-    { value: 'stuck', label: 'Money waiting', count: 'count-stuck' },
-    { value: 'alerts', label: 'Alerts', count: 'count-ialerts' }
+  var INBOX_FILTERS;
+  Text.later(function () {
+    INBOX_FILTERS = [
+    { value: 'all', label: t('admin.everything'), count: 'count-inbox-all' },
+    { value: 'reviews', label: t('admin.needs_review_2'), count: 'count-reviews' },
+    { value: 'stuck', label: t('admin.money_waiting_2'), count: 'count-stuck' },
+    { value: 'alerts', label: t('admin.alerts'), count: 'count-ialerts' }
   ];
+  });
 
   SHELL.inbox = function () {
     var f = S.inbox;
@@ -2261,18 +2340,18 @@
             'data-value': o.value, 'aria-pressed': on ? 'true' : 'false' }, o.label,
             o.value === 'all' ? null : h('span.nav-count.is-warn', { id: o.count, hidden: true }));
         })),
-        btn('.ghost', 'ib-refresh', {}, 'Refresh', 'rotate')),
-      h('p.hint', 'Everything waiting for staff: review items no rule could settle, money left for you to '
-        + 'settle, and alerts not acknowledged yet. Nothing waiting? Reviews, stuck money and alerts land here.'),
-      shows('reviews') ? h('section.ib-part', h('h3.st-group-title', 'Needs review'),
-        h('div.toolbar', segmented('rv-all', [{ value: 'open', label: 'Open' }, { value: 'all', label: 'All (latest 50)' }],
+        btn('.ghost', 'ib-refresh', {}, t('admin.refresh'), 'rotate')),
+      h('p.hint', t('admin.everything_waiting_for_staff_review_items')
+        + t('admin.settle_and_alerts_not_acknowledged_yet')),
+      shows('reviews') ? h('section.ib-part', h('h3.st-group-title', t('admin.needs_review_2')),
+        h('div.toolbar', segmented('rv-all', [{ value: 'open', label: t('admin.open') }, { value: 'all', label: t('admin.all_latest_50') }],
           S.reviews.all ? 'all' : 'open')),
-        h('p.hint', 'Money no rule on the server could settle by itself. Resolving an item gives it once, however '
-          + 'often it is asked; a role (payer, creator, ...) names a party without unmasking them.'),
+        h('p.hint', t('admin.money_no_rule_on_the_server')
+          + t('admin.often_it_is_asked_a_role')),
         h('div.stack', { id: 'rv-list' }, reviewList())) : null,
-      shows('stuck') ? h('section.ib-part', h('h3.st-group-title', 'Money waiting for staff (stuck escrow)'),
+      shows('stuck') ? h('section.ib-part', h('h3.st-group-title', t('admin.money_waiting_for_staff_stuck_escrow')),
         h('div.stack', { id: 'sk-list' }, stuckBody())) : null,
-      shows('alerts') ? h('section.ib-part', h('h3.st-group-title', 'Open alerts'),
+      shows('alerts') ? h('section.ib-part', h('h3.st-group-title', t('admin.open_alerts')),
         h('div.stack', { id: 'al-list' }, alertsBody())) : null,
       S.inbox === 'all' ? h('section.ib-part', h('div.stack', { id: 'dp-list' }, disposalBody('home'))) : null);
   };
@@ -2287,8 +2366,9 @@
 
   /* ---- needs review ---- */
 
-  DD['rv-who'] = {
-    prefix: 'To',
+  Text.later(function () {
+    DD['rv-who'] = {
+    prefix: t('admin.to'),
     options: function (id) {
       var item = reviewItem(id);
       return asList(item && item.parties).map(function (p) {
@@ -2305,10 +2385,12 @@
     // A Refund or Pay armed for somebody else is no longer what was armed.
     pick: function (v, id) { disarm(); S.forms['rv.' + id + '.who'] = v; }
   };
-  DD['rv-account'] = {
-    prefix: 'From',
+  });
+  Text.later(function () {
+    DD['rv-account'] = {
+    prefix: t('admin.from'),
     options: function () {
-      return [{ value: 'cash', label: 'cash' }, { value: 'bank', label: 'bank' }, { value: 'dirty', label: 'dirty money' }];
+      return [{ value: 'cash', label: 'cash' }, { value: 'bank', label: 'bank' }, { value: 'dirty', label: t('admin.dirty_money') }];
     },
     disabled: function (id) { return unwrittenItem(id); },
     value: function (id) {
@@ -2316,6 +2398,7 @@
     },
     pick: function (v, id) { disarm(); S.forms['rv.' + id + '.account'] = v; }
   };
+  });
 
   function reviewItem(id) {
     return asList(S.reviews.items).filter(function (item) { return String(item.id) === String(id); })[0];
@@ -2323,7 +2406,10 @@
 
   /** Listed, and not in the store yet: resolving it then answers that the
       store has not taken it, so its form is drawn and cannot be used. */
-  var UNWRITTEN_WHY = 'It can be resolved once the store has taken it, within a tick.';
+  var UNWRITTEN_WHY;
+  Text.later(function () {
+    UNWRITTEN_WHY = t('admin.it_can_be_resolved_once_the');
+  });
   function unwrittenItem(id) { return !!((reviewItem(id) || {}).unwritten); }
 
   /** The fresh list, with each item resolved here that it no longer lists
@@ -2380,26 +2466,26 @@
     var why = off ? UNWRITTEN_WHY : null;
     var fields;
     if (action === 'dismiss') {
-      fields = field('rv.' + id + '.note', { class: 'is-grow', placeholder: 'Why (a note is required)',
-        maxlength: '200', 'aria-label': 'Note', disabled: off });
+      fields = field('rv.' + id + '.note', { class: 'is-grow', placeholder: t('admin.why_a_note_is_required'),
+        maxlength: '200', 'aria-label': t('admin.note'), disabled: off });
     } else if (action === 'pay') {
-      fields = parties.length ? dropdown('rv-who:' + id) : h('p.note', 'The item names nobody to pay.');
+      fields = parties.length ? dropdown('rv-who:' + id) : h('p.note', t('admin.the_item_names_nobody_to_pay'));
     } else {
       fields = frag(parties.length ? dropdown('rv-who:' + id) : null,
-        hasGoods ? segmented('rv-goods', [{ value: 'no', label: 'An amount', disabled: off, title: why },
-          { value: 'yes', label: 'Every item and weapon', disabled: off, title: why }],
+        hasGoods ? segmented('rv-goods', [{ value: 'no', label: t('admin.an_amount'), disabled: off, title: why },
+          { value: 'yes', label: t('admin.every_item_and_weapon'), disabled: off, title: why }],
           goods ? 'yes' : 'no', { 'data-id': id }) : null,
-        goods ? null : field('rv.' + id + '.amount', { class: 'is-short', placeholder: 'Amount',
-          inputmode: 'numeric', 'aria-label': 'Amount', disabled: off }),
+        goods ? null : field('rv.' + id + '.amount', { class: 'is-short', placeholder: t('admin.amount'),
+          inputmode: 'numeric', 'aria-label': t('admin.amount'), disabled: off }),
         goods ? null : dropdown('rv-account:' + id));
     }
-    var verbs = { refund: ['Refund it', 'Click again to refund'], pay: ['Pay it', 'Click again to pay'],
-                  dismiss: ['Dismiss it', 'Click again to dismiss'] };
+    var verbs = { refund: [t('admin.refund_it'), t('admin.click_again_to_refund')], pay: [t('admin.pay_it'), t('admin.click_again_to_pay')],
+                  dismiss: [t('admin.dismiss_it'), t('admin.click_again_to_dismiss')] };
     return h('div.rv-form' + (off ? '.is-off' : ''),
       off ? h('p.note', UNWRITTEN_WHY) : null,
-      segmented('rv-action', [{ value: 'refund', label: 'Refund', disabled: off, title: why },
-        { value: 'pay', label: 'Pay', disabled: off, title: why },
-        { value: 'dismiss', label: 'Dismiss', disabled: off, title: why }], action, { 'data-id': id }),
+      segmented('rv-action', [{ value: 'refund', label: t('admin.refund'), disabled: off, title: why },
+        { value: 'pay', label: t('admin.pay'), disabled: off, title: why },
+        { value: 'dismiss', label: t('admin.dismiss'), disabled: off, title: why }], action, { 'data-id': id }),
       h('div.inline-form.is-wide', fields,
         writeBtn(action === 'dismiss' ? '' : '.primary', 'resolve',
           { 'data-id': id, disabled: off, title: why },
@@ -2413,20 +2499,20 @@
     var id = String(item.id);
     return h('div.rv-form',
       h('div.inline-form.is-wide',
-        writeBtn('.primary', 'resolve-finish', { 'data-id': id }, 'Finish as decided',
-          'Click again to finish', 'check')));
+        writeBtn('.primary', 'resolve-finish', { 'data-id': id }, t('admin.finish_as_decided'),
+          t('admin.click_again_to_finish'), 'check')));
   }
 
   /** What a decision on an item says, in a line: what, to whom. */
   function decisionText(resolution) {
     var r = resolution || {};
-    return String(r.action || 'a decision') + (r.cid ? ' to ' + String(r.cid) : '');
+    return String(r.action || t('admin.a_decision')) + (r.cid ? ' to ' + String(r.cid) : '');
   }
 
   function reviewList() {
     var items = S.reviews.items;
-    if (!items) return loading('Reading the review queue…');
-    if (!items.length) return empty(S.reviews.all ? 'The queue has never held anything.' : 'Nothing is waiting for review.');
+    if (!items) return loading(t('admin.reading_the_review_queue'));
+    if (!items.length) return empty(S.reviews.all ? t('admin.the_queue_has_never_held_anything') : t('admin.nothing_is_waiting_for_review'));
     return frag(items.map(function (item) {
       var id = String(item.id);
       var open = item.state === 'open' || item.state === 'resolving';
@@ -2439,35 +2525,35 @@
           h('span.mono', id), h('span.chip' + (open ? '.is-warn' : ''), String(item.state || '')),
           h('span.sub', 'opened ' + when(item.created_at))),
         item.about ? h('p.about', String(item.about)) : null,
-        item.unwritten ? h('p.note.is-warn', 'Not in the store yet: the server keeps it in memory until the store takes it.') : null,
-        bareGoods(item) ? h('p.note.is-warn', num(bareGoods(item)) + ' of its goods were kept without their metadata, '
-          + 'which was too big to keep. Refund or Pay gives them back without it: no serial, registration, '
-          + 'attachments or what was inside.') : null,
+        item.unwritten ? h('p.note.is-warn', t('admin.not_in_the_store_yet_the')) : null,
+        bareGoods(item) ? h('p.note.is-warn', num(bareGoods(item)) + t('admin.of_its_goods_were_kept_without')
+          + t('admin.which_was_too_big_to_keep')
+          + t('admin.attachments_or_what_was_inside')) : null,
         item.settles && item.state === 'open' && !item.unwritten
-          ? h('p.note', 'The server settles this itself from its own record once the database answers. '
-            + 'Refund or Pay settles it the same way now; what is typed is not used.') : null,
-        resolving ? h('p.note.is-warn', 'Being resolved: ' + decisionText(item.resolution) + ' by '
-          + String(item.resolved_by || '—') + '. It stopped part-way, and Finish as decided carries out '
-          + 'that decision and nothing else.') : null,
+          ? h('p.note', t('admin.the_server_settles_this_itself_from')
+            + t('admin.refund_or_pay_settles_it_the')) : null,
+        resolving ? h('p.note.is-warn', t('admin.being_resolved') + decisionText(item.resolution) + ' by '
+          + String(item.resolved_by || '—') + t('admin.it_stopped_part_way_and_finish')
+          + t('admin.that_decision_and_nothing_else')) : null,
         h('dl.facts',
-          h('dt', 'Contract'), h('dd', item.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract',
+          h('dt', t('admin.contract')), h('dd', item.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract',
             'data-id': String(item.contract) }, String(item.contract)) : '—'),
-          h('dt', 'Amount'), h('dd', item.amount != null ? money(item.amount) + (item.account ? ' ' + item.account : '') : '—'),
-          asList(item.items).length ? h('dt', 'Goods') : null,
+          h('dt', t('admin.amount')), h('dd', item.amount != null ? money(item.amount) + (item.account ? ' ' + item.account : '') : '—'),
+          asList(item.items).length ? h('dt', t('admin.goods')) : null,
           asList(item.items).length ? h('dd', asList(item.items).map(function (g) {
-            return holds(g) + (g && g.metadata_omitted === true ? ' (without its metadata)' : '');
+            return holds(g) + (g && g.metadata_omitted === true ? t('admin.without_its_metadata') : '');
           }).join(', ')) : null,
-          h('dt', 'Involved'), h('dd', asList(item.parties).length ? asList(item.parties).map(function (p) {
+          h('dt', t('admin.involved')), h('dd', asList(item.parties).length ? asList(item.parties).map(function (p) {
             return h('span.party', h('b', String(p.role)), ' ' + String(p.who || '—'));
           }) : '—'),
-          isReport(item) ? h('dt', 'The report') : h('dt', 'What was known'),
+          isReport(item) ? h('dt', t('admin.the_report')) : h('dt', t('admin.what_was_known')),
           h('dd', isReport(item) ? reportPart(item) : (keyValues(item.known) || '—')),
-          h('dt', 'The store now'), h('dd',
-            now.contract ? 'contract ' + now.contract : 'contract unknown',
-            now.buyout ? ' · buyout ' + now.buyout : '',
-            lines ? ' · lines held ' + num(lines.held) + ', settled ' + num(lines.settled) + ', missing ' + num(lines.missing) : ''),
-          item.resolution && !resolving ? h('dt', 'Resolved') : null,
-          item.resolution && !resolving ? h('dd', detailText(item.resolution) + ' · by ' + String(item.resolved_by || '—')
+          h('dt', t('admin.the_store_now')), h('dd',
+            now.contract ? 'contract ' + now.contract : t('admin.contract_unknown'),
+            now.buyout ? t('admin.buyout') + now.buyout : '',
+            lines ? t('admin.lines_held') + num(lines.held) + ', settled ' + num(lines.settled) + ', missing ' + num(lines.missing) : ''),
+          item.resolution && !resolving ? h('dt', t('admin.resolved')) : null,
+          item.resolution && !resolving ? h('dd', detailText(item.resolution) + t('admin.by') + String(item.resolved_by || '—')
             + ' · ' + when(item.resolved_at)) : null),
         open && canWrite() ? (resolving ? finishForm(item) : (dismissOnly(item) ? reportForm(item) : reviewForm(item))) : null,
         answerBox(answer));
@@ -2476,7 +2562,10 @@
 
   /* ---- alerts ---- */
 
-  var LEVEL_LABEL = { always: 'Needs staff', problem: 'Setting' };
+  var LEVEL_LABEL;
+  Text.later(function () {
+    LEVEL_LABEL = { always: t('admin.needs_staff'), problem: t('admin.setting') };
+  });
 
   function loadAlerts() {
     return ask('alerts', { state: S.alerts.state }, 'alerts').then(function (reply) {
@@ -2498,42 +2587,42 @@
       it is), the last post, and the last one given up. */
   function discordBody(d) {
     d = d || {};
-    var where = d.webhook === 'alert' ? 'the alert webhook (crimson_hitman_alert_webhook)'
-      : d.webhook === 'staff' ? 'the staff webhook (crimson_hitman_webhook), as no alert webhook is set'
+    var where = d.webhook === 'alert' ? t('admin.the_alert_webhook_crimson_hitman_alert')
+      : d.webhook === 'staff' ? t('admin.the_staff_webhook_crimson_hitman_webhook')
       : null;
     var status;
     if (d.on === false) {
-      status = h('p.about', 'Off: Post alerts to Discord is switched off under Features. Nothing is posted; '
-        + 'every alert is still listed here.');
+      status = h('p.about', t('admin.off_post_alerts_to_discord_is')
+        + t('admin.every_alert_is_still_listed_here'));
     } else if (!where) {
-      status = h('p.about', 'No webhook is set, so nothing is posted. Set crimson_hitman_alert_webhook in '
-        + 'server.cfg (set, never setr), or crimson_hitman_webhook for the staff channel.');
+      status = h('p.about', t('admin.no_webhook_is_set_so_nothing')
+        + t('admin.server_cfg_set_never_setr_or'));
     } else {
-      status = h('p.about', 'Posting to ' + where + ': one post every 10 seconds at most, ten alerts a post, '
-        + 'with no identity in it.');
+      status = h('p.about', t('admin.posting_to') + where + t('admin.one_post_every_10_seconds_at')
+        + t('admin.with_no_identity_in_it'));
     }
     var fail = d.lastFail;
     var failNote = null;
     if (fail) {
-      var why = Number(fail.status) > 0 ? 'HTTP ' + fail.status : 'no answer';
+      var why = Number(fail.status) > 0 ? 'HTTP ' + fail.status : t('admin.no_answer');
       var since = d.lastOkAt && Number(d.lastOkAt) > Number(fail.at);
       var lost = [];
       if (Number(fail.alerts) > 0) {
         lost.push(num(fail.alerts) + ' alert' + (Number(fail.alerts) === 1 ? '' : 's')
-          + ' not posted, still listed here');
+          + t('admin.not_posted_still_listed_here'));
       }
-      if (fail.test) lost.push('the test alert not posted');
-      failNote = h('p.note' + (since ? '' : '.is-warn'), (since ? 'Earlier, a' : 'A') + ' post was given up after '
-        + num(fail.tries) + ' tries (' + why + ') ' + ago(fail.at) + ': ' + lost.join(', and ') + '.'
-        + (since ? ' Posts have gone through since.' : ''));
+      if (fail.test) lost.push(t('admin.the_test_alert_not_posted'));
+      failNote = h('p.note' + (since ? '' : '.is-warn'), (since ? 'Earlier, a' : 'A') + t('admin.post_was_given_up_after')
+        + num(fail.tries) + t('admin.tries') + why + ') ' + ago(fail.at) + ': ' + lost.join(', and ') + '.'
+        + (since ? t('admin.posts_have_gone_through_since') : ''));
     }
     return frag(status,
       h('dl.facts',
-        h('dt', 'Last post'), h('dd', d.lastOkAt ? when(d.lastOkAt) + ' (' + ago(d.lastOkAt) + ')' : 'none since the start'),
-        h('dt', 'Posted since the start'), h('dd', num(d.posted) + ' alert' + (Number(d.posted) === 1 ? '' : 's')),
-        h('dt', 'Waiting'), h('dd', num(d.waiting) + (d.posting ? ', and a post being tried again' : ''))),
+        h('dt', t('admin.last_post')), h('dd', d.lastOkAt ? when(d.lastOkAt) + ' (' + ago(d.lastOkAt) + ')' : t('admin.none_since_the_start')),
+        h('dt', t('admin.posted_since_the_start')), h('dd', num(d.posted) + ' alert' + (Number(d.posted) === 1 ? '' : 's')),
+        h('dt', t('admin.waiting')), h('dd', num(d.waiting) + (d.posting ? t('admin.and_a_post_being_tried_again') : ''))),
       failNote,
-      h('div.btn-row', writeBtn('', 'al-test', {}, 'Send a test alert', 'Click again to send it', 'paper-plane', true)),
+      h('div.btn-row', writeBtn('', 'al-test', {}, t('admin.send_a_test_alert'), t('admin.click_again_to_send_it'), 'paper-plane', true)),
       answerBox(S.alerts.test));
   }
 
@@ -2548,60 +2637,66 @@
         h('span.sub', ago(a.last_at))),
       h('p.al-text', String(a.text || '')),
       h('dl.facts',
-        h('dt', count > 1 ? 'First said' : 'Said'), h('dd', when(a.first_at)),
-        count > 1 ? h('dt', 'Last said') : null, count > 1 ? h('dd', when(a.last_at)) : null,
-        a.contract ? h('dt', 'Contract') : null,
+        h('dt', count > 1 ? t('admin.first_said') : t('admin.said')), h('dd', when(a.first_at)),
+        count > 1 ? h('dt', t('admin.last_said')) : null, count > 1 ? h('dd', when(a.last_at)) : null,
+        a.contract ? h('dt', t('admin.contract')) : null,
         a.contract ? h('dd', h('button.link.mono', { type: 'button', 'data-act': 'contract',
           'data-id': String(a.contract) }, String(a.contract))) : null,
-        acked ? h('dt', 'Acknowledged') : null,
+        acked ? h('dt', t('admin.acknowledged')) : null,
         acked ? h('dd', String(a.acknowledged_by || '—') + ' · ' + when(a.acknowledged_at)) : null),
-      !acked && canWrite() ? h('div.btn-row', writeBtn('', 'al-ack', { 'data-id': id }, 'Acknowledge',
-        'Click again to acknowledge', 'check', true)) : null,
+      !acked && canWrite() ? h('div.btn-row', writeBtn('', 'al-ack', { 'data-id': id }, t('admin.acknowledge'),
+        t('admin.click_again_to_acknowledge'), 'check', true)) : null,
       answerBox(S.alerts.answers[id]));
   }
 
   function alertsBody() {
     var d = S.alerts.data;
-    if (!d) return S.alerts.error ? empty(S.alerts.error) : loading('Reading the alerts…');
+    if (!d) return S.alerts.error ? empty(S.alerts.error) : loading(t('admin.reading_the_alerts'));
     var rows = asList(d.rows);
     var open = S.alerts.state === 'open';
     var total = open ? Number(d.open) || 0 : Number(d.acknowledged) || 0;
     var inInbox = S.section === 'inbox';
     return frag(
-      inInbox ? null : card('Discord', discordBody(d.discord)),
+      inInbox ? null : card(t('admin.discord'), discordBody(d.discord)),
       h('div.toolbar',
-        h('span.sub', num(d.open) + ' open · ' + num(d.acknowledged) + ' acknowledged'
-          + (rows.length < total ? ' · the newest ' + num(rows.length) + ' shown' : '')),
+        h('span.sub', num(d.open) + t('admin.open_2') + num(d.acknowledged) + ' acknowledged'
+          + (rows.length < total ? t('admin.the_newest') + num(rows.length) + ' shown' : '')),
         open && rows.length && canWrite()
-          ? writeBtn('', 'al-ack-all', {}, 'Acknowledge all shown',
-            'Click again: acknowledge ' + num(rows.length), 'check-double', true)
+          ? writeBtn('', 'al-ack-all', {}, t('admin.acknowledge_all_shown'),
+            t('admin.click_again_acknowledge') + num(rows.length), 'check-double', true)
           : null),
       answerBox(S.alerts.all),
       rows.length ? rows.map(alertCard)
-        : empty(open ? 'No open alerts.' : 'Nothing has been acknowledged yet.'),
-      inInbox ? h('p.note', 'Acknowledged ones, Discord and the test alert are in Logs, Alerts.') : null);
+        : empty(open ? t('admin.no_open_alerts') : t('admin.nothing_has_been_acknowledged_yet')),
+      inInbox ? h('p.note', t('admin.acknowledged_ones_discord_and_the_test')) : null);
   }
 
   SHELL.alerts = function () {
     return h('section.view',
       h('div.toolbar',
-        segmented('al-state', [{ value: 'open', label: 'Open' }, { value: 'acknowledged', label: 'Acknowledged' }],
+        segmented('al-state', [{ value: 'open', label: t('admin.open') }, { value: 'acknowledged', label: t('admin.acknowledged') }],
           S.alerts.state),
-        btn('.ghost', 'al-refresh', {}, 'Refresh', 'rotate')),
-      h('p.hint', 'Every line the server console prints whatever Debug says: money at risk or left for staff, '
-        + 'a write that failed, a job that keeps failing, and each setting that needs attention. The same line '
-        + 'again is counted on its alert. Kept across restarts until acknowledged; acknowledging is on the record.'),
+        btn('.ghost', 'al-refresh', {}, t('admin.refresh'), 'rotate')),
+      h('p.hint', t('admin.every_line_the_server_console_prints')
+        + t('admin.a_write_that_failed_a_job')
+        + t('admin.again_is_counted_on_its_alert')),
       h('div.stack', { id: 'al-list' }, alertsBody()));
   };
   LOAD.alerts = function () { loadAlerts(); };
 
   /* ---- console ---- */
 
-  var KIND_LABEL = { always: 'Always', problem: 'Problem', debug: 'Debug' };
-  var CONSOLE_KINDS = [
-    { value: '', label: 'All' }, { value: 'always', label: 'Always' },
-    { value: 'problem', label: 'Problems' }, { value: 'debug', label: 'Debug' }
+  var KIND_LABEL;
+  Text.later(function () {
+    KIND_LABEL = { always: t('admin.always'), problem: t('admin.problem'), debug: t('admin.debug') };
+  });
+  var CONSOLE_KINDS;
+  Text.later(function () {
+    CONSOLE_KINDS = [
+    { value: '', label: t('admin.all') }, { value: 'always', label: t('admin.always') },
+    { value: 'problem', label: t('admin.problems') }, { value: 'debug', label: t('admin.debug') }
   ];
+  });
 
   /** What the server keeps of its console. One read at a time: a refresh
       asked for while one is out waits for that one's answer. */
@@ -2634,8 +2729,8 @@
   function drawConsole() { if (S.section === 'console') setHtml(byId('cs-list'), consoleBody()); }
 
   function consoleAt() {
-    return S.console.readAt ? 'Read at ' + clock(S.console.readAt) + ', again every ' + Math.round(refreshMs() / 1000)
-      + ' s while open' : '';
+    return S.console.readAt ? t('admin.read_at') + clock(S.console.readAt) + t('admin.again_every') + Math.round(refreshMs() / 1000)
+      + t('admin.while_open') : '';
   }
 
   /** Whether a line passes the kind and text filters. */
@@ -2660,15 +2755,15 @@
   function consoleText(shown) {
     var out = [];
     if (shown.problems.length) {
-      out.push('Settings that need attention:');
+      out.push(t('admin.settings_that_need_attention'));
       shown.problems.forEach(function (text) { out.push('[problem] ' + text); });
     }
     if (shown.boot.length) {
-      out.push('What the last start said:');
+      out.push(t('admin.what_the_last_start_said'));
       shown.boot.forEach(function (line) { out.push('[' + line.kind + '] ' + line.text); });
     }
     if (shown.recent.length) {
-      out.push('Since the start, newest first:');
+      out.push(t('admin.since_the_start_newest_first'));
       shown.recent.forEach(function (line) {
         var times = Number(line.times) || 1;
         out.push(clock(line.at) + ' [' + line.kind + '] ' + line.text + (times > 1 ? ' (x' + times + ')' : ''));
@@ -2694,29 +2789,29 @@
 
   function consoleBody() {
     var d = S.console.data;
-    if (!d) return S.console.error ? empty(S.console.error) : loading('Reading the console…');
+    if (!d) return S.console.error ? empty(S.console.error) : loading(t('admin.reading_the_console'));
     var shown = consoleShown();
     var kind = S.console.kind;
     var filtered = !!trim(S.forms['cs.q']);
     var parts = [h('p.note', d.debug
-      ? 'Debug output is on (Config.Debug): the server console printed every line here as well.'
-      : 'Debug output is off (Config.Debug): the server console printed only the lines marked Always, and one '
-        + 'line for the settings that need attention. Every other line is kept here.')];
+      ? t('admin.debug_output_is_on_config_debug')
+      : t('admin.debug_output_is_off_config_debug')
+        + t('admin.line_for_the_settings_that_need'))];
     if (!kind || kind === 'problem') {
-      parts.push(card('Settings that need attention (' + num(d.count) + ')',
+      parts.push(card(t('admin.settings_that_need_attention_2') + num(d.count) + ')',
         consoleList(shown.problems.map(function (text) { return { text: text, kind: 'problem' }; }), false,
-          filtered ? 'None matches.' : 'None.')));
+          filtered ? t('admin.none_matches') : t('admin.none'))));
     }
     if (kind !== 'problem') {
       var left = Number(d.bootLeft) || 0;
-      parts.push(card('What the last start said', frag(
-        consoleList(shown.boot, false, filtered || kind ? 'None matches.' : 'Nothing kept.'),
-        left > 0 ? h('p.note', 'And ' + num(left) + ' more line' + (left === 1 ? '' : 's') + ' the start said, past the '
-          + num(d.bootKept) + ' kept.') : null)));
-      parts.push(card('Since the start, newest first', frag(
-        h('p.note', 'The newest ' + num(d.recentKept) + ' debug lines and the newest ' + num(d.alwaysKept)
-          + ' lines marked Always; the same line again is counted on it.'),
-        consoleList(shown.recent, true, filtered || kind ? 'None matches.' : 'Nothing since the start.'))));
+      parts.push(card(t('admin.what_the_last_start_said_2'), frag(
+        consoleList(shown.boot, false, filtered || kind ? t('admin.none_matches') : t('admin.nothing_kept')),
+        left > 0 ? h('p.note', 'And ' + num(left) + t('admin.more_line') + (left === 1 ? '' : 's') + t('admin.the_start_said_past_the')
+          + num(d.bootKept) + t('admin.kept')) : null)));
+      parts.push(card(t('admin.since_the_start_newest_first_2'), frag(
+        h('p.note', t('admin.the_newest_2') + num(d.recentKept) + t('admin.debug_lines_and_the_newest') + num(d.alwaysKept)
+          + t('admin.lines_marked_always_the_same_line')),
+        consoleList(shown.recent, true, filtered || kind ? t('admin.none_matches') : t('admin.nothing_since_the_start')))));
     }
     return frag(parts);
   }
@@ -2746,34 +2841,37 @@
       h('div.toolbar',
         segmented('cs-kind', CONSOLE_KINDS, S.console.kind),
         h('label.search', icon('magnifying-glass'),
-          field('cs.q', { id: 'cs-q', placeholder: 'Filter the lines', 'data-live': 'cs-filter',
-            'aria-label': 'Filter the lines' })),
-        btn('.ghost', 'cs-refresh', {}, 'Refresh', 'rotate'),
-        btn('', 'cs-copy', {}, 'Copy', 'copy'),
+          field('cs.q', { id: 'cs-q', placeholder: t('admin.filter_the_lines'), 'data-live': 'cs-filter',
+            'aria-label': t('admin.filter_the_lines') })),
+        btn('.ghost', 'cs-refresh', {}, t('admin.refresh'), 'rotate'),
+        btn('', 'cs-copy', {}, t('admin.copy'), 'copy'),
         h('span.sub', { id: 'cs-at' }, consoleAt())),
-      h('p.hint', 'What this resource said in the server console since its last start, and what it kept with Debug '
-        + 'off: Always is printed whatever Debug says, Problems are the settings the start found wrong, and Debug is '
-        + 'printed only with Debug on. Kept in memory, so a restart begins it again. Without the identity ACE, people '
-        + 'are shown by their place on a contract; nobody here sees a webhook address, a secret, or the values a '
-        + 'database statement was sent.'),
+      h('p.hint', t('admin.what_this_resource_said_in_the')
+        + t('admin.off_always_is_printed_whatever_debug')
+        + t('admin.printed_only_with_debug_on_kept')
+        + t('admin.are_shown_by_their_place_on')
+        + t('admin.database_statement_was_sent')),
       h('div.stack', { id: 'cs-list' }, consoleBody()));
   };
   LOAD.console = function () { loadConsole(); };
 
   /* ---- logs ---- */
 
-  DD['lg-kind'] = {
-    prefix: 'Kind',
+  Text.later(function () {
+    DD['lg-kind'] = {
+    prefix: t('admin.kind'),
     options: function () {
-      return [{ value: '', label: 'Any' }, { value: 'financial', label: 'financial' },
+      return [{ value: '', label: t('admin.any') }, { value: 'financial', label: 'financial' },
         { value: 'conduct', label: 'conduct' }, { value: 'rejected', label: 'rejected' },
         { value: 'system', label: 'system' }];
     },
     value: function () { return S.logs.kind; },
     pick: function (v) { S.logs.kind = v; firstLogPage(); }
   };
-  DD['lg-range'] = {
-    prefix: 'When',
+  });
+  Text.later(function () {
+    DD['lg-range'] = {
+    prefix: t('admin.when'),
     options: function () { return RANGES; },
     value: function () { return S.logs.range; },
     pick: function (v) {
@@ -2783,6 +2881,7 @@
       firstLogPage();
     }
   };
+  });
 
   /* A contract id and a citizen id as the server reads them (Util.toId,
      Util.toCitizenId). Sent half-typed, every pause in typing one answered
@@ -2790,11 +2889,14 @@
      search before, which read as its result. A box that does not hold one
      yet is marked and nothing is asked, as with a date that cannot be read,
      and Enter says why. */
-  var LOG_IDS = {
+  var LOG_IDS;
+  Text.later(function () {
+    LOG_IDS = {
     contract: { re: /^[A-Za-z0-9_-]{8,64}$/, box: 'lg-contract',
-                why: 'A contract id is 8 to 64 letters, digits, - or _, as ct00000001.' },
-    actor: { re: /^[A-Za-z0-9]{3,32}$/, box: 'lg-actor', why: 'A citizen id is 3 to 32 letters and digits.' }
+                why: t('admin.a_contract_id_is_8_to') },
+    actor: { re: /^[A-Za-z0-9]{3,32}$/, box: 'lg-actor', why: t('admin.a_citizen_id_is_3_to') }
   };
+  });
 
   /** The log's filters as a request, or null when one cannot be sent yet
       (its box is marked). `strict` (Enter) says why. */
@@ -2856,17 +2958,17 @@
 
   function logRows() {
     var d = S.logs.data;
-    if (!d) return loading('Reading the log…');
+    if (!d) return loading(t('admin.reading_the_log'));
     var rows = asList(d.rows);
-    if (!rows.length) return empty('No row matches.');
+    if (!rows.length) return empty(t('admin.no_row_matches'));
     return h('div.table-wrap', h('table.grid.is-rows.is-log',
-      h('thead', h('tr', h('th', 'When'), h('th', 'Kind'), h('th', 'Action'), h('th', 'Contract'),
-        h('th', 'Who'), h('th', 'Detail'))),
+      h('thead', h('tr', h('th', t('admin.when')), h('th', t('admin.kind')), h('th', t('admin.action')), h('th', t('admin.contract')),
+        h('th', t('admin.who')), h('th', t('admin.detail')))),
       h('tbody', rows.map(function (row, i) {
         var open = !!S.logs.open[i];
         return frag(
           h('tr.row' + (open ? '.is-open' : ''), { 'data-act': 'lg-expand', 'data-index': String(i), tabindex: '0',
-            title: open ? 'Hide the detail' : 'Show the whole detail' },
+            title: open ? t('admin.hide_the_detail') : t('admin.show_the_whole_detail') },
             h('td.nowrap', when(row.ts)), h('td', h('span.chip.kind-' + String(row.kind || 'system'), String(row.kind || ''))),
             h('td.mono.wrap', String(row.action || '')),
             h('td', row.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract',
@@ -2882,9 +2984,9 @@
     if (!d) return frag();
     var page = S.logs.back.length + 1;
     return frag(
-      btn('.is-small', 'lg-newer', { disabled: S.logs.back.length === 0 }, 'Newer', 'chevron-left'),
-      h('span.pager-text', 'Page ' + page + ' · newest first'),
-      btn('.is-small', 'lg-older', { disabled: d.next === undefined || d.next === null }, 'Older', 'chevron-right'));
+      btn('.is-small', 'lg-newer', { disabled: S.logs.back.length === 0 }, t('admin.newer'), 'chevron-left'),
+      h('span.pager-text', 'Page ' + page + t('admin.newest_first_2')),
+      btn('.is-small', 'lg-older', { disabled: d.next === undefined || d.next === null }, t('admin.older'), 'chevron-right'));
   }
 
   /* Records \u203a Logs: every log staff read, one view, one op (logs), each
@@ -2893,12 +2995,15 @@
      Game rules to Setting changes, Hitman organisation to Org audit, Boss
      permissions to Grant history, Target limits to the audit log's
      staff_target_ rows. The chip last picked stays picked. */
-  var LOG_AREAS = [
-    { id: 'audit', label: 'Audit log' },
-    { id: 'settings', label: 'Setting changes' },
-    { id: 'org', label: 'Org audit' },
-    { id: 'grants', label: 'Grant history' }
+  var LOG_AREAS;
+  Text.later(function () {
+    LOG_AREAS = [
+    { id: 'audit', label: t('admin.audit_log') },
+    { id: 'settings', label: t('admin.setting_changes') },
+    { id: 'org', label: t('admin.org_audit') },
+    { id: 'grants', label: t('admin.grant_history') }
   ];
+  });
   /** What each section link sets: the chip, and for Target limits the
       audit log's action filter. */
   var LOG_FILTERS = {
@@ -2908,7 +3013,7 @@
   function logArea() { return S.section === 'logs' ? S.logs.area : null; }
   function logAreaLabel() {
     var a = LOG_AREAS.filter(function (x) { return x.id === S.logs.area; })[0];
-    return a ? a.label : 'Audit log';
+    return a ? a.label : t('admin.audit_log');
   }
   function pickLogArea(name) {
     var f = LOG_FILTERS[name];
@@ -2929,24 +3034,24 @@
     return frag(
       h('div.toolbar',
         dropdown('lg-kind'),
-        field('lg.action', { class: 'is-mid', placeholder: 'Action contains', 'data-live': 'lg-search',
-          'data-enter': 'lg-search-now', 'aria-label': 'Action contains' }),
-        field('lg.contract', { id: 'lg-contract', class: 'is-mid', placeholder: 'Contract id', 'data-live': 'lg-search',
-          'data-enter': 'lg-search-now', 'aria-label': 'Contract id' }),
-        field('lg.actor', { id: 'lg-actor', class: 'is-mid', placeholder: 'Citizen id',
+        field('lg.action', { class: 'is-mid', placeholder: t('admin.action_contains'), 'data-live': 'lg-search',
+          'data-enter': 'lg-search-now', 'aria-label': t('admin.action_contains') }),
+        field('lg.contract', { id: 'lg-contract', class: 'is-mid', placeholder: t('admin.contract_id'), 'data-live': 'lg-search',
+          'data-enter': 'lg-search-now', 'aria-label': t('admin.contract_id') }),
+        field('lg.actor', { id: 'lg-actor', class: 'is-mid', placeholder: t('admin.citizen_id'),
           'data-live': 'lg-search', 'data-enter': 'lg-search-now',
-          title: canIdentify() ? null : 'Without the identity ACE, only the rows they acted in under their own '
-            + 'name: as the target, or a placer or operative who did not stay anonymous.',
-          'aria-label': 'Citizen id' }),
+          title: canIdentify() ? null : t('admin.without_the_identity_ace_only_the')
+            + t('admin.name_as_the_target_or_a'),
+          'aria-label': t('admin.citizen_id') }),
         dropdown('lg-range'),
         rangeInputs('lg', S.logs.range, 'lg-search'),
-        btn('.ghost', 'lg-clear', {}, 'Clear', 'eraser'),
+        btn('.ghost', 'lg-clear', {}, t('admin.clear'), 'eraser'),
         h('span.lg-tools', { id: 'lg-tools' }, logToolsBody())),
       h('p.hint', canIdentify()
-        ? 'Every row as it was written. Reading the log as you can see it is on the record.'
-        : 'Citizen ids show as the party\'s place on the contract (the placer, the target, an operative) and '
-          + 'anonymous parties as Anonymous. A citizen id finds only the rows that player acted in under their '
-          + 'own name.'),
+        ? t('admin.every_row_as_it_was_written')
+        : t('admin.citizen_ids_show_as_the_partys')
+          + t('admin.anonymous_parties_as_anonymous_a_citizen')
+          + t('admin.own_name')),
       h('div.results', { id: 'lg-results' }, logRows()),
       h('div.pager', { id: 'lg-pager' }, logPager()));
   }
@@ -2954,12 +3059,12 @@
   /** The organisation's log and its grant history, as the organisation is. */
   function orgLogBody() {
     var d = S.org.data;
-    if (!d) return S.org.error ? empty(S.org.error) : loading('Reading the organisation…');
+    if (!d) return S.org.error ? empty(S.org.error) : loading(t('admin.reading_the_organisation'));
     if (!d.enabled) {
-      return empty('The hitman organisation is off (Config.Organisation.Enabled): it has nothing on the record. '
-        + 'Hitman organisation, Setup turns it on.');
+      return empty(t('admin.the_hitman_organisation_is_off_config')
+        + t('admin.hitman_organisation_setup_turns_it_on'));
     }
-    if (!d.loaded) return empty('The organisation has not been read from the store yet: Hitman organisation, Setup.');
+    if (!d.loaded) return empty(t('admin.the_organisation_has_not_been_read'));
     return S.logs.area === 'grants' ? bpHistoryBody() : orgAuditBody();
   }
 
@@ -2995,7 +3100,7 @@
   function loadPlayer(again) {
     var subject = trim(S.forms['pl.q']);
     var byRef = again === true && S.players.ref ? S.players.ref : null;
-    if (!subject && !byRef) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
+    if (!subject && !byRef) { toast(t('admin.give_a_player_id_a_citizen'), 'error'); return Promise.resolve(); }
     // Nothing armed on the card before carries over to who is read now.
     disarm();
     S.players.playtime = null;
@@ -3033,37 +3138,37 @@
     if (!pt) return null;
     var floor = Number(pt.floor) || 0;
     var hours = Number(pt.hours) || 0;
-    var from = pt.grandfathered === true ? 'Yes' : pt.grandfathered === false ? 'No' : 'Not decided';
+    var from = pt.grandfathered === true ? t('admin.yes') : pt.grandfathered === false ? t('admin.no') : t('admin.not_decided');
     var about;
     /* Grandfathered, and these hours against the floor, decide only where the
        tracker is what the rule reads: an export or QBox metadata answering
        for them decides by its own hours. */
     var elsewhere = pt.from === 'provider' || pt.from === 'metadata';
-    if (pt.unread) about = 'Their counted time could not be read from the store just now.';
+    if (pt.unread) about = t('admin.their_counted_time_could_not_be');
     else if (elsewhere) about = null;
-    else if (pt.grandfathered === true) about = 'They were on the server before the count started, so they count as '
-      + 'having played enough, whatever the hours say.';
+    else if (pt.grandfathered === true) about = t('admin.they_were_on_the_server_before')
+      + t('admin.having_played_enough_whatever_the_hours');
     else if (pt.grandfathered === false) about = hours < floor
-      ? 'Too new to be named as a target until the count reaches ' + num(floor) + ' h.'
-      : 'Enough to be named as a target.';
-    else if (!pt.counted) about = 'Nothing counted yet. Counting starts the next time they are in the city.';
-    else about = 'Whether they were on the server before the count started is decided within a minute of them '
-      + 'being in the city.';
-    var rule = pt.from === 'provider' ? 'The new-player rule reads your playtime export for them, not these hours.'
-      : pt.from === 'metadata' ? 'The new-player rule reads their QBox metadata for them, not these hours.' : null;
-    return card('Playtime', frag(
+      ? t('admin.too_new_to_be_named_as') + num(floor) + ' h.'
+      : t('admin.enough_to_be_named_as_a');
+    else if (!pt.counted) about = t('admin.nothing_counted_yet_counting_starts_the');
+    else about = t('admin.whether_they_were_on_the_server')
+      + t('admin.being_in_the_city');
+    var rule = pt.from === 'provider' ? t('admin.the_new_player_rule_reads_your')
+      : pt.from === 'metadata' ? t('admin.the_new_player_rule_reads_their') : null;
+    return card(t('admin.playtime'), frag(
       h('div.tiles.is-compact',
-        tile('Counted here', h('p.big', pt.unread ? '—' : num(hours) + ' h')),
-        tile('Needed to be a target', h('p.big', num(floor) + ' h')),
-        tile('From before the count', h('p.big.is-word', from))),
+        tile(t('admin.counted_here'), h('p.big', pt.unread ? '—' : num(hours) + ' h')),
+        tile(t('admin.needed_to_be_a_target'), h('p.big', num(floor) + ' h')),
+        tile(t('admin.from_before_the_count'), h('p.big.is-word', from))),
       about ? h('p.sub', about) : null,
       rule ? h('p.note', rule) : null,
       h('div.toolbar',
         field('pl.hours', { id: 'pl-hours', type: 'number', min: '0', max: '100000', step: '0.5',
-          placeholder: 'Hours', 'aria-label': 'Counted hours' }),
-        writeBtn('', 'pl-playtime-set', {}, 'Set hours', 'Click again to set', 'clock', true),
-        writeBtn('.ghost', 'pl-playtime-reset', {}, 'Reset to 0', 'Click again to reset', 'arrow-rotate-left', true)),
-      answerBox(S.players.playtime)), '', h('span.sub', pt.counting ? 'in the city: counting' : 'not counting'));
+          placeholder: t('admin.hours'), 'aria-label': t('admin.counted_hours') }),
+        writeBtn('', 'pl-playtime-set', {}, t('admin.set_hours'), t('admin.click_again_to_set'), 'clock', true),
+        writeBtn('.ghost', 'pl-playtime-reset', {}, t('admin.reset_to_0'), t('admin.click_again_to_reset'), 'arrow-rotate-left', true)),
+      answerBox(S.players.playtime)), '', h('span.sub', pt.counting ? t('admin.in_the_city_counting') : t('admin.not_counting')));
   }
 
   /** Freeze or Unfreeze, under the lookup: a reason, and two clicks. While
@@ -3072,21 +3177,21 @@
   function freezeCard(frozen) {
     var form = h('div.toolbar',
       field('pl.freezeReason', { id: 'pl-freeze-reason', class: 'is-grow', maxlength: '120',
-        placeholder: frozen ? 'Reason for unfreezing (kept in the log)' : 'Reason for the freeze (kept in the log)',
-        'aria-label': frozen ? 'Reason for unfreezing' : 'Reason for the freeze' }),
+        placeholder: frozen ? t('admin.reason_for_unfreezing_kept_in_the') : t('admin.reason_for_the_freeze_kept_in'),
+        'aria-label': frozen ? t('admin.reason_for_unfreezing') : t('admin.reason_for_the_freeze') }),
       frozen
-        ? modBtn('', 'pl-unfreeze', {}, 'Unfreeze', 'Click again to unfreeze', 'play')
-        : modBtn('.danger', 'pl-freeze', {}, 'Freeze', 'Click again to freeze', 'snowflake'));
+        ? modBtn('', 'pl-unfreeze', {}, t('admin.unfreeze'), t('admin.click_again_to_unfreeze'), 'play')
+        : modBtn('.danger', 'pl-freeze', {}, t('admin.freeze'), t('admin.click_again_to_freeze'), 'snowflake'));
     var about = frozen
       ? frag(h('p.sub', 'Frozen ' + ago(frozen.since) + (frozen.reason ? ': ' + String(frozen.reason) : '')
-          + (frozen.by ? ' · by ' + String(frozen.by) : '')),
-        h('p.note', 'Every live contract they are party to is on hold: its clocks stopped, and nothing '
-          + 'on it is accepted, paid, refunded or ended. Unfreeze gives the time on hold back.'))
-      : h('p.note', 'Freezing puts every live contract they are party to on hold, as the target, the '
-          + 'placer or an operative: its clocks stop and nothing on it moves until you unfreeze them. '
-          + 'Players are told only that it is on hold by staff.');
-    return card('Freeze', frag(about, form, answerBox(S.players.freeze)), '',
-      frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null);
+          + (frozen.by ? t('admin.by') + String(frozen.by) : '')),
+        h('p.note', t('admin.every_live_contract_they_are_party')
+          + t('admin.on_it_is_accepted_paid_refunded')))
+      : h('p.note', t('admin.freezing_puts_every_live_contract_they')
+          + t('admin.placer_or_an_operative_its_clocks')
+          + t('admin.players_are_told_only_that_it'));
+    return card(t('admin.freeze'), frag(about, form, answerBox(S.players.freeze)), '',
+      frozen ? h('span.chip.is-warn.is-frozen', t('admin.frozen')) : null);
   }
 
   /** Every player staff have frozen, with Unfreeze on each row. */
@@ -3102,19 +3207,19 @@
   function personHead(d) {
     var p = d.player || {};
     return h('div.person',
-      h('h2', String(p.name || 'No name on record')),
-      p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
-      p.online ? h('span.chip.is-live', 'in the city · player ' + String(p.server)) : h('span.chip', 'offline'),
-      d.frozen ? h('span.chip.is-warn.is-frozen', 'Frozen') : null,
-      d.suspended ? h('span.chip.is-warn.is-suspended', 'Suspended') : null,
-      d.protected ? h('span.chip.is-protected', 'Protected') : null);
+      h('h2', String(p.name || t('admin.no_name_on_record'))),
+      p.cid ? h('span.cid', String(p.cid)) : h('span.chip', t('admin.citizen_id_hidden')),
+      p.online ? h('span.chip.is-live', t('admin.in_the_city_player') + String(p.server)) : h('span.chip', 'offline'),
+      d.frozen ? h('span.chip.is-warn.is-frozen', t('admin.frozen')) : null,
+      d.suspended ? h('span.chip.is-warn.is-suspended', t('admin.suspended')) : null,
+      d.protected ? h('span.chip.is-protected', t('admin.protected')) : null);
   }
 
   /** The person tabs, as buttons under their summary. */
   function personLinks() {
     // Their contracts: the one list of contracts, filtered to them.
     return h('div.btn-row.person-links',
-      btn('.is-small.ghost', 'pl-contracts', {}, 'Their contracts', 'file-contract'),
+      btn('.is-small.ghost', 'pl-contracts', {}, t('admin.their_contracts'), 'file-contract'),
       Object.keys(PERSON_VIEWS).map(function (view) {
         return btn('.is-small.ghost', 'section', { 'data-section': view }, VIEW_LABEL[view][0], VIEW_LABEL[view][1]);
       }));
@@ -3128,18 +3233,18 @@
       // Sent only to staff with the identity ACE: the counters hold what was
       // placed and taken anonymously too, and nothing says which.
       stats ? h('div.tiles.is-compact',
-        tile('Completed', h('p.big', num(stats.completed))),
-        tile('Failed', h('p.big', num(stats.failed))),
-        tile('Placed', h('p.big', num(stats.placed))),
-        tile('Survived', h('p.big', num(stats.survived))),
-        tile('Success rate', h('p.big', stats.rate == null ? '—' : num(stats.rate) + '%')),
-        tile('Standing', h('p.big.is-word', String(stats.standing || '—'))))
-        : h('p.note', 'Their record is not shown: it counts contracts placed and taken anonymously too, '
-          + 'which only the identity ACE may see.'),
+        tile(t('admin.completed'), h('p.big', num(stats.completed))),
+        tile(t('admin.failed'), h('p.big', num(stats.failed))),
+        tile(t('admin.placed'), h('p.big', num(stats.placed))),
+        tile(t('admin.survived'), h('p.big', num(stats.survived))),
+        tile(t('admin.success_rate'), h('p.big', stats.rate == null ? '—' : num(stats.rate) + '%')),
+        tile(t('admin.standing'), h('p.big.is-word', String(stats.standing || '—'))))
+        : h('p.note', t('admin.their_record_is_not_shown_it')
+          + t('admin.which_only_the_identity_ace_may')),
       h('div.tiles.is-compact',
-        tile('Contracts', h('p.big', num(asList(d.contracts).length))),
-        tile('Owed to them', h('p.big', num(asList(d.owed).length))),
-        tile('Playtime', h('p.big', d.playtime && !d.playtime.unread ? num(d.playtime.hours) + ' h' : '—'))));
+        tile(t('admin.contracts'), h('p.big', num(asList(d.contracts).length))),
+        tile(t('admin.owed_to_them'), h('p.big', num(asList(d.owed).length))),
+        tile(t('admin.playtime'), h('p.big', d.playtime && !d.playtime.unread ? num(d.playtime.hours) + ' h' : '—'))));
   }
 
   function moneyBody(d) {
@@ -3148,47 +3253,47 @@
     return frag(
       payCard(d),
       h('div.cols',
-        card('Owed to them', owed.length ? h('div.table-wrap', h('table.grid',
-          h('thead', h('tr', h('th', 'Line'), h('th', 'Contract'), h('th', 'Holds'), h('th', 'State'),
-            h('th.num', 'Still owed'), h('th', 'Queued'))),
+        card(t('admin.owed_to_them'), owed.length ? h('div.table-wrap', h('table.grid',
+          h('thead', h('tr', h('th', t('admin.line')), h('th', t('admin.contract')), h('th', t('admin.holds')), h('th', t('admin.state')),
+            h('th.num', t('admin.still_owed')), h('th', t('admin.queued')))),
           h('tbody', owed.map(function (line) {
             return h('tr', h('td.mono', String(line.id)),
               h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': String(line.contract) },
                 String(line.contract))),
               h('td', holds(line)), h('td', String(line.state || '—'),
-                line.parked ? h('span.chip.is-warn', 'left for staff') : null),
+                line.parked ? h('span.chip.is-warn', t('admin.left_for_staff')) : null),
               h('td.num', MONEY[line.source] ? money(line.owes) : num(line.owes)),
               h('td', line.queued ? 'yes' : 'no'));
-          })))) : empty('Nothing is owed to them' + (canIdentify() ? '.' : ' that you may see.')),
+          })))) : empty(t('admin.nothing_is_owed_to_them') + (canIdentify() ? '.' : t('admin.that_you_may_see'))),
           '', h('span.sub', num(d.pending) + (Number(d.pending) === 1 ? ' delivery' : ' deliveries') + ' pending')),
-        card('Notices for their next login', Number(notices.count) > 0
-          ? h('ul.plain', asList(notices.titles).map(function (t) { return h('li', String(t)); }))
-          : empty('None waiting.'), '', h('span.sub', num(notices.count)))));
+        card(t('admin.notices_for_their_next_login'), Number(notices.count) > 0
+          ? h('ul.plain', asList(notices.titles).map(function (tv) { return h('li', String(tv)); }))
+          : empty(t('admin.none_waiting')), '', h('span.sub', num(notices.count)))));
   }
 
   function measuresBody(d) {
     return frag(
       freezeCard(d.frozen),
       h('div.cols', suspendCard(d), protectCard(d)),
-      card('Target limits', frag(
-        h('p.about', 'How often a contract may be placed on them: their cooldown, their counts, their own limits '
-          + 'or an exemption, exactly, with Reset, Extend and Exempt.'),
-        d.limit ? h('p.note', (d.limit.exempt ? 'Exempt from the target limits' : 'Target limits of their own')
-          + ' since ' + when(d.limit.since) + (d.limit['until'] ? ', until ' + when(d.limit['until']) : ', for good')
+      card(t('admin.target_limits'), frag(
+        h('p.about', t('admin.how_often_a_contract_may_be')
+          + t('admin.or_an_exemption_exactly_with_reset')),
+        d.limit ? h('p.note', (d.limit.exempt ? t('admin.exempt_from_the_target_limits') : t('admin.target_limits_of_their_own'))
+          + ' since ' + when(d.limit.since) + (d.limit['until'] ? ', until ' + when(d.limit['until']) : t('admin.for_good'))
           + (d.limit.reason ? ': ' + String(d.limit.reason) : '.')) : null,
-        h('div.btn-row', btn('.is-small', 'pl-tl', {}, 'Open them in Target limits', 'user-clock')))));
+        h('div.btn-row', btn('.is-small', 'pl-tl', {}, t('admin.open_them_in_target_limits'), 'user-clock')))));
   }
 
   /** Why can't they see...: the diagnosis, run as the player selected. */
   function playerDiagBody(d) {
-    var t = S.tools;
-    var mine = t.pdiag && t.pdiag.ref === S.players.ref ? t.pdiag : null;
+    var tv = S.tools;
+    var mine = tv.pdiag && tv.pdiag.ref === S.players.ref ? tv.pdiag : null;
     var online = d.player && d.player.online;
-    return card('Why can’t they see…', frag(
-      h('p.about', 'Runs the app\'s own reads as them: why a contract, the board or a feature is not showing, '
-        + 'with the server-wide checks. They have to be in the city.'),
+    return card(t('admin.why_can_t_they_see'), frag(
+      h('p.about', t('admin.runs_the_apps_own_reads_as')
+        + t('admin.with_the_server_wide_checks_they')),
       h('div.btn-row', btn('.primary', 'pl-diag', { disabled: !online || null,
-        title: online ? null : 'They are not in the city now' }, 'Run the diagnosis as them', 'stethoscope')),
+        title: online ? null : t('admin.they_are_not_in_the_city') }, t('admin.run_the_diagnosis_as_them'), 'stethoscope')),
       // Only the diagnosis run for the player shown (by the lookup's handle),
       // never one run for somebody looked up before.
       mine && mine.error ? answerBox({ ok: false, text: mine.error }) : null,
@@ -3200,22 +3305,22 @@
     return frag(
       h('div.toolbar',
         h('label.search', icon('magnifying-glass'),
-          field('pl.q', { id: 'pl-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'pl-lookup',
-            'aria-label': 'Player id, citizen id or name' })),
-        btn('.primary', 'pl-lookup', {}, 'Look up', 'arrow-right')),
+          field('pl.q', { id: 'pl-q', placeholder: t('admin.player_id_citizen_id_or_name'), 'data-enter': 'pl-lookup',
+            'aria-label': t('admin.player_id_citizen_id_or_name') })),
+        btn('.primary', 'pl-lookup', {}, t('admin.look_up'), 'arrow-right')),
       recent.length ? h('div.chips.recent', h('span.sub', 'Recent:'), recent.map(function (r) {
         return h('button.chip.is-link', { type: 'button', 'data-act': 'pl-recent', 'data-value': r.subject },
           r.name);
       })) : null,
       h('p.hint', canIdentify()
-        ? 'You see every contract they were party to, anonymous ones included. Each lookup is on the record.'
-        : 'Contracts they placed or took anonymously are left out, with what they are owed, the deliveries '
-          + 'and the notices on them, and so is their record, which counts them.'));
+        ? t('admin.you_see_every_contract_they_were')
+        : t('admin.contracts_they_placed_or_took_anonymously')
+          + t('admin.and_the_notices_on_them_and')));
   }
 
   function playerBody() {
     var d = S.players.data;
-    if (!d) return empty('Look someone up by player id, citizen id or name.');
+    if (!d) return empty(t('admin.look_someone_up_by_player_id'));
     if (d.error) return empty(d.error);
     switch (S.section) {
       case 'pmeasures': return frag(personHead(d), measuresBody(d));
@@ -3279,15 +3384,15 @@
   }
 
   function describe(entry, value) {
-    if (entry.kind === 'switch' || typeof value === 'boolean') return value === true ? 'On' : 'Off';
+    if (entry.kind === 'switch' || typeof value === 'boolean') return value === true ? t('admin.on') : t('admin.off');
     if (entry.kind === 'list') {
       var list = asList(value);
       return list.length ? list.join(', ') : '(none)';
     }
     if (entry.kind === 'range') {
-      return value && typeof value === 'object' ? num(value.min) + ' to ' + num(value.max) : '(not set)';
+      return value && typeof value === 'object' ? num(value.min) + ' to ' + num(value.max) : t('admin.not_set');
     }
-    if (value === null || value === undefined) return '(not set)';
+    if (value === null || value === undefined) return t('admin.not_set');
     if (typeof value === 'number') {
       var span = spanOf(entry, value);
       if (span) return num(value) + span;
@@ -3464,13 +3569,13 @@
       var a = { type: 'button', 'data-act': 'st-switch', 'data-key': key, role: 'switch',
                 'aria-checked': on ? 'true' : 'false', 'aria-label': entry.label, 'data-confirm': 'yes' };
       if (!open || busy) { a.disabled = true; a.title = whyNoWrite() || null; }
-      return h('button.switch' + (on ? '.is-on' : ''), a, h('span.knob'), h('span.lbl', on ? 'On' : 'Off'),
-        h('span.cfm', 'Click again: turn ' + (on ? 'Off' : 'On')));
+      return h('button.switch' + (on ? '.is-on' : ''), a, h('span.knob'), h('span.lbl', on ? t('admin.on') : t('admin.off')),
+        h('span.cfm', t('admin.click_again_turn') + (on ? t('admin.off') : t('admin.on'))));
     }
     if (entry.kind === 'choice') {
       return segmented('st-choice', asList(entry.choices).map(function (c) {
         return { value: c, label: String(c), disabled: !open, title: whyNoWrite(),
-                 confirm: 'Click again: ' + String(c) };
+                 confirm: t('admin.click_again') + String(c) };
       }), entry.value, { 'data-key': key });
     }
     if (entry.kind === 'list') {
@@ -3481,15 +3586,15 @@
           return h('li.st-chip', h('span', name),
             h('button.st-chip-x', { type: 'button', 'data-act': 'st-list-del', 'data-key': key, 'data-value': name,
               disabled: !open, title: 'Remove ' + name, 'aria-label': 'Remove ' + name }, icon('xmark'),
-              h('span.lbl', 'Remove')));
+              h('span.lbl', t('admin.remove'))));
         }) : h('li.st-none', '(none)')),
         h('div.st-edit',
-          field('stl.' + key, { class: 'is-grow', placeholder: entry.whole ? 'Add a line' : 'Add a name',
+          field('stl.' + key, { class: 'is-grow', placeholder: entry.whole ? t('admin.add_a_line') : t('admin.add_a_name'),
             'data-enter': 'st-list-add',
-            'data-key': key, disabled: !open, 'aria-label': 'Add to ' + entry.label }),
-          btn('.is-small', 'st-list-add', { 'data-key': key, disabled: !open || null }, 'Add', 'plus'),
+            'data-key': key, disabled: !open, 'aria-label': t('admin.add_to') + entry.label }),
+          btn('.is-small', 'st-list-add', { 'data-key': key, disabled: !open || null }, t('admin.add'), 'plus'),
           writeBtn('.is-small' + (changed ? '.primary' : ''), 'st-list-save',
-            { 'data-key': key, id: 'st-save-' + key }, 'Save list', 'Click again to save', 'check', false, open)));
+            { 'data-key': key, id: 'st-save-' + key }, t('admin.save_list'), t('admin.click_again_to_save'), 'check', false, open)));
     }
     if (entry.kind === 'range') {
       var pair = entry.value && typeof entry.value === 'object' ? entry.value : {};
@@ -3499,8 +3604,8 @@
         h('span.range-sep', 'to'),
         field('st.' + key + '.max', { value: String(typedOr('st.' + key + '.max', pair.max)), class: 'is-short',
           inputmode: 'decimal', disabled: !open, 'aria-label': entry.label + ': to' }),
-        writeBtn('.is-small', 'st-range-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
-          'Click again to save', 'check', false, open),
+        writeBtn('.is-small', 'st-range-save', { 'data-key': key, id: 'st-save-' + key }, t('admin.save'),
+          t('admin.click_again_to_save'), 'check', false, open),
         h('span.st-range', num(entry.min) + ' to ' + num(entry.max) + (entry.integer ? ', whole' : '')));
     }
     var bind = 'st.' + key;
@@ -3513,8 +3618,8 @@
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
         disabled: !open, 'aria-label': entry.label }),
       entry.kind === 'number' && trim(unitOf(entry)) ? h('span.st-unit', trim(unitOf(entry))) : null,
-      writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, 'Save',
-        'Click again to save', 'check', false, open),
+      writeBtn('.is-small', 'st-save', { 'data-key': key, id: 'st-save-' + key }, t('admin.save'),
+        t('admin.click_again_to_save'), 'check', false, open),
       h('span.st-range', range));
   }
 
@@ -3534,7 +3639,7 @@
     if (entry.stricter && typeof value === 'number') {
       var now = Number(entry.value);
       if ((entry.stricter === 'up' && value > now) || (entry.stricter === 'down' && value < now)) {
-        return String(entry.strict || 'Stricter: players are refused sooner.').replace(/%s/g, num(value));
+        return String(entry.strict || t('admin.stricter_players_are_refused_sooner')).replace(/%s/g, num(value));
       }
     }
     return null;
@@ -3549,7 +3654,10 @@
     if (entry.category === 'rules-timers' || /(Seconds|Minutes|Hours|Days|Ms)$/.test(String(entry.key))) return 'timer';
     return 'limit';
   }
-  var TYPE_LABEL = { switch: 'Switch', timer: 'Timer', money: 'Money', limit: 'Limit', list: 'List' };
+  var TYPE_LABEL;
+  Text.later(function () {
+    TYPE_LABEL = { switch: t('admin.switch'), timer: t('admin.timer'), money: t('admin.money'), limit: t('admin.limit'), list: t('admin.list') };
+  });
 
   /* A setting's row, compact: its label (with its unit), its control and
      Save or Reset, and the chips that matter. Details shows the key, what
@@ -3570,36 +3678,36 @@
           unit && entry.kind === 'number' && String(entry.label || '').indexOf('(') === -1
             ? h('span.st-unit-label', ' (' + unit + ')') : null,
           h('span.chip.st-type.is-' + typeOf(entry), TYPE_LABEL[typeOf(entry)]),
-          overridden ? h('span.chip.is-panel', 'changed from the panel') : null,
-          entry.live === false ? h('span.chip.is-warn.is-restart', 'applies after restart') : null,
-          entry.ignored ? h('span.chip.is-error', 'not applied') : null,
-          entry.inactive ? h('span.chip.is-warn', 'does not apply now') : null,
-          entry.denied ? h('span.chip', 'edit in config.lua') : null),
+          overridden ? h('span.chip.is-panel', t('admin.changed_from_the_panel_2')) : null,
+          entry.live === false ? h('span.chip.is-warn.is-restart', t('admin.applies_after_restart')) : null,
+          entry.ignored ? h('span.chip.is-error', t('admin.not_applied_2')) : null,
+          entry.inactive ? h('span.chip.is-warn', t('admin.does_not_apply_now')) : null,
+          entry.denied ? h('span.chip', t('admin.edit_in_config_lua')) : null),
         // A key whose switch is off (the catalogue's `needs`): said beside
         // it, so a staff member is not left changing something that does
         // nothing.
         entry.inactive ? h('p.st-about.is-warn', String(entry.inactive)) : null,
         entry.readonly ? h('p.st-about.is-warn', String(entry.readonly)) : null,
         entry.destroys && !entry.readonly
-          ? h('p.st-about.is-warn', 'Lowering it deletes for good, so saving a lower value takes two clicks.') : null,
+          ? h('p.st-about.is-warn', t('admin.lowering_it_deletes_for_good_so')) : null,
         entry.stricter && !entry.readonly
-          ? h('p.st-about.is-warn', 'Making it stricter refuses players at once, so it takes two clicks.') : null,
-        entry.ignored ? h('p.st-about.is-error', 'The store holds a value that was not applied at start: '
-          + String(entry.ignored) + '. config.lua\'s is in force; reset it to clear this.') : null,
-        entry.unknown ? h('p.st-about.is-error', 'A change to it raised in the store, and so did reading it '
-          + 'back (' + String(entry.unknown) + '): the store may or may not hold it. What is shown is in '
-          + 'force; set or reset it again to settle it.') : null,
+          ? h('p.st-about.is-warn', t('admin.making_it_stricter_refuses_players_at')) : null,
+        entry.ignored ? h('p.st-about.is-error', t('admin.the_store_holds_a_value_that')
+          + String(entry.ignored) + t('admin.config_luas_is_in_force_reset')) : null,
+        entry.unknown ? h('p.st-about.is-error', t('admin.a_change_to_it_raised_in')
+          + t('admin.back') + String(entry.unknown) + t('admin.the_store_may_or_may_not')
+          + t('admin.force_set_or_reset_it_again')) : null,
         h('button.link.st-more', { type: 'button', 'data-act': 'st-details', 'data-key': key,
-          'aria-expanded': open ? 'true' : 'false' }, open ? 'Details ▾' : 'Details ▸'),
+          'aria-expanded': open ? 'true' : 'false' }, open ? t('admin.details') : t('admin.details_2')),
         h('div.st-details', { hidden: !open },
-          h('code.st-key', entry.secret ? 'server.cfg' : 'Config.' + key),
+          h('code.st-key', entry.secret ? 'server.cfg' : t('admin.config') + key),
           entry.about ? h('p.st-about', String(entry.about)) : null,
-          entry.inflight ? h('p.st-inflight', h('b', 'Under way: '), String(entry.inflight)) : null,
+          entry.inflight ? h('p.st-inflight', h('b', t('admin.under_way')), String(entry.inflight)) : null,
           entry.readonly ? null : h('p.st-source', 'Now: ' + describe(entry, entry.value)
-            + ' · config.lua: ' + describe(entry, entry.default)
-            + (hasShipped ? ' · default: ' + describe(entry, entry.shipped) : '')
-            + (overridden ? ' · in force from the panel' + (entry.by ? ', set by ' + entry.by : '')
-              + (entry.at ? ' ' + ago(entry.at) : '') : ' · in force from config.lua'))),
+            + t('admin.config_lua') + describe(entry, entry.default)
+            + (hasShipped ? t('admin.default') + describe(entry, entry.shipped) : '')
+            + (overridden ? t('admin.in_force_from_the_panel') + (entry.by ? t('admin.set_by') + entry.by : '')
+              + (entry.at ? ' ' + ago(entry.at) : '') : t('admin.in_force_from_config_lua')))),
         answerBox(answer),
         key === 'Completion.KillPhotos' ? keptPhotosPart(entry) : null),
       // A read-only key too, when the store holds a value for it that was
@@ -3607,10 +3715,10 @@
       // reset takes that row away, and nothing in force moves.
       h('div.st-control', settingControl(entry),
         entry.ignored || entry.unknown || (overridden && !entry.readonly)
-          ? writeBtn('.is-small.ghost', 'st-reset', { 'data-key': key }, 'Reset to config.lua',
-            'Click again to reset', 'arrow-rotate-left', false, settingOpen(entry)) : null,
-        offDefault ? writeBtn('.is-small.ghost', 'st-default', { 'data-key': key }, 'Reset to default',
-          'Click again: back to ' + describe(entry, entry.shipped), 'rotate-left', false,
+          ? writeBtn('.is-small.ghost', 'st-reset', { 'data-key': key }, t('admin.reset_to_config_lua'),
+            t('admin.click_again_to_reset'), 'arrow-rotate-left', false, settingOpen(entry)) : null,
+        offDefault ? writeBtn('.is-small.ghost', 'st-default', { 'data-key': key }, t('admin.reset_to_default'),
+          t('admin.click_again_back_to') + describe(entry, entry.shipped), 'rotate-left', false,
           settingOpen(entry)) : null));
   }
 
@@ -3622,26 +3730,26 @@
     var answer = S.settings.photos;
     var n = kept ? Number(kept.count) || 0 : 0;
     if (entry.value === true || n < 1) return answer ? answerBox(answer) : null;
-    var photos = n === 1 ? 'kill photo' : 'kill photos';
+    var photos = n === 1 ? t('admin.kill_photo') : t('admin.kill_photos_2');
     var files = Number(kept.files) || 0, links = Number(kept.links) || 0;
     var open = Math.max(Number(kept.open) || 0, Number(kept.waiting) || 0);
     var facts = [];
-    if (files) facts.push(num(files) + ' with a file on this server: the file is deleted.');
+    if (files) facts.push(num(files) + t('admin.with_a_file_on_this_server'));
     if (links) {
-      facts.push(num(links) + ' on lb-phone\'s image host: removing only forgets the link here, and the picture '
-        + 'stays on the host.');
+      facts.push(num(links) + t('admin.on_lb_phones_image_host_removing')
+        + t('admin.stays_on_the_host'));
     }
     if (open) {
-      facts.push(num(open) + ' open on a phone right now: each is removed when that view closes, never while it '
-        + 'is shown.');
+      facts.push(num(open) + t('admin.open_on_a_phone_right_now')
+        + t('admin.is_shown'));
     }
     return h('div.st-kept',
-      h('p.st-about', num(n) + ' ' + photos + ' kept from before kill photos were turned off (records, whatever '
-        + 'became of each photo). Removing deletes every one, and is on the record.'),
+      h('p.st-about', num(n) + ' ' + photos + t('admin.kept_from_before_kill_photos_were')
+        + t('admin.became_of_each_photo_removing_deletes')),
       facts.length ? h('ul.st-kept-facts', facts.map(function (text) { return h('li', text); })) : null,
       h('div.btn-row', writeBtn('.danger.is-small', 'st-remove-photos', {},
-        'Remove the ' + num(n) + ' ' + photos + ' kept from before',
-        'Click again: remove ' + num(n) + ' ' + photos + ' for good', 'trash-can', true)),
+        t('admin.remove_the') + num(n) + ' ' + photos + t('admin.kept_from_before'),
+        t('admin.click_again_remove') + num(n) + ' ' + photos + t('admin.for_good_2'), 'trash-can', true)),
       answerBox(answer));
   }
 
@@ -3663,39 +3771,48 @@
   }
 
   /** What each settings view says at its head. */
-  var VIEW_INTRO = {
-    timers: 'How long things last: deadlines, cooldowns, waits and the restart pause. The deadline runs only '
-      + 'while the placer, the target and one operative are all in the city.',
-    money: 'Every reward and money setting in one place: what a reward may hold, payouts, buyouts, the '
-      + 'informant prices, the anonymity fees and escrow. Lowering a cap never cancels anything: it only '
-      + 'refuses new ones over it.',
-    limits: 'How many contracts a player may place, take or carry, how one is completed and the other '
-      + 'limits. Each value is checked the way the server checks config.lua at start.',
-    targeting: 'Who may open the app, who can be targeted, and the whitelisted-job rules.',
-    tldefaults: 'How often one person may have a contract placed on them: the waits and caps every target has, '
-      + 'unless their job (Per job) or staff (Per player) give them their own. 0 is off where it says so.',
-    features: 'The on and off switches. Every switch takes effect at once and is kept across restarts. What is '
-      + 'already under way finishes under the rules it started with; only new actions are refused, and players '
-      + 'are told the feature is turned off by the server.',
-    devsettings: 'Debug, storage, rate limits, timings and the values only config.lua changes. Rate limits are '
-      + 'not caps: a stricter one refuses players at once, so it takes two clicks and says what it refuses.'
+  var VIEW_INTRO;
+  Text.later(function () {
+    VIEW_INTRO = {
+    timers: t('admin.how_long_things_last_deadlines_cooldowns')
+      + t('admin.while_the_placer_the_target_and'),
+    money: t('admin.every_reward_and_money_setting_in')
+      + t('admin.informant_prices_the_anonymity_fees_and')
+      + t('admin.refuses_new_ones_over_it'),
+    limits: t('admin.how_many_contracts_a_player_may')
+      + t('admin.limits_each_value_is_checked_the'),
+    targeting: t('admin.who_may_open_the_app_who'),
+    tldefaults: t('admin.how_often_one_person_may_have_2')
+      + t('admin.unless_their_job_per_job_or'),
+    features: t('admin.the_on_and_off_switches_every')
+      + t('admin.already_under_way_finishes_under_the')
+      + t('admin.are_told_the_feature_is_turned'),
+    devsettings: t('admin.debug_storage_rate_limits_timings_and')
+      + t('admin.not_caps_a_stricter_one_refuses')
   };
+  });
 
   /** Rewards & money, in these groups (the catalogue's `money`). */
-  var MONEY_ORDER = ['Rewards', 'Payouts', 'Buyouts', 'Intel prices', 'Anonymity fees', 'Escrow'];
+  var MONEY_ORDER;
+  Text.later(function () {
+    MONEY_ORDER = [t('admin.rewards'), t('admin.payouts'), t('admin.buyouts'), t('admin.intel_prices'), t('admin.anonymity_fees'), t('admin.escrow')];
+  });
   /** Features, in the README's and config.lua's order: the core switches
       first (in the catalogue's order), then Anonymity, Intel (its other
       groups after these four), the Advisory, Staff tools, Roleplay and
       Improvements. */
-  var FEATURE_AREAS = [
-    ['Anonymity', 'Anonymity (whitelisted-job targets)'],
-    ['Intel: Informants', 'Intel: Informant tip', 'Intel: Every other target', 'Intel: Whitelisted-job targets'],
+  var FEATURE_AREAS;
+  Text.later(function () {
+    FEATURE_AREAS = [
+    [t('admin.anonymity'), t('admin.anonymity_whitelisted_job_targets')],
+    ['Intel: Informants', t('admin.intel_informant_tip'), t('admin.intel_every_other_target'), t('admin.intel_whitelisted_job_targets')],
     // A character's record (server/record/), one screen group.
-    ['Record: Progression', 'Record: Reputation', 'Record: Tiered board', 'Record: Hitman heat',
-      'Record: Placer record'],
-    ['Law enforcement advisory'],
-    ['Staff tools']
+    ['Record: Progression', 'Record: Reputation', t('admin.record_tiered_board'), t('admin.record_hitman_heat'),
+      t('admin.record_placer_record')],
+    [t('admin.law_enforcement_advisory')],
+    [t('admin.staff_tools')]
   ];
+  });
   /** Where a Features group sorts: 0 for the core, then by area; a group's
       place inside its area as a fraction. */
   function featureRank(group) {
@@ -3712,57 +3829,60 @@
   }
   /** For the tests. */
   window.CH_ADMIN_FEATURE_RANK = featureRank;
-  var GROUP_INTRO = {
-    'Anonymity': 'Whether a contract may be placed or accepted anonymously, and whether a target sees an '
-      + 'operative\'s name.',
-    'Anonymity (whitelisted-job targets)': 'The same, for the other target class: where the target is on a whitelisted job.',
-    'Intel: Informants': 'The paid look-ups: the target\'s (who is after me) and the placer\'s (who took it), and their '
-      + 'master switch.',
-    'Intel: Informant tip': 'The hitman\'s paid tip on the target\'s rough area, and whether the target is told.',
-    'Intel: Every other target': 'Whether each informant feature is offered on a target not on a whitelisted job.',
-    'Intel: Whitelisted-job targets': 'Whether each informant feature is offered on a whitelisted-job target.',
-    'Law enforcement advisory': 'What officers are told when one of them, or another whitelisted-job member, is '
-      + 'targeted, and when.',
-    'Access': 'Who may open the app: barred jobs off duty, and the whitelisted-job view.',
-    'The app': 'Where the app appears on the phone.',
-    'Rewards': 'What a reward may be paid in.',
-    'Completion': 'How a kill is checked and kept.',
-    'Handovers': 'What a live handover asks of the target.',
-    'Stakes': 'The stake a hitman is shown before accepting.',
-    'Buyouts': 'Whether a target may buy a contract out.',
-    'Targeting': 'How a placer finds a target, and headshots on the board.',
-    'Messages and calls': 'The anonymous messages and calls between the parties.',
-    'Proposals': 'Changes placer and hitman may agree to a contract.',
-    'Notifications': 'Phone notices players get.',
-    'The clock': 'When a contract\'s deadline stops.',
-    'Anti-collusion': 'One account as two parties to a contract.',
-    'Record: Progression': 'Criminal trust for completed contracts.',
-    'Audit and debug': 'What the log keeps, and alerts to Discord.',
-    'Staff tools': 'Pausing the whole app for an event, and the daily summary to the staff Discord.',
-    'Staff alerts': 'When one player or one target goes past a threshold, one staff alert, and on Discord too.',
-    'Contract limits': 'How long contracts run and how many a player may place, take or carry.',
-    'Target limits': 'The waits and caps on one person being targeted, by default. A job or a player may have their own.',
-    'Server restart': 'How contracts pause before a txAdmin restart, and how long that pause may last.',
-    'Ledger': 'What a player\'s Ledger keeps, and for how long.',
-    'Immunity': 'Who cannot be a target yet: new characters and players just online.',
-    'Payouts': 'How many times a contract pays, and how owed payouts are retried.',
-    'Intel prices': 'What each informant look-up and tip costs, and which account pays.',
-    'Anonymity fees': 'What staying anonymous costs the placer and the hitman.',
-    'Escrow': 'What a reward may never hold, and the stake a hitman may be asked for.',
-    'Buyout pricing': 'What a target pays to buy a contract out.',
-    'Staff': 'Limits on what staff may do from this panel.',
-    'Contract reasons': 'What a placer must give as a reason, and what is refused.',
-    'Advisory job lists': 'Which jobs raise a police advisory, and which jobs are told.',
-    'Barred jobs': 'Jobs that may not use the app.',
-    'Storage': 'Where contracts and money are kept. Read only: changed in config.lua.',
-    'Diagnostics': 'What the console says about slow jobs.',
-    'Rate limits': 'How often each player may send each request.',
-    'Staff commands': 'The names of the staff commands.',
-    'Other scripts': 'Which of your other scripts each kind of feature uses (inventory, dispatch, phone and the rest), or none.',
-    'Edit in config.lua': 'Settings this panel never changes: edit config.lua and restart.',
-    'Kept in the store, not on this list': 'Panel changes for keys this version does not have; Reset all clears them.',
-    'Other': 'Settings not in any group above.'
+  var GROUP_INTRO;
+  Text.later(function () {
+    GROUP_INTRO = {
+    'Anonymity': t('admin.whether_a_contract_may_be_placed')
+      + t('admin.operatives_name'),
+    'Anonymity (whitelisted-job targets)': t('admin.the_same_for_the_other_target'),
+    'Intel: Informants': t('admin.the_paid_look_ups_the_targets')
+      + t('admin.master_switch'),
+    'Intel: Informant tip': t('admin.the_hitmans_paid_tip_on_the'),
+    'Intel: Every other target': t('admin.whether_each_informant_feature_is_offered'),
+    'Intel: Whitelisted-job targets': t('admin.whether_each_informant_feature_is_offered_2'),
+    'Law enforcement advisory': t('admin.what_officers_are_told_when_one')
+      + t('admin.targeted_and_when'),
+    'Access': t('admin.who_may_open_the_app_barred'),
+    'The app': t('admin.where_the_app_appears_on_the'),
+    'Rewards': t('admin.what_a_reward_may_be_paid'),
+    'Completion': t('admin.how_a_kill_is_checked_and'),
+    'Handovers': t('admin.what_a_live_handover_asks_of'),
+    'Stakes': t('admin.the_stake_a_hitman_is_shown'),
+    'Buyouts': t('admin.whether_a_target_may_buy_a'),
+    'Targeting': t('admin.how_a_placer_finds_a_target'),
+    'Messages and calls': t('admin.the_anonymous_messages_and_calls_between'),
+    'Proposals': t('admin.changes_placer_and_hitman_may_agree'),
+    'Notifications': t('admin.phone_notices_players_get'),
+    'The clock': t('admin.when_a_contracts_deadline_stops'),
+    'Anti-collusion': t('admin.one_account_as_two_parties_to'),
+    'Record: Progression': t('admin.criminal_trust_for_completed_contracts'),
+    'Audit and debug': t('admin.what_the_log_keeps_and_alerts'),
+    'Staff tools': t('admin.pausing_the_whole_app_for_an'),
+    'Staff alerts': t('admin.when_one_player_or_one_target'),
+    'Contract limits': t('admin.how_long_contracts_run_and_how'),
+    'Target limits': t('admin.the_waits_and_caps_on_one'),
+    'Server restart': t('admin.how_contracts_pause_before_a_txadmin'),
+    'Ledger': t('admin.what_a_players_ledger_keeps_and'),
+    'Immunity': t('admin.who_cannot_be_a_target_yet'),
+    'Payouts': t('admin.how_many_times_a_contract_pays'),
+    'Intel prices': t('admin.what_each_informant_look_up_and'),
+    'Anonymity fees': t('admin.what_staying_anonymous_costs_the_placer'),
+    'Escrow': t('admin.what_a_reward_may_never_hold'),
+    'Buyout pricing': t('admin.what_a_target_pays_to_buy'),
+    'Staff': t('admin.limits_on_what_staff_may_do'),
+    'Contract reasons': t('admin.what_a_placer_must_give_as'),
+    'Advisory job lists': t('admin.which_jobs_raise_a_police_advisory'),
+    'Barred jobs': t('admin.jobs_that_may_not_use_the'),
+    'Storage': t('admin.where_contracts_and_money_are_kept'),
+    'Diagnostics': t('admin.what_the_console_says_about_slow'),
+    'Rate limits': t('admin.how_often_each_player_may_send'),
+    'Staff commands': t('admin.the_names_of_the_staff_commands'),
+    'Other scripts': t('admin.which_of_your_other_scripts_each'),
+    'Edit in config.lua': t('admin.settings_this_panel_never_changes_edit'),
+    'Kept in the store, not on this list': t('admin.panel_changes_for_keys_this_version'),
+    'Other': t('admin.settings_not_in_any_group_above')
   };
+  });
 
   /* ---- Game rules: by feature area, not by type ----
 
@@ -3775,27 +3895,35 @@
      own settings are in their sections, and the lists of places in
      Locations. */
 
-  var AREAS = [
-    { id: 'access', label: 'Who can use the app', icon: 'door-open' },
-    { id: 'placing', label: 'Placing contracts', icon: 'file-signature' },
-    { id: 'anonymity', label: 'Anonymity', icon: 'mask' },
-    { id: 'rewards', label: 'Rewards & payouts', icon: 'sack-dollar' },
-    { id: 'completing', label: 'Completing a contract', icon: 'flag-checkered' },
-    { id: 'buyouts', label: 'Buyouts', icon: 'hand-holding-dollar' },
+  var AREAS;
+  Text.later(function () {
+    AREAS = [
+    { id: 'access', label: t('admin.who_can_use_the_app'), icon: 'door-open' },
+    { id: 'placing', label: t('admin.placing_contracts'), icon: 'file-signature' },
+    { id: 'anonymity', label: t('admin.anonymity'), icon: 'mask' },
+    { id: 'rewards', label: t('admin.rewards_payouts'), icon: 'sack-dollar' },
+    { id: 'completing', label: t('admin.completing_a_contract'), icon: 'flag-checkered' },
+    { id: 'buyouts', label: t('admin.buyouts'), icon: 'hand-holding-dollar' },
     { id: 'intel', label: 'Intel', icon: 'user-secret' },
-    { id: 'record', label: 'Record & standing', icon: 'star' },
-    { id: 'police', label: 'Police & city news', icon: 'shield-halved' },
-    { id: 'messages', label: 'Phone messages & notifications', icon: 'comment' },
-    { id: 'extras', label: 'Roleplay extras', icon: 'masks-theater' },
-    { id: 'staff', label: 'Staff tools & alerts', icon: 'user-shield' },
-    { id: 'other', label: 'Other', icon: 'ellipsis' }
+    { id: 'record', label: t('admin.record_standing'), icon: 'star' },
+    { id: 'police', label: t('admin.police_city_news'), icon: 'shield-halved' },
+    { id: 'messages', label: t('admin.phone_messages_notifications'), icon: 'comment' },
+    { id: 'extras', label: t('admin.roleplay_extras'), icon: 'masks-theater' },
+    { id: 'staff', label: t('admin.staff_tools_alerts'), icon: 'user-shield' },
+    { id: 'other', label: t('admin.other'), icon: 'ellipsis' }
   ];
-  var AREA_ELSEWHERE = { targets: 'Target limits', organisation: 'Hitman organisation', engine: 'Developer' };
+  });
+  var AREA_ELSEWHERE;
+  Text.later(function () {
+    AREA_ELSEWHERE = { targets: t('admin.target_limits'), organisation: t('admin.hitman_organisation'), engine: t('admin.developer') };
+  });
   function areaLabel(id) {
     for (var i = 0; i < AREAS.length; i++) if (AREAS[i].id === id) return AREAS[i].label;
-    return AREA_ELSEWHERE[id] || String(id || 'Other');
+    return AREA_ELSEWHERE[id] || String(id || t('admin.other'));
   }
-  window.CH_ADMIN_AREAS = AREAS;
+  Text.later(function () {
+    window.CH_ADMIN_AREAS = AREAS;
+  });
   /** An entry's area: the server's, else Other. */
   function areaOf(entry) {
     var a = entry && entry.area ? String(entry.area) : 'other';
@@ -3815,9 +3943,12 @@
   }
   function inRules(entry) { return viewOfSetting(entry) === 'rules'; }
 
-  var TYPE_FILTERS = [{ value: '', label: 'All' }, { value: 'switch', label: 'Switches' },
-    { value: 'timer', label: 'Timers' }, { value: 'money', label: 'Money' }, { value: 'limit', label: 'Limits' },
-    { value: 'list', label: 'Lists' }, { value: 'changed', label: 'Changed' }];
+  var TYPE_FILTERS;
+  Text.later(function () {
+    TYPE_FILTERS = [{ value: '', label: t('admin.all') }, { value: 'switch', label: t('admin.switches') },
+    { value: 'timer', label: t('admin.timers') }, { value: 'money', label: t('admin.money') }, { value: 'limit', label: t('admin.limits') },
+    { value: 'list', label: t('admin.lists') }, { value: 'changed', label: t('admin.changed') }];
+  });
   /** Search shows at most this many rows, rather than drawing everything. */
   var SEARCH_ROWS = 50;
 
@@ -3828,7 +3959,8 @@
   }
   function textHit(entry, q) {
     if (!q) return true;
-    return [entry.key, entry.label, entry.about, entry.group, entry.money, areaLabel(areaOf(entry))]
+    return [entry.key, entry.label, entry.about, entry.group, entry.groupLabel, entry.money, entry.moneyLabel,
+      areaLabel(areaOf(entry))]
       .map(function (v) { return v == null ? '' : String(v); }).join(' ').toLowerCase().indexOf(q) !== -1;
   }
 
@@ -3837,25 +3969,25 @@
     var overrides = d ? Number(d.overrides) || 0 : 0;
     var view = S.section;
     var undoAll = overrides > 0 || (d && Number(d.stored) > 0) ? writeBtn('.danger.is-small', 'st-reset-all', {},
-      'Undo all panel changes', 'Click again: back to config.lua', 'arrow-rotate-left') : null;
+      t('admin.undo_all_panel_changes'), t('admin.click_again_back_to_config_lua'), 'arrow-rotate-left') : null;
     if (view === 'changed') {
-      return frag(h('span.sub', num(overrides) + ' changed from the panel'
-        + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + ' kept and not applied' : '')),
+      return frag(h('span.sub', num(overrides) + t('admin.changed_from_the_panel_3')
+        + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + t('admin.kept_and_not_applied') : '')),
         // Whenever the store holds a row, applied or not: one not applied (a
         // key from another version among them) is cleared by it too.
         undoAll);
     }
     return frag(
       h('label.search', icon('magnifying-glass'),
-        field('st.q', { id: 'st-q', placeholder: view === 'rules' ? 'Filter by name, key or description'
-          : 'Search by name, key, description or group', 'data-live': 'st-filter', 'aria-label': 'Filter the settings' })),
+        field('st.q', { id: 'st-q', placeholder: view === 'rules' ? t('admin.filter_by_name_key_or_description')
+          : t('admin.search_by_name_key_description_or'), 'data-live': 'st-filter', 'aria-label': t('admin.filter_the_settings') })),
       view === 'rules' ? h('div.seg.gr-types', { role: 'group' }, TYPE_FILTERS.map(function (o) {
         var on = o.value === S.rules.type;
         return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'gr-type',
           'data-value': o.value, 'aria-pressed': on ? 'true' : 'false' }, o.label);
       })) : null,
-      h('span.sub', num(overrides) + ' changed from the panel'
-        + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + ' kept and not applied' : '')),
+      h('span.sub', num(overrides) + t('admin.changed_from_the_panel_3')
+        + (d && Number(d.notApplied) > 0 ? ', ' + num(d.notApplied) + t('admin.kept_and_not_applied') : '')),
       view === 'rules' ? null : undoAll);
   }
 
@@ -3865,26 +3997,26 @@
     var burst = settingEntry('Cooldowns.' + bucket + '.burst');
     if (!per || !burst) return frag();
     var open = settingOpen(per) && settingOpen(burst);
-    var answer = S.settings.answers['Cooldowns.' + bucket];
+    var answer = S.settings.answers[t('admin.cooldowns') + bucket];
     return frag(
       h('div.st-main',
         h('p.st-title', h('b', bucket),
-          per.source === 'panel' || burst.source === 'panel' ? h('span.chip.is-panel', 'changed from the panel') : null),
+          per.source === 'panel' || burst.source === 'panel' ? h('span.chip.is-panel', t('admin.changed_from_the_panel_2')) : null),
         h('code.st-key', 'Config.Cooldowns.' + bucket + ' = { per, burst }'),
         per.about ? h('p.st-about', String(per.about).replace(/ A full allowance refills.*$/, '')) : null,
-        h('p.st-about.is-warn', 'Making it stricter refuses players at once, so saving takes two clicks.'),
-        h('p.st-source', 'Now: refills over ' + num(per.value) + ' s, ' + num(burst.value) + ' held · config.lua: '
+        h('p.st-about.is-warn', t('admin.making_it_stricter_refuses_players_at_2')),
+        h('p.st-source', t('admin.now_refills_over') + num(per.value) + ' s, ' + num(burst.value) + t('admin.held_config_lua')
           + num(per.default) + ' s, ' + num(burst.default)),
         answerBox(answer)),
       h('div.st-control', h('div.st-edit',
-        h('label.st-pair', h('span', 'per (s)'),
+        h('label.st-pair', h('span', t('admin.per')),
           field('st.Cooldowns.' + bucket + '.per', { value: String(typedOr('st.Cooldowns.' + bucket + '.per', per.value)),
-            class: 'is-short', inputmode: 'decimal', disabled: !open, 'aria-label': bucket + ': refill window' })),
+            class: 'is-short', inputmode: 'decimal', disabled: !open, 'aria-label': bucket + t('admin.refill_window') })),
         h('label.st-pair', h('span', 'burst'),
           field('st.Cooldowns.' + bucket + '.burst', { value: String(typedOr('st.Cooldowns.' + bucket + '.burst', burst.value)),
-            class: 'is-short', inputmode: 'numeric', disabled: !open, 'aria-label': bucket + ': requests held' })),
-        writeBtn('.is-small', 'st-map-save', { 'data-bucket': bucket, id: 'st-save-Cooldowns.' + bucket }, 'Save',
-          'Click again to save', 'check', false, open))));
+            class: 'is-short', inputmode: 'numeric', disabled: !open, 'aria-label': bucket + t('admin.requests_held') })),
+        writeBtn('.is-small', 'st-map-save', { 'data-bucket': bucket, id: 'st-save-Cooldowns.' + bucket }, t('admin.save'),
+          t('admin.click_again_to_save'), 'check', false, open))));
   }
 
   /** The buckets whose two rows are both editable here. */
@@ -3925,7 +4057,7 @@
   function grouped(list, view) {
     var groups = [], byGroup = {};
     list.forEach(function (entry) {
-      var g = String(entry.group || 'Other');
+      var g = String(entry.group || t('admin.other'));
       if (!byGroup[g]) { byGroup[g] = []; groups.push(g); }
       byGroup[g].push(entry);
     });
@@ -3949,7 +4081,7 @@
   }
 
   function groupSection(g, rows) {
-    return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', g),
+    return h('section.st-group', { 'data-group': g.toLowerCase() }, h('h3.st-group-title', (rows[0] && rows[0].groupLabel) || g),
       GROUP_INTRO[g] ? h('p.st-group-about', GROUP_INTRO[g]) : null,
       rows.map(settingRow));
   }
@@ -3964,9 +4096,9 @@
     });
     var total = 0;
     Object.keys(counts).forEach(function (a) { total += counts[a]; });
-    return h('nav.gr-areas', { 'aria-label': 'Areas' },
+    return h('nav.gr-areas', { 'aria-label': t('admin.areas') },
       h('button.gr-area' + (!S.rules.area ? '.is-on' : ''), { type: 'button', 'data-act': 'gr-area', 'data-value': '' },
-        icon('layer-group'), h('span.lbl', 'All areas'), h('span.gr-n', num(total))),
+        icon('layer-group'), h('span.lbl', t('admin.all_areas')), h('span.gr-n', num(total))),
       AREAS.filter(function (a) { return counts[a.id] || (!S.rules.type && a.id !== 'other'); }).map(function (a) {
         return h('button.gr-area' + (S.rules.area === a.id ? '.is-on' : ''), { type: 'button', 'data-act': 'gr-area',
           'data-value': a.id }, icon(a.icon), h('span.lbl', a.label), h('span.gr-n', num(counts[a.id] || 0)),
@@ -3992,55 +4124,55 @@
         var switches = mine.filter(function (e) { return e.kind === 'switch'; }).length;
         return h('button.card.gr-card', { type: 'button', 'data-act': 'gr-area', 'data-value': a.id },
           h('span.gr-card-title', icon(a.icon), ' ', a.label),
-          h('span.sub', num(mine.length) + ' settings · ' + num(switches) + ' switch' + (switches === 1 ? '' : 'es')));
+          h('span.sub', num(mine.length) + t('admin.settings') + num(switches) + ' switch' + (switches === 1 ? '' : 'es')));
       }));
     } else if (!rows.length) {
-      body = empty(q ? 'No setting matches; clear the filter.' : 'Nothing here with this filter.');
+      body = empty(q ? t('admin.no_setting_matches_clear_the_filter') : t('admin.nothing_here_with_this_filter'));
     } else {
       var shown = rows.slice(0, q ? SEARCH_ROWS : rows.length);
       var gr = grouped(shown, 'rules');
       body = frag(
-        rows.length > shown.length ? h('p.note', 'The first ' + num(shown.length) + ' of ' + num(rows.length)
-          + ' matches; type more to narrow it.') : null,
+        rows.length > shown.length ? h('p.note', t('admin.the_first') + num(shown.length) + ' of ' + num(rows.length)
+          + t('admin.matches_type_more_to_narrow_it')) : null,
         gr.groups.map(function (g) { return groupSection(g, gr.byGroup[g]); }));
     }
     var memory = S.overview && S.overview.storage === 'memory';
     return h('div.gr',
       areaNav(all),
       h('div.gr-rows',
-        h('p.hint', 'Every setting under the area of the game it is about, its switches first. Every change takes '
-          + 'effect at once and ' + (memory ? 'lasts until the resource stops: this server runs in memory mode, which '
-          + 'keeps nothing across a restart' : 'is kept across restarts') + '; what is already under way finishes '
-          + 'under the rules it started with.'),
+        h('p.hint', t('admin.every_setting_under_the_area_of')
+          + t('admin.effect_at_once_and') + (memory ? t('admin.lasts_until_the_resource_stops_this')
+          + t('admin.keeps_nothing_across_a_restart') : t('admin.is_kept_across_restarts')) + t('admin.what_is_already_under_way_finishes')
+          + t('admin.under_the_rules_it_started_with')),
         body));
   }
 
   function settingsList() {
     var d = S.settings.data;
-    if (!d) return loading('Reading the settings…');
+    if (!d) return loading(t('admin.reading_the_settings'));
     var view = S.section;
     if (view === 'rules') return rulesList();
     var q = trim(S.forms['st.q']).toLowerCase();
     var list = settingRowsFor(view).filter(function (e) { return view === 'changed' || textHit(e, q); });
     if (view === 'changed') {
-      if (!list.length) return empty('Nothing is changed from the panel: every setting is what config.lua says.');
+      if (!list.length) return empty(t('admin.nothing_is_changed_from_the_panel'));
       var gc = grouped(list, 'changed');
-      return frag(h('p.hint', 'Every setting changed from this panel, wherever it lives. Undo all panel changes '
-        + 'puts every one back to config.lua; each row\'s Reset puts back one.'),
+      return frag(h('p.hint', t('admin.every_setting_changed_from_this_panel')
+        + t('admin.puts_every_one_back_to_config')),
         gc.groups.map(function (g) { return groupSection(g, gc.byGroup[g]); }));
     }
     var buckets = view === 'devsettings' ? mapBuckets(list) : [];
     var inMap = {};
-    buckets.forEach(function (b) { inMap['Cooldowns.' + b + '.per'] = inMap['Cooldowns.' + b + '.burst'] = true; });
+    buckets.forEach(function (b) { inMap[t('admin.cooldowns') + b + '.per'] = inMap[t('admin.cooldowns') + b + '.burst'] = true; });
     var gr = grouped(list.filter(function (e) { return !inMap[e.key]; }), view);
     var intro = VIEW_INTRO[view] || '';
     var note = view === 'devsettings' && S.access.developerHint ? h('p.hint.is-note', String(S.access.developerHint)) : null;
     if (!gr.groups.length && !buckets.length) {
-      return frag(h('p.hint', intro), note, empty(q ? 'No setting matches.' : 'Nothing here.'));
+      return frag(h('p.hint', intro), note, empty(q ? t('admin.no_setting_matches') : t('admin.nothing_here')));
     }
     return frag(h('p.hint', intro), note, gr.groups.map(function (g) { return groupSection(g, gr.byGroup[g]); }),
-      buckets.length ? h('section.st-group', { 'data-group': 'rate limits' }, h('h3.st-group-title', 'Rate limits'),
-        h('p.st-group-about', 'Per player: a full allowance of burst requests refills over per seconds.'),
+      buckets.length ? h('section.st-group', { 'data-group': 'rate limits' }, h('h3.st-group-title', t('admin.rate_limits')),
+        h('p.st-group-about', t('admin.per_player_a_full_allowance_of')),
         buckets.map(function (b) {
           return h('div.st-row.st-map', { id: 'st-map-' + b, 'data-key': 'Cooldowns.' + b }, mapInner(b));
         })) : null);
@@ -4057,18 +4189,18 @@
   function parseSetting(entry, text) {
     if (entry.kind === 'number') {
       var raw = trim(text).replace(/,/g, '');
-      if (raw === '' || !/^-?\d*\.?\d+$/.test(raw)) return { error: 'Not changed: ' + entry.key + ' has to be a number.' };
+      if (raw === '' || !/^-?\d*\.?\d+$/.test(raw)) return { error: t('admin.not_changed') + entry.key + t('admin.has_to_be_a_number') };
       var n = Number(raw);
-      if (entry.integer && Math.floor(n) !== n) return { error: 'Not changed: ' + entry.key + ' has to be a whole number.' };
+      if (entry.integer && Math.floor(n) !== n) return { error: t('admin.not_changed') + entry.key + t('admin.has_to_be_a_whole_number') };
       if ((entry.min != null && n < entry.min) || (entry.max != null && n > entry.max)) {
-        return { error: 'Not changed: ' + entry.key + ' has to be from ' + entry.min + ' to ' + entry.max + '.' };
+        return { error: t('admin.not_changed') + entry.key + t('admin.has_to_be_from') + entry.min + ' to ' + entry.max + '.' };
       }
       return { value: n };
     }
     if (entry.kind === 'text') {
       var word = trim(text);
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(word)) {
-        return { error: 'Not changed: ' + entry.key + ' is letters, digits, - and _ only.' };
+        return { error: t('admin.not_changed') + entry.key + t('admin.is_letters_digits_and_only') };
       }
       return { value: word };
     }
@@ -4076,13 +4208,13 @@
       var names = trim(text).split(/[\s,]+/).filter(function (s) { return s.length > 0; });
       for (var i = 0; i < names.length; i++) {
         if (!/^[A-Za-z0-9_-]{1,32}$/.test(names[i])) {
-          return { error: 'Not changed: job names are letters, digits, - and _ only, up to 32 long.' };
+          return { error: t('admin.not_changed_job_names_are_letters') };
         }
       }
-      if (names.length > 50) return { error: 'Not changed: ' + entry.key + ' takes at most 50 names.' };
+      if (names.length > 50) return { error: t('admin.not_changed') + entry.key + t('admin.takes_at_most_50_names') };
       return { value: names };
     }
-    return { error: 'Not a setting the panel may change.' };
+    return { error: t('admin.not_a_setting_the_panel_may') };
   }
 
   function setSetting(key, value, node) {
@@ -4127,21 +4259,21 @@
   }
 
   function toolsBody() {
-    var t = S.tools;
+    var tv = S.tools;
     return frag(
       h('div.cols',
-        card('Bring timers forward', frag(
-          h('p.about', 'Test servers only: brings every wait and cooldown forward. Deadlines are only ever '
-            + 'moved later. Audited.'),
-          h('div.btn-row', writeBtn('.danger', 'tl-refresh', {}, 'Bring timers forward', 'Click again: test servers only', 'forward')),
-          t.refresh ? answerBox(t.refresh.answer) : null,
-          t.refresh ? linesBox(t.refresh.lines) : null)),
-        card('Audit log', frag(
-          h('p.about', 'Writes every queued row of the audit log to the store now, rather than at the next flush. '
-            + 'Works while recovery holds everything else back.'),
-          h('div.btn-row', writeBtn('', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush', 'floppy-disk', true)),
-          t.flush ? answerBox(t.flush) : null))),
-      h('p.hint', 'The diagnosis is under Health, and on a player\'s card in Players (Why can’t they see…).'));
+        card(t('admin.bring_timers_forward'), frag(
+          h('p.about', t('admin.test_servers_only_brings_every_wait')
+            + t('admin.moved_later_audited')),
+          h('div.btn-row', writeBtn('.danger', 'tl-refresh', {}, t('admin.bring_timers_forward'), t('admin.click_again_test_servers_only'), 'forward')),
+          tv.refresh ? answerBox(tv.refresh.answer) : null,
+          tv.refresh ? linesBox(tv.refresh.lines) : null)),
+        card(t('admin.audit_log'), frag(
+          h('p.about', t('admin.writes_every_queued_row_of_the')
+            + t('admin.works_while_recovery_holds_everything_else')),
+          h('div.btn-row', writeBtn('', 'tl-flush', {}, t('admin.flush_the_audit_log'), t('admin.click_again_to_flush'), 'floppy-disk', true)),
+          tv.flush ? answerBox(tv.flush) : null))),
+      h('p.hint', t('admin.the_diagnosis_is_under_health_and')));
   }
 
   SHELL.tools = function () { return h('section.view', h('div.stack', { id: 'tl' }, toolsBody())); };
@@ -4157,7 +4289,7 @@
 
   /** Logs' own Flush, beside the log it writes. */
   function logToolsBody() {
-    return canWrite() ? frag(writeBtn('.is-small.ghost', 'tl-flush', {}, 'Flush the audit log', 'Click again to flush',
+    return canWrite() ? frag(writeBtn('.is-small.ghost', 'tl-flush', {}, t('admin.flush_the_audit_log'), t('admin.click_again_to_flush'),
       'floppy-disk', true), S.tools.flush ? answerBox(S.tools.flush) : null) : frag();
   }
 
@@ -4171,18 +4303,21 @@
      own Lift (two clicks, by the list's handle: unfreeze, unsuspend,
      unprotect); an override is lifted in Target limits, Per player, with a
      reason for the record. The citizen id only with the identity ACE. */
-  var MEASURE_KINDS = [
-    { id: '', label: 'All' },
-    { id: 'freeze', label: 'Frozen', chip: '.is-warn.is-frozen', none: 'Nobody is frozen.', lift: 'unfreeze',
-      liftLabel: 'Unfreeze', confirm: function () { return 'Click again to unfreeze'; }, icon: 'play' },
-    { id: 'suspend', label: 'Suspended', chip: '.is-warn.is-suspended', none: 'Nobody is suspended.',
-      lift: 'unsuspend', liftLabel: 'Lift', icon: 'unlock',
-      confirm: function (row) { return 'Click again: lift for ' + String(row.name || 'them'); } },
-    { id: 'protect', label: 'Protected', chip: '.is-protected', none: 'Nobody is protected.', lift: 'unprotect',
-      liftLabel: 'Lift', icon: 'unlock',
-      confirm: function (row) { return 'Click again: lift for ' + String(row.name || 'them'); } },
-    { id: 'limit', label: 'Own target limits', chip: '', none: 'Nobody has target limits of their own.' }
+  var MEASURE_KINDS;
+  Text.later(function () {
+    MEASURE_KINDS = [
+    { id: '', label: t('admin.all') },
+    { id: 'freeze', label: t('admin.frozen'), chip: '.is-warn.is-frozen', none: t('admin.nobody_is_frozen'), lift: 'unfreeze',
+      liftLabel: t('admin.unfreeze'), confirm: function () { return t('admin.click_again_to_unfreeze'); }, icon: 'play' },
+    { id: 'suspend', label: t('admin.suspended'), chip: '.is-warn.is-suspended', none: t('admin.nobody_is_suspended'),
+      lift: 'unsuspend', liftLabel: t('admin.lift'), icon: 'unlock',
+      confirm: function (row) { return t('admin.click_again_lift_for') + String(row.name || 'them'); } },
+    { id: 'protect', label: t('admin.protected'), chip: '.is-protected', none: t('admin.nobody_is_protected'), lift: 'unprotect',
+      liftLabel: t('admin.lift'), icon: 'unlock',
+      confirm: function (row) { return t('admin.click_again_lift_for') + String(row.name || 'them'); } },
+    { id: 'limit', label: t('admin.own_target_limits'), chip: '', none: t('admin.nobody_has_target_limits_of_their') }
   ];
+  });
   function measureKind(id) { return MEASURE_KINDS.filter(function (k) { return k.id === id; })[0] || MEASURE_KINDS[0]; }
 
   function loadMeasures() {
@@ -4199,7 +4334,7 @@
   /** Every measure in force, filtered by kind, each freeze, suspension and protection with its Lift. */
   function measuresListCard() {
     var d = S.players.measures;
-    if (!d) return loading('Reading the measures in force…');
+    if (!d) return loading(t('admin.reading_the_measures_in_force'));
     if (d.error) return empty(d.error);
     var kind = measureKind(S.players.measureKind || '');
     var rows = asList(d.rows).filter(function (r) { return !kind.id || r.kind === kind.id; });
@@ -4209,36 +4344,36 @@
       segmented('ms-kind', MEASURE_KINDS.map(function (k) {
         return { value: k.id, label: k.label + (k.id ? ' (' + num(counts[k.id] || 0) + ')' : '') };
       }), kind.id),
-      card(kind.id ? kind.label + ' players' : 'Every measure in force', rows.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Player'), h('th', 'Since'), h('th', 'Until'), h('th', 'Reason'), h('th', ''))),
+      card(kind.id ? kind.label + ' players' : t('admin.every_measure_in_force'), rows.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.player')), h('th', t('admin.since')), h('th', t('admin.until')), h('th', t('admin.reason')), h('th', ''))),
         h('tbody', rows.map(function (row) {
           var k = measureKind(row.kind);
           var ref = String(row.ref || '');
           var answer = S.players.lift[row.kind + ':' + ref];
           return frag(h('tr',
-            h('td.name', String(row.name || 'No name on record'), row.cid ? h('span.cid', String(row.cid)) : null,
+            h('td.name', String(row.name || t('admin.no_name_on_record')), row.cid ? h('span.cid', String(row.cid)) : null,
               h('span.chip' + (k.chip || ''), k.label + (row.kind === 'limit' ? (row.exempt ? ': exempt' : '') : '')),
-              row.online ? h('span.chip.is-live', 'in the city') : null,
+              row.online ? h('span.chip.is-live', t('admin.in_the_city')) : null,
               row.cid ? h('div.party', btn('.is-small.ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
-                'Open', 'arrow-right')) : null),
+                t('admin.open'), 'arrow-right')) : null),
             h('td.nowrap', { title: when(row.since) }, ago(row.since)),
             h('td.nowrap', row['until'] ? when(row['until'])
-              : row.kind === 'suspend' ? 'until lifted' : row.kind === 'freeze' ? 'until unfrozen' : 'for good'),
+              : row.kind === 'suspend' ? t('admin.until_lifted') : row.kind === 'freeze' ? t('admin.until_unfrozen') : t('admin.for_good_3')),
             h('td', String(row.reason || '—')),
             h('td', k.lift ? modBtn('.is-small', 'pl-lift-row', { 'data-ref': ref, 'data-value': row.kind },
               k.liftLabel, k.confirm(row), k.icon)
-              : h('span.sub', { title: 'Lift it in Target limits, Per player: a reason goes on the record.' },
-                'In Target limits'))),
+              : h('span.sub', { title: t('admin.lift_it_in_target_limits_per') },
+                t('admin.in_target_limits')))),
             answer ? h('tr.more', h('td', { colspan: '5' }, answerBox(answer))) : null);
-        })))) : empty(kind.id ? kind.none : 'No measure is in force on anybody.'), '', h('span.sub', num(rows.length))));
+        })))) : empty(kind.id ? kind.none : t('admin.no_measure_is_in_force_on')), '', h('span.sub', num(rows.length))));
   }
 
   SHELL.measures = function () {
     return h('section.view',
-      h('p.hint', 'Every measure staff have put on a player, newest first: frozen (their live contracts on hold), '
-        + 'suspended (barred from placing and accepting contracts), protected (no new contract may name them) and '
-        + 'their own target limits. Put one on somebody from their Measures tab, after looking them up; lift their '
-        + 'own target limits in Target limits, Per player, where a reason goes on the record.'),
+      h('p.hint', t('admin.every_measure_staff_have_put_on')
+        + t('admin.suspended_barred_from_placing_and_accepting')
+        + t('admin.their_own_target_limits_put_one')
+        + t('admin.own_target_limits_in_target_limits')),
       h('div.stack', { id: 'pl-measures' }, measuresListCard()));
   };
   LOAD.measures = function () { loadMeasures(); };
@@ -4248,63 +4383,66 @@
      Each card opens the flow that already does it, in the view it lives
      in; nothing here writes on its own. */
 
-  var STAFF_ACTIONS = [
-    { title: 'Freeze or unfreeze a player', icon: 'snowflake', view: 'players', go: 'Players',
-      text: 'Look the player up, then Freeze on their Measures tab puts every live contract they are party to on '
-        + 'hold: its clocks stop and nothing on it moves. Unfreeze gives the time back. Every frozen player is '
-        + 'listed under Players, All measures, each with its own Unfreeze.',
-      also: { view: 'measures', go: 'All measures' } },
-    { title: 'Suspend or protect a player', icon: 'ban', view: 'players', go: 'Players',
-      text: 'Look the player up, then Measures: Suspend bars them from placing and accepting; Protect stops new '
-        + 'contracts naming them. Players, All measures lists everybody, each with Lift.',
-      also: { view: 'measures', go: 'All measures' } },
-    { title: 'Pay a player or set their playtime', icon: 'sack-dollar', view: 'players', go: 'Players',
-      text: 'Look the player up, then Money: Pay sends money you choose, up to the most the server allows. '
-        + 'Playtime sets the hours counted for the new-player rule.' },
-    { title: 'Void a contract', icon: 'ban', view: 'contracts', go: 'Contracts',
-      text: 'Open the contract from Contracts, then More, Void contract closes it and refunds what it holds, with a '
-        + 'reason kept in the log.' },
-    { title: 'Refund or pay', icon: 'scale-balanced', view: 'inbox:reviews', go: 'Inbox, Needs review',
-      text: 'Needs review holds the contracts a player asked staff to look at: Refund, Pay or Dismiss each. '
-        + 'Stuck escrow holds the money left for staff: Pay, Pay amount, Return or Delivered.',
-      also: { view: 'inbox:stuck', go: 'Money waiting' } },
-    { title: 'Deadlines', icon: 'clock', view: 'contracts', go: 'Contracts',
-      text: 'Open the contract from Contracts, then Extend or Shorten under Deadline moves it: 15 min, 30 min, '
-        + '1 h, 2 h or a number of minutes, with a reason kept in the log. It shows the exact time left before '
-        + 'and after; players are told only that staff changed its time. Freezing a player stops its clock, and '
-        + 'voiding ends it.' },
-    { title: 'Announce', icon: 'bullhorn', view: 'announce', go: 'Home, Announce',
-      text: 'One phone notice from Staff to every hitman holding a contract, or to everybody online with the app. '
-        + 'It never names you, takes two clicks and is on the record.' },
-    { title: 'Test tools', icon: 'screwdriver-wrench', view: 'tools', go: 'Test tools',
-      text: 'Bring timers forward (test servers only) and Flush the audit log. The diagnosis is under Developer, '
-        + 'Health, and on a player\'s card (Why can\u2019t they see\u2026).', also: { view: 'logs', go: 'Logs' } },
-    { title: 'Settings', icon: 'sliders', view: 'rules', go: 'Game rules',
-      text: 'Every rule is in Game rules, by the area of the game it is about, each area\'s switches first. Filter '
-        + 'by Switches, Timers, Money, Limits or Lists, or search from the header. Each Save, reset or list edit takes '
-        + 'two clicks.', also: { view: 'changed', go: 'Changed from the panel' } },
-    { title: 'Undo a setting change', icon: 'arrow-rotate-left', view: 'logs:settings', go: 'Logs, Setting changes',
-      text: 'History lists every setting changed from this panel, who changed it and when, with both values. '
-        + 'Undo puts the value before back, on two clicks, checked as any change is.' },
-    { title: 'Contract tools', icon: 'clipboard-list', view: 'contracts', go: 'Contracts',
-      text: 'Open a contract: Staff notes, Remove an operative (stake to the placer as a walk-away, or returned; '
-        + 'optionally barred), Edit text through the checks a player\'s text gets, Export the record for a '
-        + 'ticket, and As a player sees it.' }
+  var STAFF_ACTIONS;
+  Text.later(function () {
+    STAFF_ACTIONS = [
+    { title: t('admin.freeze_or_unfreeze_a_player'), icon: 'snowflake', view: 'players', go: t('admin.players'),
+      text: t('admin.look_the_player_up_then_freeze')
+        + t('admin.hold_its_clocks_stop_and_nothing')
+        + t('admin.listed_under_players_all_measures_each'),
+      also: { view: 'measures', go: t('admin.all_measures') } },
+    { title: t('admin.suspend_or_protect_a_player'), icon: 'ban', view: 'players', go: t('admin.players'),
+      text: t('admin.look_the_player_up_then_measures')
+        + t('admin.contracts_naming_them_players_all_measures'),
+      also: { view: 'measures', go: t('admin.all_measures') } },
+    { title: t('admin.pay_a_player_or_set_their'), icon: 'sack-dollar', view: 'players', go: t('admin.players'),
+      text: t('admin.look_the_player_up_then_money')
+        + t('admin.playtime_sets_the_hours_counted_for') },
+    { title: t('admin.void_a_contract'), icon: 'ban', view: 'contracts', go: t('admin.contracts'),
+      text: t('admin.open_the_contract_from_contracts_then')
+        + t('admin.reason_kept_in_the_log') },
+    { title: t('admin.refund_or_pay'), icon: 'scale-balanced', view: 'inbox:reviews', go: t('admin.inbox_needs_review'),
+      text: t('admin.needs_review_holds_the_contracts_a')
+        + t('admin.stuck_escrow_holds_the_money_left'),
+      also: { view: 'inbox:stuck', go: t('admin.money_waiting_2') } },
+    { title: t('admin.deadlines'), icon: 'clock', view: 'contracts', go: t('admin.contracts'),
+      text: t('admin.open_the_contract_from_contracts_then_2')
+        + t('admin.1_h_2_h_or_a')
+        + t('admin.and_after_players_are_told_only')
+        + t('admin.voiding_ends_it') },
+    { title: t('admin.announce'), icon: 'bullhorn', view: 'announce', go: 'Home, Announce',
+      text: t('admin.one_phone_notice_from_staff_to')
+        + t('admin.it_never_names_you_takes_two') },
+    { title: t('admin.test_tools'), icon: 'screwdriver-wrench', view: 'tools', go: t('admin.test_tools'),
+      text: t('admin.bring_timers_forward_test_servers_only')
+        + t('admin.health_and_on_a_players_card'), also: { view: 'logs', go: t('admin.logs') } },
+    { title: t('admin.settings_2'), icon: 'sliders', view: 'rules', go: t('admin.game_rules'),
+      text: t('admin.every_rule_is_in_game_rules')
+        + t('admin.by_switches_timers_money_limits_or')
+        + t('admin.two_clicks'), also: { view: 'changed', go: t('admin.changed_from_the_panel') } },
+    { title: t('admin.undo_a_setting_change'), icon: 'arrow-rotate-left', view: 'logs:settings', go: t('admin.logs_setting_changes'),
+      text: t('admin.history_lists_every_setting_changed_from')
+        + t('admin.undo_puts_the_value_before_back') },
+    { title: t('admin.contract_tools'), icon: 'clipboard-list', view: 'contracts', go: t('admin.contracts'),
+      text: t('admin.open_a_contract_staff_notes_remove')
+        + t('admin.optionally_barred_edit_text_through_the')
+        + t('admin.ticket_and_as_a_player_sees') }
   ];
+  });
 
   /** Help > How do I...: every staff action, each card's Go opening where
       it is done (shown only where this staff member may open it). */
   SHELL.howto = function () {
     return h('section.view',
-      h('p.hint', canWrite() ? 'Everything here changes something, and takes two clicks. Each Go opens the place '
-        + 'it is done. The header search (/ or Ctrl+K) finds these too.' : whyNoWrite()),
+      h('p.hint', canWrite() ? t('admin.everything_here_changes_something_and_takes')
+        + t('admin.it_is_done_the_header_search') : whyNoWrite()),
       h('div.cards-grid', STAFF_ACTIONS.map(function (a) {
         var go = resolveView(a.view);
         return card(frag(icon(a.icon), ' ', a.title), frag(
           h('p.about', a.text),
           h('div.btn-row', viewAllowed(go) ? btn('.is-small', 'section', { 'data-section': a.view }, 'Go: ' + a.go,
-            'arrow-right') : h('p.note', 'Needs ' + (DEV_VIEWS[go] ? 'the Developer ACE' : 'the staff ACE')
-              + ': see Who can do what.'),
+            'arrow-right') : h('p.note', 'Needs ' + (DEV_VIEWS[go] ? t('admin.the_developer_ace') : t('admin.the_staff_ace'))
+              + t('admin.see_who_can_do_what')),
             a.also && viewAllowed(resolveView(a.also.view)) ? btn('.is-small.ghost', 'section',
               { 'data-section': a.also.view }, a.also.go, 'arrow-right') : null)), '.howto-card');
       })));
@@ -4322,21 +4460,21 @@
 
   function permissionsBody() {
     var rows = asList(S.access.permissions);
-    if (!rows.length) return empty('The server did not say which ACEs it checks.');
+    if (!rows.length) return empty(t('admin.the_server_did_not_say_which'));
     return frag(
-      h('p.hint', 'Every ACE this resource checks, what it opens, and whether you hold it. Nothing here changes '
-        + 'an ACE: grant one in the server console or server.cfg.'),
-      canDevelop() || !S.access.developerAce ? null : h('p.hint.is-note', 'The Developer section needs '
-        + String(S.access.developerAce) + ', or the staff ACE itself.'),
+      h('p.hint', t('admin.every_ace_this_resource_checks_what')
+        + t('admin.an_ace_grant_one_in_the')),
+      canDevelop() || !S.access.developerAce ? null : h('p.hint.is-note', t('admin.the_developer_section_needs')
+        + String(S.access.developerAce) + t('admin.or_the_staff_ace_itself')),
       h('div.stack', rows.map(function (p) {
         var held = p.held === true;
         return h('section.card.perm-row', { 'data-ace': String(p.ace) },
           h('header.card-head', h('h3', String(p.name || p.ace)),
             h('span.chip' + (held ? '.is-ok' : ''), { class: held ? 'perm-held' : 'perm-missing' },
-              held ? 'You hold it' : 'You do not hold it')),
+              held ? t('admin.you_hold_it') : t('admin.you_do_not_hold_it'))),
           h('code.st-key', String(p.ace)),
           h('p.about', String(p.unlocks || '')),
-          held ? null : h('p.perm-grant', h('b', 'To grant it: '), String(p.grant || '')));
+          held ? null : h('p.perm-grant', h('b', t('admin.to_grant_it')), String(p.grant || '')));
       })));
   }
   SHELL.permissions = function () { return h('section.view', h('div.stack', { id: 'pm' }, permissionsBody())); };
@@ -4348,82 +4486,87 @@
      README; each card links to the settings that control it. Edit the text
      here: it is the one place it is kept. */
 
-  var HELP = [
-    { title: 'A contract, start to finish', icon: 'file-contract',
-      text: 'A player places a contract on a target from the app, naming a reward; the reward is taken from them '
-        + 'at once and held in escrow, so nothing is promised that is not there. A hitman accepts it from the '
-        + 'board. As shipped a contract is completed only by a live handover: the hitman brings the target, '
-        + 'alive, to the person who placed it, and the three stay close together for the countdown. Under '
-        + '\'either\' a verified kill completes it too. The escrow then pays the hitman, as many times as the '
-        + 'contract has payout slots.',
-      links: [{ key: 'Completion.Fulfilment', label: 'How contracts are completed' },
-        { key: 'Kidnap.CountdownSeconds', label: 'Handover countdown' },
-        { key: 'Limits.MaxPayoutSlots', label: 'Payout slots' },
-        { key: 'Limits.MinContractReward', label: 'Least reward' }] },
-    { title: 'The clock and the time bands', icon: 'clock',
-      text: 'A contract runs for its deadline, three hours as shipped, but the clock counts down only while the '
-        + 'placer, the target and at least one operative holding it are all in the city. Players never see the '
-        + 'exact time: each card shows a rough band, More than 2 hours, 1 to 2 hours, Under 1 hour or Under '
-        + '15 minutes left. Every contract also pauses for the half hour before a txAdmin restart, and while '
-        + 'the target is in prison. A hard ceiling ends any contract after two days, pauses included.',
-      links: [{ key: 'Limits.DefaultDeadlineSeconds', label: 'Deadline' },
-        { key: 'Limits.ContractLifetimeSeconds', label: 'Hard ceiling' },
-        { key: 'Holds.RestartPauseBeforeSeconds', label: 'Restart pause' },
-        { key: 'Limits.PauseWhileTargetJailed', label: 'Pause while jailed' }] },
-    { title: 'Anonymity', icon: 'mask',
-      text: 'A contract can be placed or accepted anonymously only if the server allows it, and as shipped it '
-        + 'does not. When it is allowed, the placer or operative shows as Anonymous everywhere a player looks, '
-        + 'and only staff with the identity ACE see who it is. A fee can be charged for it. Contracts on a '
-        + 'whitelisted-job target (police, EMS and the like) follow their own three switches instead.',
-      links: [{ key: 'TargetClasses.default.AllowAnonymousPlacer', label: 'Anonymous placing' },
-        { key: 'TargetClasses.default.AllowAnonymousHitman', label: 'Anonymous accepting' },
+  var HELP;
+  Text.later(function () {
+    HELP = [
+    { title: t('admin.a_contract_start_to_finish'), icon: 'file-contract',
+      text: t('admin.a_player_places_a_contract_on')
+        + t('admin.at_once_and_held_in_escrow')
+        + t('admin.board_as_shipped_a_contract_is')
+        + t('admin.alive_to_the_person_who_placed')
+        + t('admin.either_a_verified_kill_completes_it')
+        + t('admin.contract_has_payout_slots'),
+      links: [{ key: 'Completion.Fulfilment', label: t('admin.how_contracts_are_completed') },
+        { key: 'Kidnap.CountdownSeconds', label: t('admin.handover_countdown') },
+        { key: 'Limits.MaxPayoutSlots', label: t('admin.payout_slots') },
+        { key: 'Limits.MinContractReward', label: t('admin.least_reward') }] },
+    { title: t('admin.the_clock_and_the_time_bands'), icon: 'clock',
+      text: t('admin.a_contract_runs_for_its_deadline')
+        + t('admin.placer_the_target_and_at_least')
+        + t('admin.exact_time_each_card_shows_a')
+        + t('admin.15_minutes_left_every_contract_also')
+        + t('admin.the_target_is_in_prison_a'),
+      links: [{ key: 'Limits.DefaultDeadlineSeconds', label: t('admin.deadline') },
+        { key: 'Limits.ContractLifetimeSeconds', label: t('admin.hard_ceiling') },
+        { key: 'Holds.RestartPauseBeforeSeconds', label: t('admin.restart_pause') },
+        { key: 'Limits.PauseWhileTargetJailed', label: t('admin.pause_while_jailed') }] },
+    { title: t('admin.anonymity'), icon: 'mask',
+      text: t('admin.a_contract_can_be_placed_or')
+        + t('admin.does_not_when_it_is_allowed')
+        + t('admin.and_only_staff_with_the_identity')
+        + t('admin.whitelisted_job_target_police_ems_and'),
+      links: [{ key: 'TargetClasses.default.AllowAnonymousPlacer', label: t('admin.anonymous_placing') },
+        { key: 'TargetClasses.default.AllowAnonymousHitman', label: t('admin.anonymous_accepting') },
         { key: 'TargetClasses.whitelisted.AllowAnonymousPlacer',
-          label: 'On whitelisted-job targets' },
-        { key: 'Anonymity.CreatorFee', label: 'Anonymity fees' }] },
-    { title: 'The informants', icon: 'user-secret',
-      text: 'Three paid look-ups, each off as shipped. The target\'s informant lets a target pay to find out who '
-        + 'is after them, with a chance of an answer. The placer\'s informant lets the placer find out which '
-        + 'operative took the contract. The informant tip lets a hitman buy the target\'s rough area on the map. '
-        + 'One master switch turns all three off at once, and each has its own switch for whitelisted-job targets.',
-      links: [{ key: 'Intel.Enabled', label: 'Master switch' },
-        { key: 'Intel.Informant.Enabled', label: 'Target\'s informant' },
-        { key: 'Intel.PlacerInformant.Enabled', label: 'Placer\'s informant' },
-        { key: 'Intel.LocationTip.Enabled', label: 'Informant tip' },
-        { key: 'Intel.Informant.Cost', label: 'Prices' }] },
-    { title: 'Buyouts', icon: 'hand-holding-dollar',
-      text: 'A target can pay to buy out a contract on them, from the app or with the buyout command. The price '
-        + 'is the reward times a multiplier, between a least and a most, and never above a cap. A contract a '
-        + 'hitman holds gives them a head start before the buyout closes it. A dead or downed target cannot '
-        + 'buy out.',
-      links: [{ key: 'Bailout.Enabled', label: 'Buyouts on or off' },
-        { key: 'Bailout.MinMultiplier', label: 'Buyout price' },
-        { key: 'Bailout.ProcessingDelaySeconds', label: 'Hitman\'s head start' }] },
-    { title: 'The staff freeze', icon: 'snowflake',
-      text: 'Staff with the staff or moderator ACE can freeze a player for a staff situation or a dispute, from Players. '
-        + 'Every live contract they are party to goes on hold: its clocks stop, and nothing on it is accepted, '
-        + 'paid, refunded or ended. Players are told only that it is on hold by staff. Unfreeze gives the time '
-        + 'on hold back, to the second.',
+          label: t('admin.on_whitelisted_job_targets') },
+        { key: 'Anonymity.CreatorFee', label: t('admin.anonymity_fees') }] },
+    { title: t('admin.the_informants'), icon: 'user-secret',
+      text: t('admin.three_paid_look_ups_each_off')
+        + t('admin.is_after_them_with_a_chance')
+        + t('admin.operative_took_the_contract_the_informant')
+        + t('admin.one_master_switch_turns_all_three'),
+      links: [{ key: 'Intel.Enabled', label: t('admin.master_switch_2') },
+        { key: 'Intel.Informant.Enabled', label: t('admin.targets_informant') },
+        { key: 'Intel.PlacerInformant.Enabled', label: t('admin.placers_informant') },
+        { key: 'Intel.LocationTip.Enabled', label: t('admin.informant_tip') },
+        { key: 'Intel.Informant.Cost', label: t('admin.prices') }] },
+    { title: t('admin.buyouts'), icon: 'hand-holding-dollar',
+      text: t('admin.a_target_can_pay_to_buy')
+        + t('admin.is_the_reward_times_a_multiplier')
+        + t('admin.hitman_holds_gives_them_a_head')
+        + t('admin.buy_out'),
+      links: [{ key: 'Bailout.Enabled', label: t('admin.buyouts_on_or_off') },
+        { key: 'Bailout.MinMultiplier', label: t('admin.buyout_price') },
+        { key: 'Bailout.ProcessingDelaySeconds', label: t('admin.hitmans_head_start') }] },
+    { title: t('admin.the_staff_freeze'), icon: 'snowflake',
+      text: t('admin.staff_with_the_staff_or_moderator')
+        + t('admin.every_live_contract_they_are_party_2')
+        + t('admin.paid_refunded_or_ended_players_are')
+        + t('admin.on_hold_back_to_the_second'),
       links: [] },
-    { title: 'Police advisories', icon: 'shield-halved',
-      text: 'When a contract is placed on an officer or another whitelisted-job member, officers are told by an '
-        + 'advisory, and an sc-dispatch entry if that is on. Bulletins can go out when a contract is placed, '
-        + 'accepted, given an informant tip or called off. The placer and the hitman are warned first, and the '
-        + 'card is marked on the board. Which jobs raise one, and which are told, are lists under Targeting.',
-      links: [{ key: 'Advisory.Enabled', label: 'Advisories on or off' },
-        { key: 'Advisory.OnCreate', label: 'When they go out' },
-        { key: 'Advisory.RecipientJobNames', label: 'Who is told' }] },
-    { title: 'Money safety', icon: 'vault',
-      text: 'Every reward is held in escrow from the moment a contract is placed until it ends, so it can always '
-        + 'be paid or returned. A contract that ends without a payout refunds its placer. A payout to a player '
-        + 'who is offline, or whose inventory is full, is owed to them and paid when they next log in. Anything '
-        + 'the server could not settle on its own is left for staff under Stuck escrow, and a disputed contract '
-        + 'goes to Needs review.',
-      links: [{ key: 'PendingEscrow.MaxRetriesPerLogin', label: 'Owed payouts' },
-        { key: 'MaxContractValue', label: 'Most a contract holds' },
-        { key: 'EscrowBlacklist', label: 'Items never in a reward' }] }
+    { title: t('admin.police_advisories'), icon: 'shield-halved',
+      text: t('admin.when_a_contract_is_placed_on')
+        + t('admin.advisory_and_an_sc_dispatch_entry')
+        + t('admin.accepted_given_an_informant_tip_or')
+        + t('admin.card_is_marked_on_the_board'),
+      links: [{ key: 'Advisory.Enabled', label: t('admin.advisories_on_or_off') },
+        { key: 'Advisory.OnCreate', label: t('admin.when_they_go_out') },
+        { key: 'Advisory.RecipientJobNames', label: t('admin.who_is_told') }] },
+    { title: t('admin.money_safety'), icon: 'vault',
+      text: t('admin.every_reward_is_held_in_escrow')
+        + t('admin.be_paid_or_returned_a_contract')
+        + t('admin.who_is_offline_or_whose_inventory')
+        + t('admin.the_server_could_not_settle_on')
+        + t('admin.goes_to_needs_review'),
+      links: [{ key: 'PendingEscrow.MaxRetriesPerLogin', label: t('admin.owed_payouts') },
+        { key: 'MaxContractValue', label: t('admin.most_a_contract_holds') },
+        { key: 'EscrowBlacklist', label: t('admin.items_never_in_a_reward') }] }
   ];
+  });
   /** For the tests. */
-  window.CH_ADMIN_HELP = HELP;
+  Text.later(function () {
+    window.CH_ADMIN_HELP = HELP;
+  });
 
   /** The help cards in the order the README, config.lua and Features use:
       the core, Anonymity, the informants and the rest of Intel, the
@@ -4464,10 +4607,10 @@
   /* Help > How it works: an accordion, each card's words drawn only when
      it is opened. */
   SHELL.help = function () {
-    return h('section.view', h('p.hint', 'How the contract app works, in plain words. Open a card; each link opens '
-      + 'the setting that controls it.'),
-      h('div.toolbar', btn('.is-small.ghost', 'help-all', {}, 'Open all', 'angles-down'),
-        btn('.is-small.ghost', 'help-none', {}, 'Close all', 'angles-up')),
+    return h('section.view', h('p.hint', t('admin.how_the_contract_app_works_in_2')
+      + t('admin.the_setting_that_controls_it')),
+      h('div.toolbar', btn('.is-small.ghost', 'help-all', {}, t('admin.open_all'), 'angles-down'),
+        btn('.is-small.ghost', 'help-none', {}, t('admin.close_all'), 'angles-up')),
       h('div.stack.help-list', helpOrdered().map(function (c) {
         var open = !!S.help.open[c.title];
         return h('section.card.help-card' + (open ? '.is-open' : ''),
@@ -4507,15 +4650,15 @@
 
   function presetsBody() {
     if (S.presets.error) return empty(S.presets.error);
-    if (!S.presets.data) return loading('Reading the presets…');
+    if (!S.presets.data) return loading(t('admin.reading_the_presets'));
     var list = asList(S.presets.data.presets);
     return frag(answerBox(S.presets.answer),
-      h('div.btn-row', writeBtn('.ghost.is-small', 'ps-save', {}, 'Save the settings now as Current',
-        'Click again: save as Current', 'floppy-disk')),
-      h('div.btn-row', field('ps.name', { placeholder: 'Name for a preset of your own', maxlength: '32',
-        'aria-label': 'Name for a preset of your own' }),
-        writeBtn('.is-small', 'ps-own', {}, 'Save the panel\'s changes as a preset',
-          'Click again: save them under that name', 'box-archive')),
+      h('div.btn-row', writeBtn('.ghost.is-small', 'ps-save', {}, t('admin.save_the_settings_now_as_current'),
+        t('admin.click_again_save_as_current'), 'floppy-disk')),
+      h('div.btn-row', field('ps.name', { placeholder: t('admin.name_for_a_preset_of_your'), maxlength: '32',
+        'aria-label': t('admin.name_for_a_preset_of_your') }),
+        writeBtn('.is-small', 'ps-own', {}, t('admin.save_the_panels_changes_as_a'),
+          t('admin.click_again_save_them_under_that'), 'box-archive')),
       h('div.cards-grid', list.map(function (p) {
         var changes = asList(p.changes), refused = asList(p.refused);
         var n = changes.length;
@@ -4524,23 +4667,23 @@
           n ? h('ul.plain.ps-changes', changes.map(function (c) {
             return h('li', h('span.name', String(c.label)), ': ', h('span.mono', String(c.from)), ' \u2192 ',
               h('span.mono', String(c.to)));
-          })) : h('p.note', 'Nothing to change: the settings are this already.'),
+          })) : h('p.note', t('admin.nothing_to_change_the_settings_are')),
           refused.length ? h('ul.warnings', refused.map(function (r) {
-            return h('li', String(r.label) + ': left as it is. ' + String(r.why));
+            return h('li', String(r.label) + t('admin.left_as_it_is') + String(r.why));
           })) : null,
-          Number(p.same) > 0 ? h('p.sub', num(p.same) + ' more already as this preset says.') : null,
+          Number(p.same) > 0 ? h('p.sub', num(p.same) + t('admin.more_already_as_this_preset_says')) : null,
           h('div.btn-row', writeBtn('.primary.is-small', 'ps-apply', { 'data-value': String(p.name), disabled: !n || null },
-            'Apply ' + String(p.name), 'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's'), 'check'),
+            'Apply ' + String(p.name), t('admin.click_again_apply') + n + ' change' + (n === 1 ? '' : 's'), 'check'),
             p.own ? writeBtn('.danger.is-small', 'ps-delete', { 'data-value': String(p.name) },
-              'Delete', 'Click again: delete ' + String(p.name), 'trash') : null)),
+              t('admin.delete'), t('admin.click_again_delete') + String(p.name), 'trash') : null)),
           '.ps-card', h('span.chip' + (p.builtIn ? '' : '.is-panel'), p.builtIn ? 'shipped' : p.own ? 'yours' : 'saved'));
       })));
   }
 
   SHELL.presets = function () {
     return h('section.view',
-      h('p.hint', 'A preset changes nothing until you apply it. Applying one saves the settings it names as Current '
-        + 'first, so going back is applying Current; every change is also in Change history with its own Undo.'),
+      h('p.hint', t('admin.a_preset_changes_nothing_until_you')
+        + t('admin.first_so_going_back_is_applying')),
       h('div.stack', { id: 'ps-list' }, presetsBody()));
   };
   LOAD.presets = function () { loadPresets(); };
@@ -4588,15 +4731,15 @@
 
   function gearBody() {
     if (S.gearOpen !== S.section) return frag();
-    if (!S.settings.data) return loading('Reading the settings…');
+    if (!S.settings.data) return loading(t('admin.reading_the_settings'));
     var rows = gearEntries(S.section);
     var gr = grouped(rows, 'rules');
-    return card('Settings for this screen', frag(
-      h('p.hint', 'The settings this screen works by. Every change takes two clicks, is on the record and can be '
-        + 'undone from Change history.'),
+    return card(t('admin.settings_for_this_screen'), frag(
+      h('p.hint', t('admin.the_settings_this_screen_works_by')
+        + t('admin.undone_from_change_history')),
       rows.length ? gr.groups.map(function (g) { return groupSection(g, gr.byGroup[g]); })
-        : empty('This screen has no settings of its own.'),
-      h('div.btn-row', btn('.is-small.ghost', 'section', { 'data-section': 'rules' }, 'All settings', 'sliders'))),
+        : empty(t('admin.this_screen_has_no_settings_of')),
+      h('div.btn-row', btn('.is-small.ghost', 'section', { 'data-section': 'rules' }, t('admin.all_settings'), 'sliders'))),
       '.gear-card');
   }
 
@@ -4635,7 +4778,7 @@
      changed from the panel now, under the name typed; and deleting one. */
   ACTIONS['ps-own'] = function (node) {
     var name = trim(S.forms['ps.name']);
-    if (!name) { S.presets.answer = { ok: false, text: 'Name the preset first.' }; drawPresets(); return; }
+    if (!name) { S.presets.answer = { ok: false, text: t('admin.name_the_preset_first') }; drawPresets(); return; }
     if (!confirmed(node)) return;
     write('presetSaveOwn', { name: name }, 'preset', node).then(function (reply) {
       if (!reply) return;
@@ -4707,7 +4850,7 @@
     options: function (key) {
       var row = setupRows()[key];
       if (!row) return [];
-      if (row.kind === 'switch') return [{ value: 'true', label: 'On' }, { value: 'false', label: 'Off' }];
+      if (row.kind === 'switch') return [{ value: 'true', label: t('admin.on') }, { value: 'false', label: t('admin.off') }];
       return asList(row.choices).map(function (c) { return { value: String(c), label: String(c) }; });
     },
     value: function (key) {
@@ -4737,7 +4880,7 @@
   function setupBody() {
     var su = S.setup;
     if (su.error) return empty(su.error);
-    if (!su.data) return loading('Reading the setup…');
+    if (!su.data) return loading(t('admin.reading_the_setup'));
     var d = su.data;
     var cmd = d.command || {};
     var cmdBind = 'su.command';
@@ -4745,45 +4888,45 @@
     var n = preview ? asList(preview.changes).length : 0;
     return frag(
       answerBox(su.answer),
-      d.saved ? h('p.note', 'Saved before' + (d.savedBy ? ' by ' + String(d.savedBy) : '') + '. Change anything '
-        + 'and apply again, or leave it as it is.') : h('p.hint', 'Nothing is saved yet: this screen shows until it is. '
-        + 'Every choice starts at what is in force now, so applying with nothing changed keeps the server as it is.'),
+      d.saved ? h('p.note', t('admin.saved_before') + (d.savedBy ? ' by ' + String(d.savedBy) : '') + t('admin.change_anything')
+        + t('admin.and_apply_again_or_leave_it')) : h('p.hint', t('admin.nothing_is_saved_yet_this_screen')
+        + t('admin.every_choice_starts_at_what_is')),
       h('div.cols',
-        card('Storage', frag(
-          h('p.about', 'Where contracts and money are kept: mysql (the database) or json (files in data/). '
-            + 'Set it in config.lua; a change needs the old mode\'s money settled and a restart (README, Changing storage mode).'),
-          h('p', 'In force: ', h('span.mono', String((d.storage || {}).mode || ''))),
+        card(t('admin.storage'), frag(
+          h('p.about', t('admin.where_contracts_and_money_are_kept_2')
+            + t('admin.set_it_in_config_lua_a')),
+          h('p', t('admin.in_force'), h('span.mono', String((d.storage || {}).mode || ''))),
           h('pre.output', String((d.storage || {}).line || '')))),
-        card('Permissions', frag(
-          h('p.about', 'The lines that grant the panel to a group, for server.cfg. A tick means you hold it.'),
+        card(t('admin.permissions'), frag(
+          h('p.about', t('admin.the_lines_that_grant_the_panel')),
           h('ul.plain', asList(d.aces).map(function (a) {
             return h('li', icon(a.held ? 'circle-check' : 'circle'), ' ', String(a.name), h('pre.output', String(a.line)));
           }))))),
-      card('Other scripts', frag(
-        h('p.about', '‘auto’ uses the first one installed and started. ‘none’ turns off what needs it.'),
+      card(t('admin.other_scripts'), frag(
+        h('p.about', t('admin.auto_uses_the_first_one_installed')),
         h('ul.plain', asList(d.integrations).map(function (r) {
           var seen = asList(r.detected).map(function (x) { return String(x.name) + (x.up ? ' (running)' : ''); });
           return h('li.su-int', setupChoice({ key: r.key, label: r.kind }),
-            h('p.sub', (r.active ? 'In use: ' + String(r.active) : 'Off: ' + String(r.without)) + '. Found: '
+            h('p.sub', (r.active ? t('admin.in_use') + String(r.active) : 'Off: ' + String(r.without)) + '. Found: '
               + (seen.length ? seen.join(', ') : 'none') + '.'));
         })))),
-      card('Panel command and key switches', frag(
-        h('div.su-row', h('span.name', String(cmd.label || 'Panel command')),
+      card(t('admin.panel_command_and_key_switches'), frag(
+        h('div.su-row', h('span.name', String(cmd.label || t('admin.panel_command'))),
           field(cmdBind, { value: String(setupValue(cmd.key, cmd.value) || ''), maxlength: '32' })),
         asList(d.switches).map(function (r) { return setupChoice(r); }))),
-      card('Preview', frag(
+      card(t('admin.preview'), frag(
         preview ? frag(
           n ? h('ul.plain.ps-changes', asList(preview.changes).map(function (c) {
             return h('li', h('span.name', String(c.label)), ': ', h('span.mono', String(c.from)), ' → ',
               h('span.mono', String(c.to)));
-          })) : h('p.note', 'Nothing to change: applying saves the setup as it is.'),
+          })) : h('p.note', t('admin.nothing_to_change_applying_saves_the')),
           asList(preview.refused).length ? h('ul.warnings', asList(preview.refused).map(function (r) {
-            return h('li', String(r.label) + ': left as it is. ' + String(r.why));
-          })) : null) : h('p.hint', 'Preview what applying would change; nothing changes until Apply.'),
+            return h('li', String(r.label) + t('admin.left_as_it_is') + String(r.why));
+          })) : null) : h('p.hint', t('admin.preview_what_applying_would_change_nothing')),
         h('div.btn-row',
-          btn('.ghost', 'su-preview', {}, 'Preview', 'eye'),
-          writeBtn('.primary', 'su-apply', { disabled: !preview || null }, 'Apply',
-            'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's') + ' and save', 'check')))));
+          btn('.ghost', 'su-preview', {}, t('admin.preview'), 'eye'),
+          writeBtn('.primary', 'su-apply', { disabled: !preview || null }, t('admin.apply'),
+            t('admin.click_again_apply') + n + ' change' + (n === 1 ? '' : 's') + t('admin.and_save'), 'check')))));
   }
 
   /** What the staff member chose, with the command name typed. */
@@ -4832,46 +4975,46 @@
      changes, each one a setting change of its own in Change history with
      its Undo. */
   function transferBody() {
-    var t = S.transfer;
-    var p = t.preview;
+    var tv = S.transfer;
+    var p = tv.preview;
     var changes = p ? asList(p.changes) : [], refused = p ? asList(p.refused) : [],
       presets = p ? asList(p.presets) : [];
     var adds = presets.filter(function (x) { return !x.why; }).length;
     var n = changes.length;
-    return frag(answerBox(t.answer),
-      card('Export', frag(
-        h('p.about', 'Every setting changed from this panel and your own presets, as one text to keep or to paste '
-          + 'into another server. Not in it: the map places (Locations) and the target limits set for a job or a '
-          + 'player (Target limits), which belong to this server’s map, jobs and characters.'),
-        h('div.btn-row', btn('.primary', 'io-export', {}, 'Export the settings', 'file-export'),
-          t.exported ? btn('', 'io-copy', {}, 'Copy', 'copy') : null),
-        t.exported ? h('p.sub', num(t.exported.settings) + ' setting' + (Number(t.exported.settings) === 1 ? '' : 's')
-          + ' and ' + num(t.exported.presets) + ' preset' + (Number(t.exported.presets) === 1 ? '' : 's') + '.') : null,
-        t.exported ? h('textarea.input.ct-export-text', { readonly: 'readonly', rows: '8',
-          'aria-label': 'The exported settings, to copy' }, String(t.exported.text || '')) : null)),
-      card('Import', frag(
-        h('p.about', 'Paste an exported text and read it: nothing changes until you apply it. A key this server '
-          + 'never changes from the panel, one it does not have, or a value it would refuse is listed with why '
-          + 'and left as it is.'),
+    return frag(answerBox(tv.answer),
+      card(t('admin.export'), frag(
+        h('p.about', t('admin.every_setting_changed_from_this_panel_2')
+          + t('admin.into_another_server_not_in_it')
+          + t('admin.player_target_limits_which_belong_to')),
+        h('div.btn-row', btn('.primary', 'io-export', {}, t('admin.export_the_settings'), 'file-export'),
+          tv.exported ? btn('', 'io-copy', {}, t('admin.copy'), 'copy') : null),
+        tv.exported ? h('p.sub', num(tv.exported.settings) + ' setting' + (Number(tv.exported.settings) === 1 ? '' : 's')
+          + ' and ' + num(tv.exported.presets) + ' preset' + (Number(tv.exported.presets) === 1 ? '' : 's') + '.') : null,
+        tv.exported ? h('textarea.input.ct-export-text', { readonly: 'readonly', rows: '8',
+          'aria-label': t('admin.the_exported_settings_to_copy') }, String(tv.exported.text || '')) : null)),
+      card(t('admin.import'), frag(
+        h('p.about', t('admin.paste_an_exported_text_and_read')
+          + t('admin.never_changes_from_the_panel_one')
+          + t('admin.and_left_as_it_is')),
         h('textarea.input.ct-export-text', { 'data-bind': 'io.text', rows: '8',
-          'aria-label': 'The exported text to import' }, String(S.forms['io.text'] || '')),
-        h('div.btn-row', btn('', 'io-read', {}, 'Read it', 'magnifying-glass')),
-        t.error ? answerBox({ ok: false, text: t.error }) : null,
+          'aria-label': t('admin.the_exported_text_to_import') }, String(S.forms['io.text'] || '')),
+        h('div.btn-row', btn('', 'io-read', {}, t('admin.read_it'), 'magnifying-glass')),
+        tv.error ? answerBox({ ok: false, text: tv.error }) : null,
         p ? frag(
           n ? h('ul.plain.ps-changes', changes.map(function (c) {
             return h('li', h('span.name', String(c.label)), ': ', h('span.mono', String(c.from)), ' → ',
               h('span.mono', String(c.to)));
-          })) : h('p.note', 'No setting to change: they are as that text says already.'),
+          })) : h('p.note', t('admin.no_setting_to_change_they_are')),
           refused.length ? h('ul.warnings', refused.map(function (r) {
-            return h('li', String(r.label) + ' (' + String(r.key) + '): left as it is. ' + String(r.why));
+            return h('li', String(r.label) + ' (' + String(r.key) + t('admin.left_as_it_is_2') + String(r.why));
           })) : null,
-          Number(p.same) > 0 ? h('p.sub', num(p.same) + ' more already as that text says.') : null,
+          Number(p.same) > 0 ? h('p.sub', num(p.same) + t('admin.more_already_as_that_text_says')) : null,
           presets.length ? h('ul.plain', presets.map(function (x) {
-            return h('li', 'Preset ' + String(x.name) + ': ' + (x.why ? 'not added. ' + String(x.why) : 'added.'));
+            return h('li', 'Preset ' + String(x.name) + ': ' + (x.why ? t('admin.not_added') + String(x.why) : 'added.'));
           })) : null,
           h('div.btn-row', writeBtn('.primary', 'io-apply', { disabled: (!n && !adds) || null },
-            'Apply it', 'Click again: apply ' + n + ' change' + (n === 1 ? '' : 's')
-              + (adds ? ' and add ' + adds + ' preset' + (adds === 1 ? '' : 's') : ''), 'check'))) : null)));
+            t('admin.apply_it'), t('admin.click_again_apply') + n + ' change' + (n === 1 ? '' : 's')
+              + (adds ? t('admin.and_add') + adds + ' preset' + (adds === 1 ? '' : 's') : ''), 'check'))) : null)));
   }
 
   function drawTransfer() {
@@ -4893,13 +5036,13 @@
   };
   ACTIONS['io-copy'] = function () {
     var copied = S.transfer.exported && copyText(String(S.transfer.exported.text || ''));
-    toast(copied ? 'Copied.' : 'Select the text and copy it.', copied ? 'ok' : 'error');
+    toast(copied ? t('admin.copied') : t('admin.select_the_text_and_copy_it'), copied ? 'ok' : 'error');
   };
   ACTIONS['io-read'] = function () {
     var text = String(S.forms['io.text'] || '');
     S.transfer.preview = null;
     S.transfer.error = null;
-    if (!trim(text)) { S.transfer.error = 'Paste the exported text first.'; drawTransfer(); return; }
+    if (!trim(text)) { S.transfer.error = t('admin.paste_the_exported_text_first'); drawTransfer(); return; }
     ask('settingsImport', { text: text }, 'transfer').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) S.transfer.error = words(reply);
@@ -5005,7 +5148,7 @@
   ACTIONS['pl-contracts'] = function () {
     var p = (S.players.data && S.players.data.player) || {};
     if (!p.ref) return;
-    S.contracts.person = { ref: p.ref, name: p.name || p.cid || 'This player' };
+    S.contracts.person = { ref: p.ref, name: p.name || p.cid || t('admin.this_player') };
     S.contracts.as = '';
     S.contracts.byTarget = false;
     S.contracts.state = '';
@@ -5083,10 +5226,10 @@
     var minutes = deadlineMinutes();
     var reason = trim(S.forms['dr.dl.reason']).slice(0, 120);
     var problem = null;
-    if (!minutes) problem = 'Pick a time or type a whole number of minutes.';
+    if (!minutes) problem = t('admin.pick_a_time_or_type_a_2');
     else if (Number(info.maxAdjust) && minutes * 60 > Number(info.maxAdjust)) {
-      problem = 'At most ' + exactSpan(info.maxAdjust) + ' either way.';
-    } else if (!reason) problem = 'Give a reason: it goes on the record.';
+      problem = t('admin.at_most') + exactSpan(info.maxAdjust) + t('admin.either_way');
+    } else if (!reason) problem = t('admin.give_a_reason_it_goes_on');
     if (problem) {
       disarm();
       S.drawer.answer = { ok: false, text: problem };
@@ -5123,10 +5266,10 @@
     var problem = null;
     if (how === 'pay_amount') {
       data.amount = wholeNumber(S.forms['dr.amount.' + line]);
-      if (!data.amount) problem = 'An amount is a whole number of at least 1.';
+      if (!data.amount) problem = t('admin.an_amount_is_a_whole_number');
     } else if (how === 'return_owner') {
       data.owner = trim(S.forms['dr.owner.' + line]);
-      if (!/^[A-Za-z0-9_-]{3,64}$/.test(data.owner)) problem = 'Give the citizen id of whoever put it up.';
+      if (!/^[A-Za-z0-9_-]{3,64}$/.test(data.owner)) problem = t('admin.give_the_citizen_id_of_whoever');
     }
     if (problem) {
       disarm();
@@ -5141,8 +5284,8 @@
     }
     // Named, and bound to the box it read: typing a new amount (or owner)
     // after arming disarms it rather than sending what was typed.
-    var settleLabel = how === 'pay_amount' ? 'Click again: pay ' + money(data.amount) + ' of this line'
-      : how === 'return_owner' ? 'Click again: return it to ' + data.owner : null;
+    var settleLabel = how === 'pay_amount' ? t('admin.click_again_pay') + money(data.amount) + t('admin.of_this_line')
+      : how === 'return_owner' ? t('admin.click_again_return_it_to') + data.owner : null;
     if (!armed(node, settleLabel, ['dr.amount.' + line, 'dr.owner.' + line])) return;
     var id = S.drawer.id;
     write('settle', data, 'settle:' + line, node).then(function (reply) {
@@ -5215,17 +5358,17 @@
     var problem = null;
     if (action === 'dismiss') {
       data.note = trim(S.forms['rv.' + id + '.note']).slice(0, 200);
-      if (!data.note) problem = 'Say why in a note: a dismissal gives nothing, and the note is the record of why.';
+      if (!data.note) problem = t('admin.say_why_in_a_note_a');
     } else {
       data.who = DD['rv-who'].value(id);
-      if (!data.who) problem = 'The item names nobody to give it to.';
+      if (!data.who) problem = t('admin.the_item_names_nobody_to_give');
       if (action === 'refund') {
         if (S.forms['rv.' + id + '.goods'] === 'yes') {
           data.goods = true;
         } else {
           data.amount = wholeNumber(S.forms['rv.' + id + '.amount']);
           data.account = DD['rv-account'].value(id);
-          if (!data.amount && !problem) problem = 'An amount is a whole number of at least 1.';
+          if (!data.amount && !problem) problem = t('admin.an_amount_is_a_whole_number');
         }
       }
     }
@@ -5243,9 +5386,9 @@
       if (String(p.role) === String(data.who)) whoLabel = String(p.role) + ' · ' + String(p.who || '—');
     });
     var label = action === 'dismiss' ? null
-      : action === 'pay' ? 'Click again: pay it to ' + whoLabel
-        : data.goods ? 'Click again: refund every item and weapon to ' + whoLabel
-          : 'Click again: refund ' + money(data.amount) + ' to ' + whoLabel + ' from ' + data.account;
+      : action === 'pay' ? t('admin.click_again_pay_it_to') + whoLabel
+        : data.goods ? t('admin.click_again_refund_every_item_and') + whoLabel
+          : t('admin.click_again_refund') + money(data.amount) + ' to ' + whoLabel + ' from ' + data.account;
     if (!armed(node, label, ['rv.' + id + '.amount', 'rv.' + id + '.note'])) return;
     write('resolve', data, 'resolve:' + id, node).then(function (reply) {
       if (!reply) return;
@@ -5323,9 +5466,9 @@
     if (!S.console.data) return;
     var shown = consoleShown();
     var n = shown.problems.length + shown.boot.length + shown.recent.length;
-    if (!n) { toast('Nothing is shown to copy.', 'info'); return; }
+    if (!n) { toast(t('admin.nothing_is_shown_to_copy'), 'info'); return; }
     if (copyText(consoleText(shown))) toast('Copied ' + num(n) + ' line' + (n === 1 ? '' : 's') + '.', 'ok');
-    else toast('This game would not copy it: select the lines and press Ctrl+C instead.', 'error');
+    else toast(t('admin.this_game_would_not_copy_it'), 'error');
   };
 
   ACTIONS['lg-area'] = function (node) {
@@ -5389,7 +5532,7 @@
     var hours = Number(raw);
     if (raw === '' || !isFinite(hours) || hours < 0 || hours > 100000) {
       disarm();
-      S.players.playtime = { ok: false, text: 'Hours are a number from 0 to 100000.' };
+      S.players.playtime = { ok: false, text: t('admin.hours_are_a_number_from_0') };
       if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
       return;
     }
@@ -5419,7 +5562,7 @@
     var reason = trim(S.forms['pl.freezeReason']);
     if (!reason) {
       disarm();
-      S.players.freeze = { ok: false, text: 'Give a reason: it goes on the record.' };
+      S.players.freeze = { ok: false, text: t('admin.give_a_reason_it_goes_on') };
       if (PLAYER_VIEWS[S.section]) setHtml(byId('pl-result'), playerBody());
       return;
     }
@@ -5472,14 +5615,14 @@
     var pair = entry.value && typeof entry.value === 'object' ? entry.value : {};
     var lo = Number(trim(typedOr('st.' + key + '.min', pair.min)));
     var hi = Number(trim(typedOr('st.' + key + '.max', pair.max)));
-    var bad = !isFinite(lo) || !isFinite(hi) ? 'has to be two numbers'
-      : (entry.integer && (Math.floor(lo) !== lo || Math.floor(hi) !== hi)) ? 'has to be whole numbers'
-      : lo > hi ? 'has its from above its to'
+    var bad = !isFinite(lo) || !isFinite(hi) ? t('admin.has_to_be_two_numbers')
+      : (entry.integer && (Math.floor(lo) !== lo || Math.floor(hi) !== hi)) ? t('admin.has_to_be_whole_numbers')
+      : lo > hi ? t('admin.has_its_from_above_its_to')
       : ((entry.min != null && lo < entry.min) || (entry.max != null && hi > entry.max))
-        ? 'has to be within ' + entry.min + ' to ' + entry.max : null;
+        ? t('admin.has_to_be_within') + entry.min + ' to ' + entry.max : null;
     if (bad) {
       disarm();
-      S.settings.answers[key] = { ok: false, text: 'Not changed: ' + key + ' ' + bad + '.' };
+      S.settings.answers[key] = { ok: false, text: t('admin.not_changed') + key + ' ' + bad + '.' };
       drawSettingRow(key);
       return;
     }
@@ -5490,7 +5633,7 @@
       other: the second only once the first is in force. */
   ACTIONS['st-map-save'] = function (node) {
     var bucket = node.getAttribute('data-bucket');
-    var keys = ['Cooldowns.' + bucket + '.per', 'Cooldowns.' + bucket + '.burst'];
+    var keys = [t('admin.cooldowns') + bucket + '.per', t('admin.cooldowns') + bucket + '.burst'];
     var changes = [];
     for (var i = 0; i < keys.length; i++) {
       var entry = settingEntry(keys[i]);
@@ -5498,14 +5641,14 @@
       var parsed = parseSetting(entry, String(typedOr('st.' + keys[i], entry.value)));
       if (parsed.error) {
         disarm();
-        S.settings.answers['Cooldowns.' + bucket] = { ok: false, text: parsed.error };
+        S.settings.answers[t('admin.cooldowns') + bucket] = { ok: false, text: parsed.error };
         drawSettingRow(keys[i]);
         return;
       }
       if (parsed.value !== entry.value) changes.push({ key: keys[i], value: parsed.value });
     }
     if (!changes.length) {
-      S.settings.answers['Cooldowns.' + bucket] = { ok: true, text: bucket + ' is as typed already; nothing changed.' };
+      S.settings.answers[t('admin.cooldowns') + bucket] = { ok: true, text: bucket + t('admin.is_as_typed_already_nothing_changed') };
       drawSettingRow(keys[0]);
       return;
     }
@@ -5513,7 +5656,7 @@
     var said = [];
     (function next(i) {
       if (i >= changes.length) {
-        S.settings.answers['Cooldowns.' + bucket] = { ok: true, text: said.join(' ') };
+        S.settings.answers[t('admin.cooldowns') + bucket] = { ok: true, text: said.join(' ') };
         loadSettings();
         return;
       }
@@ -5523,7 +5666,7 @@
           said.push(words(reply));
           toast(words(reply), reply.ok ? 'ok' : 'error');
           if (!reply.ok) {
-            S.settings.answers['Cooldowns.' + bucket] = { ok: false, text: said.join(' ') };
+            S.settings.answers[t('admin.cooldowns') + bucket] = { ok: false, text: said.join(' ') };
             loadSettings();
             return;
           }
@@ -5584,14 +5727,14 @@
     disarm();
     var said = secondClick(entry, parsed.value);
     if (said) {
-      S.settings.answers[key] = { ok: false, text: said + ' Click Save again to do it.' };
+      S.settings.answers[key] = { ok: false, text: said + t('admin.click_save_again_to_do_it') };
       drawSettingRow(key);
     }
     var button = byId('st-save-' + key);
     if (button) {
       var shown = describe(entry, parsed.value);
       if (shown.length > 24) shown = shown.slice(0, 23) + '\u2026';
-      confirmed(button, 'Click again: save ' + shown);
+      confirmed(button, t('admin.click_again_save') + shown);
       if (S.armed) { S.armed.value = parsed.value; S.armed.bind = 'st.' + key; }
     }
   };
@@ -5651,7 +5794,7 @@
      out of range, script missing, ACE not held and risky combination, each
      with its fix, drawn where the diagnosis is. */
   ACTIONS['tl-config'] = function () {
-    S.tools.diag = { lines: ['Checking…'], later: [] };
+    S.tools.diag = { lines: [t('admin.checking')], later: [] };
     drawTools();
     ask('diag', { config: true }, 'diag').then(function (reply) {
       if (!reply) return;
@@ -5663,11 +5806,11 @@
   ACTIONS['tl-diag'] = function () {
     var subject = trim(S.forms['tl.subject']);
     if (subject && !/^\d{1,5}$/.test(subject)) {
-      S.tools.diag = { error: 'Give a player id, or nothing to run it as yourself.' };
+      S.tools.diag = { error: t('admin.give_a_player_id_or_nothing') };
       drawTools();
       return;
     }
-    S.tools.diag = { lines: ['Running…'], later: [] };
+    S.tools.diag = { lines: [t('admin.running')], later: [] };
     drawTools();
     ask('diag', subject ? { subject: Number(subject) } : {}, 'diag').then(function (reply) {
       if (!reply) return;
@@ -5697,26 +5840,26 @@
 
   function announceCount() {
     var n = charCount(S.forms['an.text']);
-    if (n > ANNOUNCE_MAX) return h('span.is-warn', n + ' / ' + ANNOUNCE_MAX + ' characters: too long to send.');
+    if (n > ANNOUNCE_MAX) return h('span.is-warn', n + ' / ' + ANNOUNCE_MAX + t('admin.characters_too_long_to_send'));
     return h('span', n + ' / ' + ANNOUNCE_MAX + ' characters');
   }
 
   function announceBody() {
     var a = ST.announce;
     var open = writesOpen();
-    return card(frag(icon('bullhorn'), ' Announce to every hitman'), frag(
-      h('p.about', 'One phone notice, the same words to everybody. Players see it from Staff, never from you. '
-        + 'At most ' + ANNOUNCE_MAX + ' characters, and no links, invites or handles. It is on the record with '
-        + 'who sent it, to whom, how many it reached and what it said.'),
+    return card(frag(icon('bullhorn'), t('admin.announce_to_every_hitman')), frag(
+      h('p.about', t('admin.one_phone_notice_the_same_words')
+        + t('admin.at_most') + ANNOUNCE_MAX + t('admin.characters_and_no_links_invites_or')
+        + t('admin.who_sent_it_to_whom_how')),
       segmented('an-scope', [
-        { value: 'active', label: 'Hitmen on a contract', disabled: !open, title: open ? null : whyNoWrite() },
-        { value: 'online', label: 'Everyone online', disabled: !open, title: open ? null : whyNoWrite() }
+        { value: 'active', label: t('admin.hitmen_on_a_contract'), disabled: !open, title: open ? null : whyNoWrite() },
+        { value: 'online', label: t('admin.everyone_online'), disabled: !open, title: open ? null : whyNoWrite() }
       ], a.scope),
       h('div.inline-form.is-wide',
-        field('an.text', { id: 'an-text', class: 'is-grow', placeholder: 'The notice',
+        field('an.text', { id: 'an-text', class: 'is-grow', placeholder: t('admin.the_notice'),
           maxlength: String(ANNOUNCE_MAX * 2), 'data-live': 'an-count', disabled: !open,
-          'aria-label': 'The notice to send' }),
-        writeBtn('.primary', 'an-send', {}, 'Send', 'Click again to send', 'paper-plane')),
+          'aria-label': t('admin.the_notice_to_send') }),
+        writeBtn('.primary', 'an-send', {}, t('admin.send'), t('admin.click_again_to_send'), 'paper-plane')),
       h('p.note', { id: 'an-count', 'aria-live': 'polite' }, announceCount()),
       answerBox(a.answer)));
   }
@@ -5739,8 +5882,8 @@
   ACTIONS['an-send'] = function (node) {
     var text = trim(S.forms['an.text']);
     var problem = null;
-    if (!text) problem = 'Write the notice first.';
-    else if (charCount(text) > ANNOUNCE_MAX) problem = 'At most ' + ANNOUNCE_MAX + ' characters.';
+    if (!text) problem = t('admin.write_the_notice_first');
+    else if (charCount(text) > ANNOUNCE_MAX) problem = t('admin.at_most') + ANNOUNCE_MAX + t('admin.characters');
     if (problem) {
       disarm();
       ST.announce.answer = { ok: false, text: problem };
@@ -5790,39 +5933,39 @@
   function historyBody() {
     var hs = ST.history;
     if (hs.error && !hs.data) return answerBox({ ok: false, text: hs.error });
-    if (!hs.data) return loading('Reading the settings history…');
+    if (!hs.data) return loading(t('admin.reading_the_settings_history'));
     var rows = asList(hs.data.rows);
     var hidden = Number(hs.data.hidden) || 0;
     return frag(
       answerBox(hs.answer),
       rows.length ? h('div.table-wrap', h('table.grid.is-history',
-        h('thead', h('tr', h('th', 'When'), h('th', 'Setting'), h('th', 'Before'), h('th', 'After'),
-          h('th', 'Who'), h('th', ''))),
+        h('thead', h('tr', h('th', t('admin.when')), h('th', t('admin.setting')), h('th', t('admin.before')), h('th', t('admin.after')),
+          h('th', t('admin.who')), h('th', ''))),
         h('tbody', rows.map(function (r) {
           return h('tr', { 'data-key': String(r.key || '') },
             h('td.nowrap', { title: when(r.ts) }, ago(r.ts)),
             h('td.wrap', h('b', String(r.label || r.key || '—')), h('div.mono.sub', String(r.key || '')),
-              r.reset ? h('span.chip', 'back to config.lua') : null),
+              r.reset ? h('span.chip', t('admin.back_to_config_lua')) : null),
             h('td.wrap', historyValue(r.old, r.secret)),
             h('td.wrap', historyValue(r['new'], r.secret)),
             h('td.wrap', String(r.by || '—')),
-            h('td.nowrap', r.ref ? writeBtn('.is-small', 'hs-undo', { 'data-ref': String(r.ref) }, 'Undo',
-              'Click again to undo', 'arrow-rotate-left') : null));
-        })))) : empty('No setting has been changed from the panel within the log\'s retention.'),
-      hidden ? h('p.note', hidden + ' change(s) to the Developer section\'s own settings are left out: they are '
-        + 'for staff who may open it.') : null,
+            h('td.nowrap', r.ref ? writeBtn('.is-small', 'hs-undo', { 'data-ref': String(r.ref) }, t('admin.undo'),
+              t('admin.click_again_to_undo'), 'arrow-rotate-left') : null));
+        })))) : empty(t('admin.no_setting_has_been_changed_from')),
+      hidden ? h('p.note', hidden + t('admin.change_to_the_developer_sections_own')
+        + t('admin.for_staff_who_may_open_it')) : null,
       h('div.btn-row',
-        hs.back.length ? btn('.is-small.ghost', 'hs-newer', {}, 'Newer', 'arrow-left') : null,
-        hs.data.next != null ? btn('.is-small.ghost', 'hs-older', {}, 'Older', 'arrow-right') : null));
+        hs.back.length ? btn('.is-small.ghost', 'hs-newer', {}, t('admin.newer'), 'arrow-left') : null,
+        hs.data.next != null ? btn('.is-small.ghost', 'hs-older', {}, t('admin.older'), 'arrow-right') : null));
   }
 
   /** Records \u203a Logs, Setting changes. */
   function settingsLogBody() {
     return frag(
-      h('div.toolbar', btn('.ghost', 'hs-refresh', {}, 'Refresh', 'rotate')),
-      h('p.hint', 'Every setting changed from the panel, newest first: when, the value before and after, and who. '
-        + 'Undo puts the value before that change back, checked as any change is; it takes two clicks and is on '
-        + 'the record. A secret is never shown.'),
+      h('div.toolbar', btn('.ghost', 'hs-refresh', {}, t('admin.refresh'), 'rotate')),
+      h('p.hint', t('admin.every_setting_changed_from_the_panel')
+        + t('admin.undo_puts_the_value_before_that')
+        + t('admin.the_record_a_secret_is_never')),
       h('div.stack', { id: 'hs' }, historyBody()));
   }
   function loadSettingsLog() {
@@ -5859,8 +6002,11 @@
 
   /* ---- a player's report, in Needs review ---- */
 
-  var REPORT_ROLE = { placer: 'the placer', target: 'the target', hitman: 'a hitman on it',
-                      viewer: 'a player who saw it on the board' };
+  var REPORT_ROLE;
+  Text.later(function () {
+    REPORT_ROLE = { placer: t('admin.the_placer'), target: t('admin.the_target'), hitman: t('admin.a_hitman_on_it'),
+                      viewer: t('admin.a_player_who_saw_it_on') };
+  });
 
   function isReport(item) { return !!item && item.kind === 'player_report'; }
   /** An item with no money in it, only ever dismissed with a note: a report,
@@ -5873,12 +6019,12 @@
     var known = item.known || {};
     var excerpt = asList(known.excerpt);
     return h('div.report',
-      h('p', 'Sent by ', h('b', REPORT_ROLE[known.role] || String(known.role || 'a player')),
-        known.note ? frag(': ', h('q', String(known.note))) : ', with no note.'),
+      h('p', t('admin.sent_by'), h('b', REPORT_ROLE[known.role] || String(known.role || t('admin.a_player'))),
+        known.note ? frag(': ', h('q', String(known.note))) : t('admin.with_no_note')),
       excerpt.length ? h('ol.excerpt', excerpt.map(function (m) {
         return h('li', h('span.mono.sub', clock(m.at)), ' ', h('b', String(m.alias || '?')), ': ',
           h('span.wrap', String(m.body || '')));
-      })) : h('p.note', known.thread ? 'The thread was empty.' : 'No thread was sent with it.'));
+      })) : h('p.note', known.thread ? t('admin.the_thread_was_empty') : t('admin.no_thread_was_sent_with_it')));
   }
 
   /** A report moves no money: Dismiss, with what was done, is all it takes. */
@@ -5886,9 +6032,9 @@
     var id = String(item.id);
     return h('div.rv-form',
       h('div.inline-form.is-wide',
-        field('rv.' + id + '.note', { class: 'is-grow', placeholder: 'What was done (a note is required)',
-          maxlength: '200', 'aria-label': 'Note' }),
-        writeBtn('', 'resolve', { 'data-id': id, 'data-report': 'yes' }, 'Dismiss it', 'Click again to dismiss',
+        field('rv.' + id + '.note', { class: 'is-grow', placeholder: t('admin.what_was_done_a_note_is'),
+          maxlength: '200', 'aria-label': t('admin.note') }),
+        writeBtn('', 'resolve', { 'data-id': id, 'data-report': 'yes' }, t('admin.dismiss_it'), t('admin.click_again_to_dismiss'),
           'xmark')));
   }
 
@@ -5903,7 +6049,7 @@
   /** A fault in a handler is said, not swallowed: in CEF nobody reads a console. */
   function run(fn, node, event) {
     try { fn(node, event); } catch (err) {
-      toast('The page hit an error: ' + (err && err.message ? err.message : String(err)), 'error');
+      toast(t('admin.the_page_hit_an_error') + (err && err.message ? err.message : String(err)), 'error');
     }
   }
 
@@ -6005,12 +6151,12 @@
   function modOpen() { return canModerate() && S.recovery === 'ready'; }
   function whyNoMod() {
     if (!canModerate()) {
-      return 'Read only: this needs the staff ACE (Config.Admin.Ace) or the moderator ACE '
-        + '(Config.Admin.ModeratorAce); the extra ACEs only read.';
+      return t('admin.read_only_this_needs_the_staff')
+        + t('admin.config_admin_moderatorace_the_extra_aces');
     }
-    if (S.recovery === 'recovering') return 'Still recovering from the restart: try again in a moment.';
+    if (S.recovery === 'recovering') return t('admin.still_recovering_from_the_restart_try');
     if (S.recovery === 'recovery_failed') {
-      return 'Recovery failed at the last start: restart the resource once the cause in the console is fixed.';
+      return t('admin.recovery_failed_at_the_last_start');
     }
     return '';
   }
@@ -6024,8 +6170,11 @@
   }
 
   var SUSPEND_DAYS = [1, 3, 7, 30];
-  var PROTECT_UNITS = [{ value: 'h', label: 'Hours' }, { value: 'd', label: 'Days' },
-                       { value: 'forever', label: 'Permanent' }];
+  var PROTECT_UNITS;
+  Text.later(function () {
+    PROTECT_UNITS = [{ value: 'h', label: t('admin.hours') }, { value: 'd', label: t('admin.days') },
+                       { value: 'forever', label: t('admin.permanent') }];
+  });
 
   function resetPlayerStaff() {
     S.pstaff = { suspend: null, protect: null, pay: null, history: null, historyError: null,
@@ -6050,30 +6199,30 @@
     var body;
     if (row) {
       body = frag(
-        h('p.sub', 'Suspended ' + ago(row.since) + ', ' + untilWords(row, 'until you lift it')
-          + (row.reason ? ': ' + String(row.reason) : '') + (row.by ? ' · by ' + String(row.by) : '')),
-        h('p.note', 'They may not place or accept a contract; they are told until when and why. '
-          + 'Their live contracts run on: freeze them for that.'),
-        h('div.btn-row', modBtn('', 'ps-lift', { id: 'ps-lift' }, 'Lift suspension', null, 'unlock')));
+        h('p.sub', 'Suspended ' + ago(row.since) + ', ' + untilWords(row, t('admin.until_you_lift_it'))
+          + (row.reason ? ': ' + String(row.reason) : '') + (row.by ? t('admin.by') + String(row.by) : '')),
+        h('p.note', t('admin.they_may_not_place_or_accept')
+          + t('admin.their_live_contracts_run_on_freeze')),
+        h('div.btn-row', modBtn('', 'ps-lift', { id: 'ps-lift' }, t('admin.lift_suspension'), null, 'unlock')));
     } else {
       var days = trim(S.forms['ps.days']);
       body = frag(
-        h('p.note', 'Bars them from placing or accepting contracts, for some days or until you lift it, '
-          + 'with a reason they are shown. Their live contracts are not touched: freeze them for that.'),
+        h('p.note', t('admin.bars_them_from_placing_or_accepting')
+          + t('admin.with_a_reason_they_are_shown')),
         h('div.inline-form.is-wide.ps-picks',
           segmented('ps-days', SUSPEND_DAYS.map(function (n) {
             return { value: String(n), label: n === 1 ? '1 day' : n + ' days', disabled: !modOpen() };
-          }).concat([{ value: '0', label: 'Until lifted', disabled: !modOpen() }]), days),
-          field('ps.days', { id: 'ps-days', class: 'is-short', placeholder: 'Days', inputmode: 'numeric',
-            maxlength: '3', disabled: !modOpen(), 'aria-label': 'Days suspended (0 until lifted)' })),
+          }).concat([{ value: '0', label: t('admin.until_lifted_2'), disabled: !modOpen() }]), days),
+          field('ps.days', { id: 'ps-days', class: 'is-short', placeholder: t('admin.days'), inputmode: 'numeric',
+            maxlength: '3', disabled: !modOpen(), 'aria-label': t('admin.days_suspended_0_until_lifted') })),
         h('div.inline-form.is-wide',
           field('ps.reason', { id: 'ps-reason', class: 'is-grow', maxlength: '120', disabled: !modOpen(),
-            placeholder: 'Reason (required: they are shown it, and it goes in the log)',
-            'aria-label': 'Reason for the suspension' }),
-          modBtn('.danger', 'ps-suspend', {}, 'Suspend', 'Click again to suspend', 'ban')));
+            placeholder: t('admin.reason_required_they_are_shown_it'),
+            'aria-label': t('admin.reason_for_the_suspension') }),
+          modBtn('.danger', 'ps-suspend', {}, t('admin.suspend'), t('admin.click_again_to_suspend'), 'ban')));
     }
-    return card('Suspend from contracts', frag(body, answerBox(S.pstaff.suspend)), '',
-      row ? h('span.chip.is-warn.is-suspended', 'Suspended') : null);
+    return card(t('admin.suspend_from_contracts'), frag(body, answerBox(S.pstaff.suspend)), '',
+      row ? h('span.chip.is-warn.is-suspended', t('admin.suspended')) : null);
   }
 
   function protectCard(d) {
@@ -6081,65 +6230,71 @@
     var body;
     if (row) {
       body = frag(
-        h('p.sub', 'Protected ' + ago(row.since) + ', ' + untilWords(row, 'for good')
-          + (row.reason ? ': ' + String(row.reason) : '') + (row.by ? ' · by ' + String(row.by) : '')),
-        h('p.note', 'No new contract may name them. Contracts already on them run on: freeze them to put '
-          + 'those on hold.'),
-        h('div.btn-row', modBtn('', 'pp-lift', { id: 'pp-lift' }, 'Lift protection', null, 'unlock')));
+        h('p.sub', 'Protected ' + ago(row.since) + ', ' + untilWords(row, t('admin.for_good_3'))
+          + (row.reason ? ': ' + String(row.reason) : '') + (row.by ? t('admin.by') + String(row.by) : '')),
+        h('p.note', t('admin.no_new_contract_may_name_them')
+          + t('admin.those_on_hold')),
+        h('div.btn-row', modBtn('', 'pp-lift', { id: 'pp-lift' }, t('admin.lift_protection'), null, 'unlock')));
     } else {
       var forever = S.pstaff.unit === 'forever';
       body = frag(
-        h('p.note', 'Makes them untargetable: a new player, a break from roleplay, a staff member off duty. '
-          + 'A new contract on them is refused with the answer the target rules give ("cannot be listed '
-          + 'right now"), and the target search lists them like anybody, so nothing says staff protect them. '
-          + 'Contracts already on them are not touched: freeze them for that.'),
+        h('p.note', t('admin.makes_them_untargetable_a_new_player')
+          + t('admin.a_new_contract_on_them_is')
+          + t('admin.right_now_and_the_target_search')
+          + t('admin.contracts_already_on_them_are_not')),
         h('div.inline-form.is-wide.pp-picks',
           segmented('pp-unit', PROTECT_UNITS.map(function (u) {
             return { value: u.value, label: u.label, disabled: !modOpen() };
           }), S.pstaff.unit),
           forever ? null : field('pp.amount', { id: 'pp-amount', class: 'is-short', inputmode: 'numeric',
-            maxlength: '4', placeholder: S.pstaff.unit === 'd' ? 'Days' : 'Hours', disabled: !modOpen(),
-            'aria-label': S.pstaff.unit === 'd' ? 'Days protected' : 'Hours protected' })),
+            maxlength: '4', placeholder: S.pstaff.unit === 'd' ? t('admin.days') : t('admin.hours'), disabled: !modOpen(),
+            'aria-label': S.pstaff.unit === 'd' ? t('admin.days_protected') : t('admin.hours_protected') })),
         h('div.inline-form.is-wide',
           field('pp.reason', { id: 'pp-reason', class: 'is-grow', maxlength: '120', disabled: !modOpen(),
-            placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the protection' }),
-          modBtn('', 'pp-protect', {}, 'Protect', 'Click again to protect', 'shield')));
+            placeholder: t('admin.reason_required_kept_in_the_log'), 'aria-label': t('admin.reason_for_the_protection') }),
+          modBtn('', 'pp-protect', {}, t('admin.protect'), t('admin.click_again_to_protect'), 'shield')));
     }
-    return card('Protect from contracts', frag(body, answerBox(S.pstaff.protect)), '',
-      row ? h('span.chip.is-protected', 'Protected') : null);
+    return card(t('admin.protect_from_contracts'), frag(body, answerBox(S.pstaff.protect)), '',
+      row ? h('span.chip.is-protected', t('admin.protected')) : null);
   }
 
   function payCard(d) {
     var max = Number(d.payMax) || 0;
     var open = writesOpen() && max > 0;
-    var why = max > 0 ? whyNoWrite() : 'Manual payments are off (Config.Staff.ManualPaymentMax is 0).';
-    return card('Pay', frag(
+    var why = max > 0 ? whyNoWrite() : t('admin.manual_payments_are_off_config_staff');
+    return card(t('admin.pay'), frag(
       h('p.note', max > 0
-        ? 'Pays them cash or bank, at most ' + money(max) + ' at once (Config.Staff.ManualPaymentMax): '
-          + 'into their hands now when they are in the city, otherwise at their next login. It creates money, '
-          + 'so every payment is on the record with your reason.'
+        ? t('admin.pays_them_cash_or_bank_at') + money(max) + t('admin.at_once_config_staff_manualpaymentmax')
+          + t('admin.into_their_hands_now_when_they')
+          + t('admin.so_every_payment_is_on_the')
         : why),
       h('div.inline-form.is-wide.pay-form',
-        segmented('pay-account', [{ value: 'cash', label: 'Cash', disabled: !open },
-          { value: 'bank', label: 'Bank', disabled: !open }], S.pstaff.account),
+        segmented('pay-account', [{ value: 'cash', label: t('admin.cash'), disabled: !open },
+          { value: 'bank', label: t('admin.bank'), disabled: !open }], S.pstaff.account),
         field('pay.amount', { id: 'pay-amount', class: 'is-short', inputmode: 'numeric', maxlength: '9',
-          placeholder: 'Amount ($)', disabled: !open, 'aria-label': 'Amount to pay' })),
+          placeholder: t('admin.amount_2'), disabled: !open, 'aria-label': t('admin.amount_to_pay') })),
       h('div.inline-form.is-wide',
         field('pay.reason', { id: 'pay-reason', class: 'is-grow', maxlength: '120', disabled: !open,
-          placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the payment' }),
-        writeBtn('.danger', 'pay-send', open ? {} : { title: why }, 'Pay', 'Click again to pay',
+          placeholder: t('admin.reason_required_kept_in_the_log'), 'aria-label': t('admin.reason_for_the_payment') }),
+        writeBtn('.danger', 'pay-send', open ? {} : { title: why }, t('admin.pay'), t('admin.click_again_to_pay'),
           'money-bill', false, open)),
       answerBox(S.pstaff.pay)));
   }
 
-  var MEASURE_LABEL = { freeze: 'Freeze', suspend: 'Suspension', protect: 'Protection' };
-  var ROLE_LABEL = { client: 'placed', target: 'on them', hitman: 'took' };
+  var MEASURE_LABEL;
+  Text.later(function () {
+    MEASURE_LABEL = { freeze: t('admin.freeze'), suspend: t('admin.suspension'), protect: t('admin.protection') };
+  });
+  var ROLE_LABEL;
+  Text.later(function () {
+    ROLE_LABEL = { client: 'placed', target: t('admin.on_them'), hitman: 'took' };
+  });
 
   function moneyTable(rows, none) {
     rows = asList(rows);
     if (!rows.length) return empty(none);
     return h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Kind'), h('th.num', 'Amount'))),
+      h('thead', h('tr', h('th', t('admin.kind')), h('th.num', t('admin.amount')))),
       h('tbody', rows.map(function (r) {
         return h('tr', h('td', String(r.kind)), h('td.num', money(r.amount)));
       }))));
@@ -6147,47 +6302,47 @@
 
   function historyCard() {
     var hd = S.pstaff.history;
-    if (S.pstaff.historyError) return card('History', empty(S.pstaff.historyError));
-    if (!hd) return card('History', loading('Reading their history…'));
+    if (S.pstaff.historyError) return card(t('admin.history'), empty(S.pstaff.historyError));
+    if (!hd) return card(t('admin.history'), loading(t('admin.reading_their_history')));
     var c = hd.counts || {};
     var measures = asList(hd.measures);
     var recent = asList(hd.recent);
     var ident = hd.identified === true;
-    return card('History', frag(
+    return card(t('admin.history'), frag(
       h('p.hint', ident
-        ? 'Everything the store keeps of them, anonymous contracts included'
-          + (Number(hd.anonymous) > 0 ? ' (' + num(hd.anonymous) + ' anonymous)' : '') + '. Read-only.'
-        : 'What the store keeps of them, leaving out every contract they placed or took anonymously, '
-          + 'and any money or purchase on one, which only the identity ACE may see. No names. Read-only.'),
+        ? t('admin.everything_the_store_keeps_of_them')
+          + (Number(hd.anonymous) > 0 ? ' (' + num(hd.anonymous) + ' anonymous)' : '') + t('admin.read_only_2')
+        : t('admin.what_the_store_keeps_of_them')
+          + t('admin.and_any_money_or_purchase_on')),
       h('div.tiles.is-compact',
-        tile('Placed', h('p.big', num(c.placed))),
-        tile('Taken', h('p.big', num(c.taken))),
-        tile('Completed', h('p.big', num(c.completed))),
-        tile('Cancelled', h('p.big', num(c.cancelled))),
-        tile('On them', h('p.big', num(c.onThem))),
-        tile('Bought out', h('p.big', num(c.boughtOut)))),
+        tile(t('admin.placed'), h('p.big', num(c.placed))),
+        tile(t('admin.taken'), h('p.big', num(c.taken))),
+        tile(t('admin.completed'), h('p.big', num(c.completed))),
+        tile(t('admin.cancelled'), h('p.big', num(c.cancelled))),
+        tile(t('admin.on_them_2'), h('p.big', num(c.onThem))),
+        tile(t('admin.bought_out'), h('p.big', num(c.boughtOut)))),
       h('div.tiles.is-compact',
-        tile('Buyouts paid', h('p.big', num(hd.buyouts && hd.buyouts.paid))),
-        tile('Paid for buyouts', h('p.big.is-sum', money(hd.buyouts && hd.buyouts.amount))),
-        tile('Informants bought', h('p.big', num(hd.informants && hd.informants.count))),
-        tile('Spent on informants', h('p.big.is-sum', money(hd.informants && hd.informants.spent)))),
+        tile(t('admin.buyouts_paid'), h('p.big', num(hd.buyouts && hd.buyouts.paid))),
+        tile(t('admin.paid_for_buyouts'), h('p.big.is-sum', money(hd.buyouts && hd.buyouts.amount))),
+        tile(t('admin.informants_bought'), h('p.big', num(hd.informants && hd.informants.count))),
+        tile(t('admin.spent_on_informants'), h('p.big.is-sum', money(hd.informants && hd.informants.spent)))),
       h('div.cols',
-        card('Money in', moneyTable(hd.money && hd.money['in'], 'Nothing in that the store keeps.')),
-        card('Money out', moneyTable(hd.money && hd.money.out, 'Nothing out that the store keeps.'))),
-      card('Freezes, suspensions and protections', measures.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'What'), h('th', 'From'), h('th', 'Until'), h('th', 'State'),
-          h('th', 'Reason'))),
+        card(t('admin.money_in'), moneyTable(hd.money && hd.money['in'], t('admin.nothing_in_that_the_store_keeps'))),
+        card(t('admin.money_out'), moneyTable(hd.money && hd.money.out, t('admin.nothing_out_that_the_store_keeps')))),
+      card(t('admin.freezes_suspensions_and_protections'), measures.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.what')), h('th', t('admin.from')), h('th', t('admin.until')), h('th', t('admin.state')),
+          h('th', t('admin.reason')))),
         h('tbody', measures.map(function (m) {
           return h('tr',
             h('td', MEASURE_LABEL[m.kind] || String(m.kind)),
             h('td.nowrap', when(m.from)),
             h('td.nowrap', m.ended ? when(m.ended) : m['until'] ? when(m['until']) : '—'),
             h('td', String(m.state || '—')),
-            h('td', String(m.reason || '—') + (m.by ? ' · by ' + String(m.by) : '')));
-        })))) : empty('None on record.')),
-      card('Contracts', recent.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Contract'), h('th', 'Their part'), h('th', 'State'), h('th', 'Placed'),
-          ident ? h('th', 'Client') : null, ident ? h('th', 'Target') : null)),
+            h('td', String(m.reason || '—') + (m.by ? t('admin.by') + String(m.by) : '')));
+        })))) : empty(t('admin.none_on_record'))),
+      card(t('admin.contracts'), recent.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.contract')), h('th', t('admin.their_part')), h('th', t('admin.state')), h('th', t('admin.placed')),
+          ident ? h('th', t('admin.client')) : null, ident ? h('th', t('admin.target')) : null)),
         h('tbody', recent.map(function (r) {
           var id = String(r.id);
           return h('tr',
@@ -6197,7 +6352,7 @@
             h('td', stateChip(r.state)), h('td.nowrap', when(r.created_at)),
             ident ? h('td.name', String(r.client || '—')) : null,
             ident ? h('td.name', String(r.target || '—')) : null);
-        })))) : empty('No contracts the store keeps.'), '', h('span.sub', 'newest first'))));
+        })))) : empty(t('admin.no_contracts_the_store_keeps')), '', h('span.sub', t('admin.newest_first_3')))));
   }
 
   /** The cards under Freeze on a player's lookup. */
@@ -6252,9 +6407,9 @@
     var reason = trim(S.forms['ps.reason']);
     var raw = trim(S.forms['ps.days']);
     if (!/^\d{1,3}$/.test(raw) || Number(raw) > 365) {
-      return refuse('suspend', 'Choose how many days (1 to 365), or Until lifted.');
+      return refuse('suspend', t('admin.choose_how_many_days_1_to'));
     }
-    if (!reason) return refuse('suspend', 'Give a reason: they are shown it, and it goes on the record.');
+    if (!reason) return refuse('suspend', t('admin.give_a_reason_they_are_shown'));
     if (!confirmed(node)) return;
     staffWrite(write('suspend', { ref: S.players.ref, days: Number(raw),
       reason: reason.slice(0, 120) }, 'pstaff:suspend', node), 'suspend');
@@ -6280,11 +6435,11 @@
       var n = /^\d{1,4}$/.test(raw) ? Number(raw) : 0;
       hours = S.pstaff.unit === 'd' ? n * 24 : n;
       if (n < 1 || hours > 8760) {
-        return refuse('protect', S.pstaff.unit === 'd' ? 'Give a number of days, 1 to 365, or choose Permanent.'
-          : 'Give a number of hours, 1 to 8760, or choose Permanent.');
+        return refuse('protect', S.pstaff.unit === 'd' ? t('admin.give_a_number_of_days_1')
+          : t('admin.give_a_number_of_hours_1'));
       }
     }
-    if (!reason) return refuse('protect', 'Give a reason: it goes on the record.');
+    if (!reason) return refuse('protect', t('admin.give_a_reason_it_goes_on'));
     if (!confirmed(node)) return;
     staffWrite(write('protect', { ref: S.players.ref, hours: hours,
       reason: reason.slice(0, 120) }, 'pstaff:protect', node), 'protect');
@@ -6306,37 +6461,41 @@
     var max = Number(S.players.data && S.players.data.payMax) || 0;
     var amount = wholeNumber(S.forms['pay.amount']);
     var reason = trim(S.forms['pay.reason']);
-    if (!amount) return refuse('pay', 'Give the amount, a whole number of dollars.');
+    if (!amount) return refuse('pay', t('admin.give_the_amount_a_whole_number'));
     if (max > 0 && amount > max) {
-      return refuse('pay', 'At most ' + money(max) + ' at once (Config.Staff.ManualPaymentMax).');
+      return refuse('pay', t('admin.at_most') + money(max) + t('admin.at_once_config_staff_manualpaymentmax_2'));
     }
-    if (!reason) return refuse('pay', 'Give a reason: it goes on the record.');
+    if (!reason) return refuse('pay', t('admin.give_a_reason_it_goes_on'));
     if (!confirmed(node)) return;
     staffWrite(write('manualPay', { ref: S.players.ref, amount: amount, account: S.pstaff.account,
       reason: reason.slice(0, 120) }, 'pstaff:pay', node), 'pay');
   };
 
-  STAFF_ACTIONS.push(
-    { title: 'Suspend or protect a player', icon: 'ban', view: 'players', go: 'Open Players',
-      text: 'Look the player up. Suspend bars them from placing or accepting contracts for some days or until '
-        + 'lifted, with a reason they are shown; Protect makes them untargetable for some hours, days or for '
-        + 'good. Neither touches live contracts: the freeze is the tool for those. Lift ends either at once.' },
-    { title: 'Pay a player', icon: 'money-bill', view: 'players', go: 'Open Players',
-      text: 'Look the player up, then Pay: cash or bank, with a reason, on two clicks, at most '
-        + 'Config.Staff.ManualPaymentMax. Paid at their next login when they are away. The staff ACE only.' });
+  Text.later(function () {
+    STAFF_ACTIONS.push(
+    { title: t('admin.suspend_or_protect_a_player'), icon: 'ban', view: 'players', go: t('admin.open_players'),
+      text: t('admin.look_the_player_up_suspend_bars')
+        + t('admin.lifted_with_a_reason_they_are')
+        + t('admin.good_neither_touches_live_contracts_the') },
+    { title: t('admin.pay_a_player'), icon: 'money-bill', view: 'players', go: t('admin.open_players'),
+      text: t('admin.look_the_player_up_then_pay')
+        + t('admin.config_staff_manualpaymentmax_paid_at_their') });
+  });
 
-  HELP.push(
-    { title: 'Suspensions and protections', icon: 'ban',
-      text: 'Staff with the staff or moderator ACE can suspend a player from contracts (they cannot place or '
-        + 'accept one, and are told until when and why) or protect one from them (a new contract on them is '
-        + 'refused as "cannot be listed right now", and nothing says staff protect them). Both end on their '
-        + 'own, or with Lift. Neither touches a contract already running: the freeze is the tool for that.',
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.suspensions_and_protections'), icon: 'ban',
+      text: t('admin.staff_with_the_staff_or_moderator_2')
+        + t('admin.accept_one_and_are_told_until')
+        + t('admin.refused_as_cannot_be_listed_right')
+        + t('admin.own_or_with_lift_neither_touches'),
       links: [] },
-    { title: 'Moderators', icon: 'gavel',
-      text: 'The moderator ACE (Config.Admin.ModeratorAce) reads everything the staff ACE reads, without '
-        + 'identities. They may freeze, suspend, protect, void and move a deadline. Settings, payments, '
-        + 'settling, the review queue and the Developer section stay with the staff ACE.',
-      links: [{ key: 'Staff.ManualPaymentMax', label: 'Most one manual payment may be' }] });
+    { title: t('admin.moderators'), icon: 'gavel',
+      text: t('admin.the_moderator_ace_config_admin_moderatorace')
+        + t('admin.identities_they_may_freeze_suspend_protect')
+        + t('admin.settling_the_review_queue_and_the'),
+      links: [{ key: 'Staff.ManualPaymentMax', label: t('admin.most_one_manual_payment_may_be') }] });
+  });
 
   /* ---------- opening and closing -------------------------------------- */
 
@@ -6435,13 +6594,13 @@
     var notes = asList(staff.notes);
     return frag(
       notes.length ? h('ol.ct-note-list', notes.map(function (n) {
-        return h('li', h('span.time', when(n.at)), ' ', h('span.sub', String(n.by || 'Staff')),
+        return h('li', h('span.time', when(n.at)), ' ', h('span.sub', String(n.by || t('admin.staff'))),
           h('p.text', String(n.text || '')));
-      })) : empty('No notes yet. Only staff see them.'),
+      })) : empty(t('admin.no_notes_yet_only_staff_see')),
       h('div.inline-form.is-wide',
-        field('dr.note.' + id, { class: 'is-grow', placeholder: 'A note for staff, e.g. ticket #42, waiting on clip',
-          maxlength: String(Number(staff.noteMax) || 300), disabled: !writesOpen(), 'aria-label': 'A staff note' }),
-        writeBtn('', 'ct-note', {}, 'Add note', 'Click again to add', 'note-sticky')));
+        field('dr.note.' + id, { class: 'is-grow', placeholder: t('admin.a_note_for_staff_e_g'),
+          maxlength: String(Number(staff.noteMax) || 300), disabled: !writesOpen(), 'aria-label': t('admin.a_staff_note') }),
+        writeBtn('', 'ct-note', {}, t('admin.add_note'), t('admin.click_again_to_add'), 'note-sticky')));
   }
 
   ACTIONS['ct-note'] = function (node) {
@@ -6450,7 +6609,7 @@
     var text = trim(S.forms['dr.note.' + id]);
     if (!text) {
       disarm();
-      S.drawer.answer = { ok: false, text: 'Write the note.' };
+      S.drawer.answer = { ok: false, text: t('admin.write_the_note') };
       drawDrawer();
       return;
     }
@@ -6475,41 +6634,41 @@
     var active = activeOperatives(d);
     var past = asList(staff.removals);
     var history = past.length ? h('ul.plain.ct-history', past.map(function (r) {
-      return h('li', h('span.time', when(r.at)), ' ', h('b', String(r.who || 'an operative')),
-        ' removed by ' + String(r.by || 'Staff'),
-        r.stakeReturned ? h('span.chip', 'stake returned') : null,
+      return h('li', h('span.time', when(r.at)), ' ', h('b', String(r.who || t('admin.an_operative'))),
+        t('admin.removed_by') + String(r.by || t('admin.staff')),
+        r.stakeReturned ? h('span.chip', t('admin.stake_returned')) : null,
         r.blocked ? h('span.chip.is-warn', 'barred') : null,
         h('span.detail', ' ' + String(r.reason || '')));
     })) : null;
     if (!staff.removable) {
-      return frag(h('p.note', 'Only a live contract (active or accepted) has operatives to remove.'), history);
+      return frag(h('p.note', t('admin.only_a_live_contract_active_or_2')), history);
     }
-    if (!active.length) return frag(h('p.note', 'Nobody is on it now.'), history);
+    if (!active.length) return frag(h('p.note', t('admin.nobody_is_on_it_now')), history);
     if (!active.some(function (m) { return String(m.id) === st.pick; })) st.pick = '';
     var open = writesOpen();
     var off = { disabled: !open, title: open ? null : whyNoWrite() };
     return frag(
-      h('p.note', 'Takes them off without ending it for anybody else. The placer and the other operatives are '
-        + 'told an operative left, as a walk-away says it; they are told "Staff removed you from a contract."'),
-      h('div.ct-row', h('span.ct-label', 'Operative'),
+      h('p.note', t('admin.takes_them_off_without_ending_it')
+        + t('admin.told_an_operative_left_as_a')),
+      h('div.ct-row', h('span.ct-label', t('admin.operative')),
         segmented('ct-rm-pick', active.map(function (m) {
           return { value: String(m.id), label: String(m.alias || 'operative') + (m.name ? ' · ' + m.name : ''),
                    disabled: !open, title: off.title };
         }), st.pick)),
-      h('div.ct-row', h('span.ct-label', 'Their stake'),
+      h('div.ct-row', h('span.ct-label', t('admin.their_stake')),
         segmented('ct-rm-stake', [
-          { value: 'client', label: 'To the placer (as a walk-away)', disabled: !open, title: off.title },
-          { value: 'return', label: 'Return the stake', disabled: !open, title: off.title }
+          { value: 'client', label: t('admin.to_the_placer_as_a_walk'), disabled: !open, title: off.title },
+          { value: 'return', label: t('admin.return_the_stake'), disabled: !open, title: off.title }
         ], st.stake)),
-      h('div.ct-row', h('span.ct-label', 'Afterwards'),
+      h('div.ct-row', h('span.ct-label', t('admin.afterwards')),
         segmented('ct-rm-block', [
-          { value: '', label: 'May take it again', disabled: !open, title: off.title },
-          { value: 'block', label: 'Bar them from it', disabled: !open, title: off.title }
+          { value: '', label: t('admin.may_take_it_again'), disabled: !open, title: off.title },
+          { value: 'block', label: t('admin.bar_them_from_it'), disabled: !open, title: off.title }
         ], st.block)),
       h('div.inline-form.is-wide',
-        field('dr.rm.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
-          maxlength: '120', disabled: !open, 'aria-label': 'Reason for removing the operative' }),
-        writeBtn('.danger', 'ct-remove', {}, 'Remove', 'Click again to remove', 'user-minus')),
+        field('dr.rm.reason.' + id, { class: 'is-grow', placeholder: t('admin.reason_required_kept_in_the_log'),
+          maxlength: '120', disabled: !open, 'aria-label': t('admin.reason_for_removing_the_operative') }),
+        writeBtn('.danger', 'ct-remove', {}, t('admin.remove'), t('admin.click_again_to_remove'), 'user-minus')),
       history);
   }
 
@@ -6522,7 +6681,7 @@
     if (!id) return;
     var st = ctState();
     var reason = trim(S.forms['dr.rm.reason.' + id]).slice(0, 120);
-    var problem = !st.pick ? 'Pick the operative to remove.' : (!reason ? 'Give a reason: it goes on the record.' : null);
+    var problem = !st.pick ? t('admin.pick_the_operative_to_remove') : (!reason ? t('admin.give_a_reason_it_goes_on') : null);
     if (problem) {
       disarm();
       S.drawer.answer = { ok: false, text: problem };
@@ -6601,25 +6760,25 @@
   }
 
   function rewardWho(st) {
-    return st.from === 'placer' ? 'charged to the placer\'s ' + st.account : 'added by staff (' + st.account + ')';
+    return st.from === 'placer' ? t('admin.charged_to_the_placers') + st.account : t('admin.added_by_staff') + st.account + ')';
   }
 
   /** What the change typed would do, in the server's figures. */
   function rewardPreviewText() {
     var st = rwState();
     var by = rewardBy();
-    if (by == null) return h('span', 'Type a whole number of dollars to see the reward after.');
+    if (by == null) return h('span', t('admin.type_a_whole_number_of_dollars'));
     var v = st.previewBy === by ? st.preview : null;
-    if (!v) return h('span', 'Reading what that would do…');
-    if (v.refused) return h('span.is-warn', String(v.message || 'Not possible now.'));
+    if (!v) return h('span', t('admin.reading_what_that_would_do'));
+    if (v.refused) return h('span.is-warn', String(v.message || t('admin.not_possible_now')));
     var parts = [h('span', 'Collection ' + num(v.slot) + ': ', h('b', money(v.reward)), ' → ', h('b', money(v.after)))];
     if (by > 0) parts.push(h('span', ', ' + rewardWho(st) + '.'));
     else {
-      parts.push(h('span', '. ' + money(v.toStaff || 0) + ' of what staff added comes off; '
-        + money(v.toPlacer || 0) + ' goes back to the placer.'));
+      parts.push(h('span', '. ' + money(v.toStaff || 0) + t('admin.of_what_staff_added_comes_off')
+        + money(v.toPlacer || 0) + t('admin.goes_back_to_the_placer')));
     }
     if (Number(v.max) && Math.abs(by) > Number(v.max)) {
-      parts.push(h('span.is-warn', ' At most ' + money(v.max) + ' at once (Config.Staff.RewardChangeMax).'));
+      parts.push(h('span.is-warn', t('admin.at_most_2') + money(v.max) + t('admin.at_once_config_staff_rewardchangemax')));
     }
     return frag(parts);
   }
@@ -6629,43 +6788,43 @@
     var c = d.contract || {};
     var st = rwState();
     if (c.state !== 'active' && c.state !== 'accepted') {
-      return h('p.note', 'Only a live contract (active or accepted) has a reward to change.');
+      return h('p.note', t('admin.only_a_live_contract_active_or_3'));
     }
     var base = st.baseFor === id ? st.base : null;
     var open = writesOpen();
     var off = { disabled: !open, title: open ? null : whyNoWrite() };
-    var facts = !base ? loading('Reading the reward…')
-      : base.refused ? h('p.note.is-warn', String(base.message || 'Its reward cannot be changed now.'))
+    var facts = !base ? loading(t('admin.reading_the_reward'))
+      : base.refused ? h('p.note.is-warn', String(base.message || t('admin.its_reward_cannot_be_changed_now')))
         : h('dl.facts',
-          h('dt', 'Collection'), h('dd', num(base.slot)),
-          h('dt', 'Its reward'), h('dd', money(base.reward)),
-          h('dt', 'Added by staff'), h('dd', money(base.staffAdded || 0)),
-          h('dt', 'Lowered by at most'), h('dd', money(base.mostLower || 0)),
-          h('dt', 'One change at most'), h('dd', Number(base.max) ? money(base.max) : 'off (Config.Staff.RewardChangeMax is 0)'));
-    var dirOpts = [{ value: 'raise', label: 'Raise', disabled: !open, title: off.title },
-                   { value: 'lower', label: 'Lower', disabled: !open, title: off.title }];
+          h('dt', t('admin.collection')), h('dd', num(base.slot)),
+          h('dt', t('admin.its_reward')), h('dd', money(base.reward)),
+          h('dt', t('admin.added_by_staff_2')), h('dd', money(base.staffAdded || 0)),
+          h('dt', t('admin.lowered_by_at_most')), h('dd', money(base.mostLower || 0)),
+          h('dt', t('admin.one_change_at_most')), h('dd', Number(base.max) ? money(base.max) : t('admin.off_config_staff_rewardchangemax_is_0')));
+    var dirOpts = [{ value: 'raise', label: t('admin.raise'), disabled: !open, title: off.title },
+                   { value: 'lower', label: t('admin.lower'), disabled: !open, title: off.title }];
     return frag(
-      h('p.note', 'Changes the reward of the collection paid next. The placer and the operatives are told it '
-        + 'changed, by staff; nobody is named.'),
+      h('p.note', t('admin.changes_the_reward_of_the_collection')
+        + t('admin.changed_by_staff_nobody_is_named')),
       facts,
-      h('div.ct-row', h('span.ct-label', 'Change'), segmented('rw-dir', dirOpts, st.dir),
+      h('div.ct-row', h('span.ct-label', t('admin.change')), segmented('rw-dir', dirOpts, st.dir),
         field('dr.rw.amt.' + id, { class: 'is-short', placeholder: '$ amount', inputmode: 'numeric', maxlength: '9',
-          'data-live': 'rw-preview', disabled: !open, 'aria-label': 'Dollars to change the reward by' })),
-      st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', 'Paid by'),
+          'data-live': 'rw-preview', disabled: !open, 'aria-label': t('admin.dollars_to_change_the_reward_by') })),
+      st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', t('admin.paid_by')),
         segmented('rw-from', [
-          { value: 'staff', label: 'Added by staff', disabled: !open, title: off.title },
-          { value: 'placer', label: 'Charged to the placer', disabled: !open, title: off.title }
+          { value: 'staff', label: t('admin.added_by_staff_2'), disabled: !open, title: off.title },
+          { value: 'placer', label: t('admin.charged_to_the_placer'), disabled: !open, title: off.title }
         ], st.from)) : null,
-      st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', 'Account'),
+      st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', t('admin.account')),
         segmented('rw-account', [
-          { value: 'bank', label: 'Bank', disabled: !open, title: off.title },
-          { value: 'cash', label: 'Cash', disabled: !open, title: off.title }
+          { value: 'bank', label: t('admin.bank'), disabled: !open, title: off.title },
+          { value: 'cash', label: t('admin.cash'), disabled: !open, title: off.title }
         ], st.account)) : null,
       h('p.note', { id: 'dr-rw-preview', 'aria-live': 'polite' }, rewardPreviewText()),
       h('div.inline-form.is-wide',
-        field('dr.rw.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
-          maxlength: '120', disabled: !open, 'aria-label': 'Reason for changing the reward' }),
-        writeBtn('.primary', 'rw-change', {}, 'Change reward', 'Click again to change', 'sack-dollar')));
+        field('dr.rw.reason.' + id, { class: 'is-grow', placeholder: t('admin.reason_required_kept_in_the_log'),
+          maxlength: '120', disabled: !open, 'aria-label': t('admin.reason_for_changing_the_reward') }),
+        writeBtn('.primary', 'rw-change', {}, t('admin.change_reward'), t('admin.click_again_to_change'), 'sack-dollar')));
   }
 
   function rewardPicked() {
@@ -6698,9 +6857,9 @@
     var by = rewardBy();
     var reason = trim(S.forms['dr.rw.reason.' + id]).slice(0, 120);
     var max = Number((st.base || {}).max) || 0;
-    var problem = by == null ? 'Type a whole number of dollars above 0.'
-      : max && Math.abs(by) > max ? 'At most ' + money(max) + ' at once (Config.Staff.RewardChangeMax).'
-        : !reason ? 'Give a reason: it goes on the record.' : null;
+    var problem = by == null ? t('admin.type_a_whole_number_of_dollars_2')
+      : max && Math.abs(by) > max ? t('admin.at_most') + money(max) + t('admin.at_once_config_staff_rewardchangemax')
+        : !reason ? t('admin.give_a_reason_it_goes_on') : null;
     if (problem) {
       disarm();
       S.drawer.answer = { ok: false, text: problem };
@@ -6716,13 +6875,13 @@
     }
     if (v.refused) {
       disarm();
-      S.drawer.answer = { ok: false, text: String(v.message || 'Not possible now.') };
+      S.drawer.answer = { ok: false, text: String(v.message || t('admin.not_possible_now')) };
       drawDrawer();
       return;
     }
     var label = by > 0
-      ? 'Click again: raise it from ' + money(v.reward) + ' to ' + money(v.after) + ', ' + rewardWho(st)
-      : 'Click again: lower it from ' + money(v.reward) + ' to ' + money(v.after);
+      ? t('admin.click_again_raise_it_from') + money(v.reward) + ' to ' + money(v.after) + ', ' + rewardWho(st)
+      : t('admin.click_again_lower_it_from') + money(v.reward) + ' to ' + money(v.after);
     if (!armed(node, label, ['dr.rw.amt.' + id, 'dr.rw.reason.' + id])) return;
     var data = { id: id, by: by, reason: reason };
     if (by > 0) { data.from = st.from; data.account = st.account; }
@@ -6777,49 +6936,49 @@
     var c = d.contract || {};
     var st = raState();
     if (c.state !== 'active' && c.state !== 'accepted') {
-      return h('p.note', 'Only a live contract (active or accepted) can be given to another hitman.');
+      return h('p.note', t('admin.only_a_live_contract_active_or_4'));
     }
     var open = writesOpen();
     var off = { disabled: !open, title: open ? null : whyNoWrite() };
     if (!hasPlayer()) {
-      return frag(h('p.note', 'Look the hitman up in Players first (the header\'s Player chip). The contract stays '
-        + 'open over it; come back to this tab and reassign to them.'),
-        h('div.btn-row', btn('.is-small', 'section', { 'data-section': 'players' }, 'Find the hitman in Players',
+      return frag(h('p.note', t('admin.look_the_hitman_up_in_players')
+        + t('admin.open_over_it_come_back_to')),
+        h('div.btn-row', btn('.is-small', 'section', { 'data-section': 'players' }, t('admin.find_the_hitman_in_players'),
           'magnifying-glass')));
     }
     var who = String((S.players.data.player || {}).name || 'them');
     var v = st.previewRef === S.players.ref ? st.preview : null;
     var ops = v ? asList(v.operatives) : [];
-    var said = !v ? loading('Checking whether ' + who + ' can take it…')
+    var said = !v ? loading(t('admin.checking_whether') + who + t('admin.can_take_it'))
       : frag(
-        h('p', ops.length ? 'Taken off it: ' + ops.join(', ') + ', each as Remove operative does.'
-          : 'Nobody is on it now.'),
-        h('p', v.stakeWaived ? 'Their stake is waived (Config.Staff.ReassignStake).'
-          : 'They put up the ' + money(v.stake) + ' stake, as on Accept.'),
-        v.refused ? h('p.note.is-warn', String(v.message || 'They cannot take it now.')) : null);
+        h('p', ops.length ? t('admin.taken_off_it') + ops.join(', ') + t('admin.each_as_remove_operative_does')
+          : t('admin.nobody_is_on_it_now')),
+        h('p', v.stakeWaived ? t('admin.their_stake_is_waived_config_staff')
+          : t('admin.they_put_up_the') + money(v.stake) + t('admin.stake_as_on_accept')),
+        v.refused ? h('p.note.is-warn', String(v.message || t('admin.they_cannot_take_it_now'))) : null);
     return frag(
-      h('div.ct-row', h('span.ct-label', 'New hitman'), h('span.chip.is-live', icon('user'), ' ', who)),
+      h('div.ct-row', h('span.ct-label', t('admin.new_hitman')), h('span.chip.is-live', icon('user'), ' ', who)),
       said,
-      h('div.ct-row', h('span.ct-label', 'Those taken off'),
+      h('div.ct-row', h('span.ct-label', t('admin.those_taken_off')),
         segmented('ra-block', [
-          { value: 'block', label: 'Bar them from it', disabled: !open, title: off.title },
-          { value: '', label: 'They may take it again', disabled: !open, title: off.title }
+          { value: 'block', label: t('admin.bar_them_from_it'), disabled: !open, title: off.title },
+          { value: '', label: t('admin.they_may_take_it_again'), disabled: !open, title: off.title }
         ], st.block)),
-      h('div.ct-row', h('span.ct-label', 'Their stakes'),
+      h('div.ct-row', h('span.ct-label', t('admin.their_stakes')),
         segmented('ra-stake', [
-          { value: 'client', label: 'To the placer (as a walk-away)', disabled: !open, title: off.title },
-          { value: 'return', label: 'Return the stakes', disabled: !open, title: off.title }
+          { value: 'client', label: t('admin.to_the_placer_as_a_walk'), disabled: !open, title: off.title },
+          { value: 'return', label: t('admin.return_the_stakes'), disabled: !open, title: off.title }
         ], st.stake)),
-      h('div.ct-row', h('span.ct-label', 'The new hitman'),
+      h('div.ct-row', h('span.ct-label', t('admin.the_new_hitman')),
         segmented('ra-identity', [
-          { value: 'anonymous', label: 'Anonymous (no fee)', disabled: !open, title: off.title },
-          { value: 'carry', label: 'As they chose before', disabled: !open, title: off.title },
-          { value: 'named', label: 'Named to the placer', disabled: !open, title: off.title }
+          { value: 'anonymous', label: t('admin.anonymous_no_fee'), disabled: !open, title: off.title },
+          { value: 'carry', label: t('admin.as_they_chose_before'), disabled: !open, title: off.title },
+          { value: 'named', label: t('admin.named_to_the_placer'), disabled: !open, title: off.title }
         ], st.identity)),
       h('div.inline-form.is-wide',
-        field('dr.ra.reason.' + id, { class: 'is-grow', placeholder: 'Reason (required, kept in the log)',
-          maxlength: '120', disabled: !open, 'aria-label': 'Reason for reassigning the contract' }),
-        writeBtn('.danger', 'ra-go', {}, 'Reassign', 'Click again to reassign', 'right-left')));
+        field('dr.ra.reason.' + id, { class: 'is-grow', placeholder: t('admin.reason_required_kept_in_the_log'),
+          maxlength: '120', disabled: !open, 'aria-label': t('admin.reason_for_reassigning_the_contract') }),
+        writeBtn('.danger', 'ra-go', {}, t('admin.reassign'), t('admin.click_again_to_reassign'), 'right-left')));
   }
 
   ACTIONS['ra-block'] = function (node) { disarm(); raState().block = node.getAttribute('data-value') || ''; drawDrawer(); };
@@ -6831,8 +6990,8 @@
     if (!id) return;
     var st = raState();
     var reason = trim(S.forms['dr.ra.reason.' + id]).slice(0, 120);
-    var problem = !hasPlayer() ? 'Look the hitman up in Players first.'
-      : !reason ? 'Give a reason: it goes on the record.' : null;
+    var problem = !hasPlayer() ? t('admin.look_the_hitman_up_in_players_2')
+      : !reason ? t('admin.give_a_reason_it_goes_on') : null;
     if (problem) {
       disarm();
       S.drawer.answer = { ok: false, text: problem };
@@ -6844,13 +7003,13 @@
     if (!v) { disarm(); loadReassignPreview(); return; }
     if (v.refused) {
       disarm();
-      S.drawer.answer = { ok: false, text: String(v.message || 'They cannot take it now.') };
+      S.drawer.answer = { ok: false, text: String(v.message || t('admin.they_cannot_take_it_now')) };
       drawDrawer();
       return;
     }
     var who = String((S.players.data.player || {}).name || 'them');
     var n = asList(v.operatives).length;
-    var label = 'Click again: give it to ' + who + (n ? ', taking off ' + n + ' operative' + (n === 1 ? '' : 's') : '');
+    var label = t('admin.click_again_give_it_to') + who + (n ? t('admin.taking_off') + n + ' operative' + (n === 1 ? '' : 's') : '');
     if (!armed(node, label, ['dr.ra.reason.' + id])) return;
     write('reassignHitman', { id: id, ref: ref, reason: reason, block: st.block === 'block',
       returnStake: st.stake === 'return', identity: st.identity || 'anonymous' }, 'reassign:' + id, node).then(function (reply) {
@@ -6892,28 +7051,28 @@
     var c = d.contract || {};
     var text = staff.text || {};
     var edits = asList(staff.edits);
-    var now = h('p', 'Reason now: ', h('span.text', String(c.reason || '—')),
-      text.edited ? h('span.chip', 'edited by staff') : null);
+    var now = h('p', t('admin.reason_now'), h('span.text', String(c.reason || '—')),
+      text.edited ? h('span.chip', t('admin.edited_by_staff')) : null);
     var history = edits.length ? h('ul.plain.ct-history', edits.map(function (e) {
-      return h('li', h('span.time', when(e.at)), ' ', String(e.field || 'reason') + ' replaced by '
-        + String(e.by || 'Staff'), h('span.detail', ' ' + String(e.reason || '')));
+      return h('li', h('span.time', when(e.at)), ' ', String(e.field || 'reason') + t('admin.replaced_by')
+        + String(e.by || t('admin.staff')), h('span.detail', ' ' + String(e.reason || '')));
     })) : null;
-    if (!text.editable) return frag(now, h('p.note', 'This server keeps no reason on a contract.'), history);
+    if (!text.editable) return frag(now, h('p.note', t('admin.this_server_keeps_no_reason_on')), history);
     var open = writesOpen();
     var input = text.mode === 'preset'
-      ? h('div.ct-row', h('span.ct-label', 'New reason'), segmented('ct-tx-preset', asList(text.presets).map(function (p) {
+      ? h('div.ct-row', h('span.ct-label', t('admin.new_reason')), segmented('ct-tx-preset', asList(text.presets).map(function (p) {
         return { value: String(p), label: String(p), disabled: !open, title: open ? null : whyNoWrite() };
       }), S.forms['dr.tx.text.' + id] || ''))
-      : h('div.inline-form.is-wide', field('dr.tx.text.' + id, { class: 'is-grow', placeholder: 'The new text',
-        maxlength: String(Number(text.max) || 120), disabled: !open, 'aria-label': 'The new reason' }));
+      : h('div.inline-form.is-wide', field('dr.tx.text.' + id, { class: 'is-grow', placeholder: t('admin.the_new_text'),
+        maxlength: String(Number(text.max) || 120), disabled: !open, 'aria-label': t('admin.the_new_reason') }));
     return frag(now,
-      h('p.note', 'Goes through the same checks a player\'s text gets. Players see the new text marked '
-        + '"edited by staff"; the original stays in the log.'),
+      h('p.note', t('admin.goes_through_the_same_checks_a')
+        + t('admin.edited_by_staff_the_original_stays')),
       input,
       h('div.inline-form.is-wide',
-        field('dr.tx.reason.' + id, { class: 'is-grow', placeholder: 'Why (required, kept in the log)',
-          maxlength: '120', disabled: !open, 'aria-label': 'Reason for the edit' }),
-        writeBtn('', 'ct-text', {}, 'Replace', 'Click again to replace', 'pen')),
+        field('dr.tx.reason.' + id, { class: 'is-grow', placeholder: t('admin.why_required_kept_in_the_log'),
+          maxlength: '120', disabled: !open, 'aria-label': t('admin.reason_for_the_edit') }),
+        writeBtn('', 'ct-text', {}, t('admin.replace'), t('admin.click_again_to_replace'), 'pen')),
       history);
   }
 
@@ -6928,7 +7087,7 @@
     if (!id) return;
     var text = trim(S.forms['dr.tx.text.' + id]);
     var reason = trim(S.forms['dr.tx.reason.' + id]).slice(0, 120);
-    var problem = !text ? 'Type the new text.' : (!reason ? 'Give a reason: it goes on the record.' : null);
+    var problem = !text ? t('admin.type_the_new_text') : (!reason ? t('admin.give_a_reason_it_goes_on') : null);
     if (problem) {
       disarm();
       S.drawer.answer = { ok: false, text: problem };
@@ -6957,11 +7116,11 @@
   function exportBody() {
     var st = ctState();
     return frag(
-      h('p.note', 'Its whole timeline as plain text for a ticket: states, proposals, payments, staff actions and '
-        + 'notes, shown as this view shows them to you.'),
-      h('div.drawer-actions', btn('', 'ct-export', {}, 'Copy the record', 'copy')),
+      h('p.note', t('admin.its_whole_timeline_as_plain_text')
+        + t('admin.notes_shown_as_this_view_shows')),
+      h('div.drawer-actions', btn('', 'ct-export', {}, t('admin.copy_the_record'), 'copy')),
       st.exported && !st.exported.copied
-        ? h('textarea.input.ct-export-text', { readonly: 'readonly', rows: '8', 'aria-label': 'The record, to copy' },
+        ? h('textarea.input.ct-export-text', { readonly: 'readonly', rows: '8', 'aria-label': t('admin.the_record_to_copy') },
           st.exported.text)
         : null);
   }
@@ -6975,7 +7134,7 @@
       var text = String((reply.data || {}).text || '');
       var copied = copyText(text);
       ctState().exported = { text: text, copied: copied };
-      toast(copied ? 'The record is on the clipboard.' : 'Select the text below and copy it.', copied ? 'ok' : 'error');
+      toast(copied ? t('admin.the_record_is_on_the_clipboard') : t('admin.select_the_text_below_and_copy'), copied ? 'ok' : 'error');
       drawDrawer();
     });
   };
@@ -6983,13 +7142,16 @@
   /* -- as a player sees it -- */
 
   /** The keys of a card in the order the phone shows them, with words. */
-  var VIEW_KEYS = [
-    ['role', 'Seen as'], ['targetName', 'Target'], ['reason', 'Reason'], ['state', 'State'], ['mode', 'Mode'],
-    ['fulfilment', 'Completes by'], ['timeLeft', 'Time left'], ['onHold', 'On hold'], ['reward', 'Reward'],
-    ['penaltyAmount', 'Stake to accept'], ['bonusPercent', 'Bonus %'], ['slots', 'Payouts'],
-    ['slotsClaimed', 'Claimed'], ['hitmenActive', 'Operatives on it'], ['creatorName', 'Placed by'],
-    ['creatorAnonymous', 'Placed anonymously'], ['barred', 'Barred']
+  var VIEW_KEYS;
+  Text.later(function () {
+    VIEW_KEYS = [
+    ['role', t('admin.seen_as')], ['targetName', t('admin.target')], ['reason', t('admin.reason')], ['state', t('admin.state')], ['mode', t('admin.mode')],
+    ['fulfilment', t('admin.completes_by')], ['timeLeft', t('admin.time_left')], ['onHold', t('admin.on_hold')], ['reward', t('admin.reward')],
+    ['penaltyAmount', t('admin.stake_to_accept')], ['bonusPercent', t('admin.bonus_2')], ['slots', t('admin.payouts')],
+    ['slotsClaimed', t('admin.claimed')], ['hitmenActive', t('admin.operatives_on_it')], ['creatorName', t('admin.placed_by')],
+    ['creatorAnonymous', t('admin.placed_anonymously')], ['barred', t('admin.barred')]
   ];
+  });
 
   function viewValue(value) {
     if (value === true) return 'yes';
@@ -7005,7 +7167,7 @@
       seen[pair[0]] = true;
       if (view[pair[0]] === undefined || view[pair[0]] === null) return;
       var value = pair[0] === 'reason'
-        ? frag(String(view.reason || '—'), view.staffEdited ? h('span.chip', 'edited by staff') : null)
+        ? frag(String(view.reason || '—'), view.staffEdited ? h('span.chip', t('admin.edited_by_staff')) : null)
         : (pair[0] === 'reward' && view.reward && typeof view.reward === 'object'
           ? money(Number(view.reward.baseline) || 0) + (Number(view.reward.bonus) ? ' + ' + money(view.reward.bonus) + ' bonus' : '')
           : viewValue(view[pair[0]]));
@@ -7021,7 +7183,7 @@
 
   function playerViewBody(d) {
     var st = ctState();
-    var options = [{ value: 'target', label: 'Target' }, { value: 'placer', label: 'Placer' }];
+    var options = [{ value: 'target', label: t('admin.target') }, { value: 'placer', label: t('admin.placer') }];
     asList(d.hitmen).forEach(function (m) {
       options.push({ value: 'hitman:' + m.id, label: String(m.alias || 'operative') + (m.state === 'active' ? '' : ' (left)') });
     });
@@ -7033,13 +7195,13 @@
         r.viewer ? h('p.sub', 'As ', h('b', String(r.viewer.name || '—')), ' ', h('span.cid', String(r.viewer.cid || ''))) : null,
         r.note ? h('p.note', String(r.note)) : null,
         r.shown === false || !r.view ? null : viewCard(r.view),
-        r.whitelisted ? frag(h('p.slot-title', 'Whitelisted-job view'), viewCard(r.whitelisted)) : null);
+        r.whitelisted ? frag(h('p.slot-title', t('admin.whitelisted_job_view')), viewCard(r.whitelisted)) : null);
     } else if (st.viewKey) {
-      body = loading('Reading their card…');
+      body = loading(t('admin.reading_their_card'));
     }
     return frag(
-      h('p.note', 'Read-only: exactly what their phone is sent for this contract. Anonymous parties stay hidden '
-        + 'unless you hold the identity ACE.'),
+      h('p.note', t('admin.read_only_exactly_what_their_phone')
+        + t('admin.unless_you_hold_the_identity_ace')),
       segmented('ct-view', options, st.viewKey),
       body);
   }
@@ -7114,33 +7276,35 @@
 
   /* ---------- roleplay (group rpC): help cards ------------------------- */
 
-  HELP.push(
-    { title: 'Roleplay: Proof of intent', icon: 'comments',
-      text: 'Off as shipped. On, a hitman\'s payout is held, never refused, until they have shown they worked '
-        + 'the contract in character: enough messages to the placer in the contract thread, or a live '
-        + 'handover, or a meeting point set. Their receipt and their card say what is missing. After the hold '
-        + 'time it is handed over anyway, so money is never stuck. The money stays in escrow, owed to them, '
-        + 'and every hold is audited (intent_hold_started, intent_hold_released).',
-      links: [{ key: 'Roleplay.ProofOfIntent.Enabled', label: 'Proof of intent' },
-        { key: 'Roleplay.ProofOfIntent.MinMessages', label: 'Messages that count' },
-        { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', label: 'Longest hold' }] },
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.roleplay_proof_of_intent'), icon: 'comments',
+      text: t('admin.off_as_shipped_on_a_hitmans')
+        + t('admin.the_contract_in_character_enough_messages')
+        + t('admin.handover_or_a_meeting_point_set')
+        + t('admin.time_it_is_handed_over_anyway')
+        + t('admin.and_every_hold_is_audited_intent'),
+      links: [{ key: 'Roleplay.ProofOfIntent.Enabled', label: t('admin.proof_of_intent') },
+        { key: 'Roleplay.ProofOfIntent.MinMessages', label: t('admin.messages_that_count') },
+        { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', label: t('admin.longest_hold') }] },
     { title: 'Roleplay: Bodyguards', icon: 'shield-halved',
-      text: 'Off as shipped. On, a target can hire protection from their On me card: a reward taken from them '
-        + 'at once and held, and a meeting pin where they stand. Other players see the job on the board\'s '
-        + 'Protection tab by its reward alone; the one who takes it gets the target\'s name and the pin, and '
-        + 'never who placed the hit or who is on it. Ended without a completion (expired, cancelled, bought '
-        + 'out): the guard is paid. Completed anyway: the guard gets their share and the rest goes back. '
-        + 'Nobody took it, or staff voided the contract: all of it goes back to the target.',
-      links: [{ key: 'Roleplay.Protection.Enabled', label: 'Bodyguard contracts' },
-        { key: 'Roleplay.Protection.MinReward', label: 'Reward bounds and account' },
-        { key: 'Roleplay.Protection.PayOnCompletionPercent', label: 'Share if completed' },
-        { key: 'Roleplay.Protection.MaxJobsPerGuard', label: 'Jobs per guard' }] },
-    { title: 'Roleplay: Hit on the hitman', icon: 'crosshairs',
-      text: 'Off as shipped. On, a target whose informant found out an operative\'s name gets a button on that '
-        + 'card to place a contract on them: the Place form opens with them chosen, and every rule of placing '
-        + 'a contract applies. Nothing is offered for an operative found only by description.',
-      links: [{ key: 'Roleplay.HitOnHitman.Enabled', label: 'Hit on the hitman' },
-        { key: 'Intel.Informant.Enabled', label: 'The target\'s informant' }] });
+      text: t('admin.off_as_shipped_on_a_target')
+        + t('admin.at_once_and_held_and_a')
+        + t('admin.protection_tab_by_its_reward_alone')
+        + t('admin.never_who_placed_the_hit_or')
+        + t('admin.out_the_guard_is_paid_completed')
+        + t('admin.nobody_took_it_or_staff_voided'),
+      links: [{ key: 'Roleplay.Protection.Enabled', label: t('admin.bodyguard_contracts') },
+        { key: 'Roleplay.Protection.MinReward', label: t('admin.reward_bounds_and_account') },
+        { key: 'Roleplay.Protection.PayOnCompletionPercent', label: t('admin.share_if_completed') },
+        { key: 'Roleplay.Protection.MaxJobsPerGuard', label: t('admin.jobs_per_guard') }] },
+    { title: t('admin.roleplay_hit_on_the_hitman'), icon: 'crosshairs',
+      text: t('admin.off_as_shipped_on_a_target_2')
+        + t('admin.card_to_place_a_contract_on')
+        + t('admin.a_contract_applies_nothing_is_offered'),
+      links: [{ key: 'Roleplay.HitOnHitman.Enabled', label: t('admin.hit_on_the_hitman') },
+        { key: 'Intel.Informant.Enabled', label: t('admin.the_targets_informant') }] });
+  });
 
   window.addEventListener('message', function (event) {
     var message = (event && event.data) || {};
@@ -7175,244 +7339,308 @@
 
   /* ---------- roleplay consequences (server/rp_consequences.lua) ------- */
 
-  GROUP_INTRO['Roleplay: Witness heat'] = 'A completion seen by bystanders alerts the police, naming nobody.';
-  GROUP_INTRO['Roleplay: EMS before re-listing'] = 'A target killed on a contract is treated before a new one.';
-  GROUP_INTRO['Roleplay: City news'] = 'An anonymous news post after a completed contract.';
-  GROUP_INTRO['Roleplay: Dirty money payouts'] = 'A hitman\'s cash or bank payout handed over as a dirty money item.';
-  GROUP_INTRO['Roleplay: Proof of intent'] = 'A payout waits until the hitman has worked the contract in character.';
-  GROUP_INTRO['Roleplay: Bodyguards'] = 'A target may hire a bodyguard from On me.';
-  GROUP_INTRO['Roleplay: Hit on the hitman'] = 'A target may place a contract on an operative revealed to them.';
-  GROUP_INTRO['Intel: Rumours and broker'] = 'New contracts show as rumours until a broker briefs the hitman.';
-  GROUP_INTRO['Roleplay: Burner phone'] = 'Placing and accepting need a burner phone item.';
-  GROUP_INTRO['Intel: Informant in person'] = 'Informant purchases only beside the informant NPC.';
-  GROUP_INTRO['Roleplay: Reason quality'] = 'Free-text reasons held to a length and a low-effort word list.';
-  GROUP_INTRO['Intel: Tip warning delay'] = 'The target hears of an informant tip a random while later.';
-  GROUP_INTRO['Intel: Tip limits'] = 'One tip per hitman per contract, and doubling prices.';
-  GROUP_INTRO['Intel: Hold before a tip'] = 'A tip only once the hitman has held the contract a while.';
-  GROUP_INTRO['Intel: Informant second try'] = 'What the target\'s later look-ups cost.';
-  GROUP_INTRO['Intel: Tip safe zones'] = 'No tip while the target is inside a safe zone.';
-  GROUP_INTRO['Intel: Go dark'] = 'A tipped-off target may pay so tips on them find nothing for a while.';
-  GROUP_INTRO['Improvements: Proof items'] = 'A hitman may finish with an item taken from the target.';
-  GROUP_INTRO['Improvements: Serial scrubbing'] = 'An anonymous placer\'s weapon reaches the hitman with a new serial.';
-  GROUP_INTRO['Improvements: Weekly stats'] = 'The week\'s totals posted to Discord, counts only.';
-  GROUP_INTRO['Improvements: Completion cooldown'] = 'A wait before a completed contract\'s target can be listed again.';
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Witness heat'] = t('admin.a_completion_seen_by_bystanders_alerts');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: EMS before re-listing'] = t('admin.a_target_killed_on_a_contract');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: City news'] = t('admin.an_anonymous_news_post_after_a');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Dirty money payouts'] = t('admin.a_hitmans_cash_or_bank_payout');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Proof of intent'] = t('admin.a_payout_waits_until_the_hitman');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Bodyguards'] = t('admin.a_target_may_hire_a_bodyguard');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Hit on the hitman'] = t('admin.a_target_may_place_a_contract');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Rumours and broker'] = t('admin.new_contracts_show_as_rumours_until');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Burner phone'] = t('admin.placing_and_accepting_need_a_burner');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Informant in person'] = t('admin.informant_purchases_only_beside_the_informant');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Roleplay: Reason quality'] = t('admin.free_text_reasons_held_to_a');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Tip warning delay'] = t('admin.the_target_hears_of_an_informant');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Tip limits'] = t('admin.one_tip_per_hitman_per_contract');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Hold before a tip'] = t('admin.a_tip_only_once_the_hitman');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Informant second try'] = t('admin.what_the_targets_later_look_ups');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Tip safe zones'] = t('admin.no_tip_while_the_target_is');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Intel: Go dark'] = t('admin.a_tipped_off_target_may_pay');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Improvements: Proof items'] = t('admin.a_hitman_may_finish_with_an');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Improvements: Serial scrubbing'] = t('admin.an_anonymous_placers_weapon_reaches_the');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Improvements: Weekly stats'] = t('admin.the_weeks_totals_posted_to_discord');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Improvements: Completion cooldown'] = t('admin.a_wait_before_a_completed_contracts');
+  });
 
-  HELP.push(
-    { title: 'Roleplay: Witness heat', icon: 'eye',
-      text: 'When it is on, every completion, a kill or a handover, is checked on the server for players near '
-        + 'the hitman who are no party to the contract. With enough of them, or always if set, officers get a '
-        + 'vague witness report on their phones and in sc-dispatch: a phrase, the way the hitman went, and the '
-        + 'nearest named area. A position can be sent too, moved by up to the fuzz distance. It never names the '
-        + 'hitman or the placer.',
-      links: [{ key: 'Roleplay.WitnessHeat.Enabled', label: 'Witness heat on or off' },
-        { key: 'Roleplay.WitnessHeat.WitnessRadius', label: 'Radius and witnesses' },
-        { key: 'Roleplay.WitnessHeat.Phrases', label: 'What a witness says' },
-        { key: 'Roleplay.WitnessHeat.Areas', label: 'Named areas' }] },
-    { title: 'Roleplay: EMS before re-listing', icon: 'kit-medical',
-      text: 'When it is on, a target killed on a contract cannot have a new one placed on them straight away. '
-        + 'They have to have been up, neither dead nor downed, for the treated minutes first; the placer is '
-        + 'told they are still recovering. With the medic switch on, an on-duty medic\'s defibrillator revive '
-        + 'is needed instead. The rule always lets go after the longest hold, and it adds to the usual '
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.roleplay_witness_heat'), icon: 'eye',
+      text: t('admin.when_it_is_on_every_completion')
+        + t('admin.the_hitman_who_are_no_party')
+        + t('admin.vague_witness_report_on_their_phones')
+        + t('admin.nearest_named_area_a_position_can')
+        + t('admin.hitman_or_the_placer'),
+      links: [{ key: 'Roleplay.WitnessHeat.Enabled', label: t('admin.witness_heat_on_or_off') },
+        { key: 'Roleplay.WitnessHeat.WitnessRadius', label: t('admin.radius_and_witnesses') },
+        { key: 'Roleplay.WitnessHeat.Phrases', label: t('admin.what_a_witness_says') },
+        { key: 'Roleplay.WitnessHeat.Areas', label: t('admin.named_areas') }] },
+    { title: t('admin.roleplay_ems_before_re_listing'), icon: 'kit-medical',
+      text: t('admin.when_it_is_on_a_target')
+        + t('admin.they_have_to_have_been_up')
+        + t('admin.told_they_are_still_recovering_with')
+        + t('admin.is_needed_instead_the_rule_always')
         + 'cooldowns.',
-      links: [{ key: 'Roleplay.EmsRelisting.Enabled', label: 'On or off' },
-        { key: 'Roleplay.EmsRelisting.TreatedMinutes', label: 'Minutes up' },
-        { key: 'Roleplay.EmsRelisting.RequireEMS', label: 'A medic\'s revive' }] },
-    { title: 'Roleplay: City news', icon: 'newspaper',
-      text: 'When it is on, a completed contract on a whitelisted-job target, or on any target if set, posts an '
-        + 'anonymous news item. It goes out on lb-phone\'s Birdy from the configured account, or as a server '
-        + 'event another resource posts. The words come from the templates, with the target\'s job, the area '
-        + 'and the time. The target is named only if staff turn that on, and the hitman and the placer never.',
-      links: [{ key: 'Roleplay.CityNews.Enabled', label: 'On or off' },
-        { key: 'Roleplay.CityNews.App', label: 'Where it is posted' },
-        { key: 'Roleplay.CityNews.Templates', label: 'Templates' }] },
-    { title: 'Roleplay: Dirty money payouts', icon: 'sack-dollar',
-      text: 'When it is on, a hitman\'s cash or bank payout is handed over as a dirty money item instead, by '
-        + 'count or as one item worth the figure. Escrow keeps the money it took, and only the payout '
-        + 'converts it, so nothing is lost. A refund to the placer goes back as it was taken. A payout that '
-        + 'does not fit in their pockets is owed, and paid when they make room or next log in.',
-      links: [{ key: 'Roleplay.DirtyPayouts.Enabled', label: 'On or off' },
-        { key: 'Roleplay.DirtyPayouts.Item', label: 'The item' },
-        { key: 'Roleplay.DirtyPayouts.Rate', label: 'The rate' }] });
+      links: [{ key: 'Roleplay.EmsRelisting.Enabled', label: t('admin.on_or_off') },
+        { key: 'Roleplay.EmsRelisting.TreatedMinutes', label: t('admin.minutes_up') },
+        { key: 'Roleplay.EmsRelisting.RequireEMS', label: t('admin.a_medics_revive') }] },
+    { title: t('admin.roleplay_city_news'), icon: 'newspaper',
+      text: t('admin.when_it_is_on_a_completed')
+        + t('admin.anonymous_news_item_it_goes_out')
+        + t('admin.event_another_resource_posts_the_words')
+        + t('admin.and_the_time_the_target_is'),
+      links: [{ key: 'Roleplay.CityNews.Enabled', label: t('admin.on_or_off') },
+        { key: 'Roleplay.CityNews.App', label: t('admin.where_it_is_posted') },
+        { key: 'Roleplay.CityNews.Templates', label: t('admin.templates') }] },
+    { title: t('admin.roleplay_dirty_money_payouts'), icon: 'sack-dollar',
+      text: t('admin.when_it_is_on_a_hitmans')
+        + t('admin.count_or_as_one_item_worth')
+        + t('admin.converts_it_so_nothing_is_lost')
+        + t('admin.does_not_fit_in_their_pockets'),
+      links: [{ key: 'Roleplay.DirtyPayouts.Enabled', label: t('admin.on_or_off') },
+        { key: 'Roleplay.DirtyPayouts.Item', label: t('admin.the_item') },
+        { key: 'Roleplay.DirtyPayouts.Rate', label: t('admin.the_rate') }] });
+  });
 
   /* ---------- the roleplay features (Config.Roleplay) ---------- */
 
-  HELP.push(
-    { title: 'Intel: Rumours and the broker', icon: 'user-secret',
-      text: 'Off as shipped. On, a hitman sees a new contract only as a rumour: a rough area and a reward '
-        + 'band, with no name, face or Accept. Asking the broker NPC about it, standing beside it, or '
-        + 'being briefed by a player on a broker job, shows the whole card and Accept for a while. The '
-        + 'NPC moves between its places on a timer. Distances are checked on the server.',
-      links: [{ key: 'Intel.Rumours.Enabled', label: 'Rumours on or off' },
-        { key: 'Intel.Rumours.Locations', label: 'Broker places' },
-        { key: 'Intel.Rumours.BriefValidMinutes', label: 'How long a briefing lasts' },
-        { key: 'Intel.Rumours.BrokerJobs', label: 'Broker jobs' }] },
-    { title: 'Roleplay: Burner phone', icon: 'mobile-screen',
-      text: 'Off as shipped. On, placing, accepting and every contract action need the burner phone item '
-        + 'in the inventory, counted on the server. Without one a player is told "You need a burner '
-        + 'phone." and, as shipped, sees no contracts at all. Live contracts stay; a burner can be used '
-        + 'up on placing or accepting. Sell it through sc-blackmarket (README).',
-      links: [{ key: 'Roleplay.BurnerPhone.Enabled', label: 'Burner phone on or off' },
-        { key: 'Roleplay.BurnerPhone.Item', label: 'The item' }] },
-    { title: 'Intel: The informant in person', icon: 'user-secret',
-      text: 'Off as shipped. On, every informant purchase (the target\'s, the placer\'s and the tip) is '
-        + 'sold only to a buyer standing beside the informant NPC, which moves between its own places. '
-        + 'Anywhere else it is refused with "Find the informant first." and nothing is charged.',
-      links: [{ key: 'Intel.InPerson.Enabled', label: 'Informant in person' },
-        { key: 'Intel.InPerson.Locations', label: 'Informant places' }] },
-    { title: 'Roleplay: Broker and informant placed from the panel', icon: 'location-dot',
-      text: 'Off as shipped. On, the broker and the informant NPC stand where staff placed them in Locations, '
-        + 'Broker and informant places (stand there in game and press Use my position), rotating among '
-        + 'those as their RotateHours say. Their Locations lists in the settings stay the defaults: they '
-        + 'are used while no place is set, and again after Reset to config or with this off.',
-      links: [{ key: 'Roleplay.NpcPlaces.Enabled', label: 'Placed from the panel on or off' },
-        { key: 'Intel.Rumours.Locations', label: 'Broker defaults' }] },
-    { title: 'Roleplay: Reason quality', icon: 'pen',
-      text: 'Off as shipped. On, a typed reason needs a least length and number of words, on top of the '
-        + 'other reason rules. A reason with a low-effort phrase (rdm, idk, test) is refused, or placed '
-        + 'and put in Needs review as a low-effort reason, as set.',
-      links: [{ key: 'Roleplay.ReasonQuality.Enabled', label: 'Reason quality on or off' },
-        { key: 'Roleplay.ReasonQuality.LowEffort', label: 'Low-effort phrases' },
-        { key: 'Roleplay.ReasonQuality.LowEffortAction', label: 'Refuse or review' }] });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.intel_rumours_and_the_broker'), icon: 'user-secret',
+      text: t('admin.off_as_shipped_on_a_hitman')
+        + t('admin.band_with_no_name_face_or')
+        + t('admin.being_briefed_by_a_player_on')
+        + t('admin.npc_moves_between_its_places_on'),
+      links: [{ key: 'Intel.Rumours.Enabled', label: t('admin.rumours_on_or_off') },
+        { key: 'Intel.Rumours.Locations', label: t('admin.broker_places') },
+        { key: 'Intel.Rumours.BriefValidMinutes', label: t('admin.how_long_a_briefing_lasts') },
+        { key: 'Intel.Rumours.BrokerJobs', label: t('admin.broker_jobs') }] },
+    { title: t('admin.roleplay_burner_phone'), icon: 'mobile-screen',
+      text: t('admin.off_as_shipped_on_placing_accepting')
+        + t('admin.in_the_inventory_counted_on_the')
+        + t('admin.phone_and_as_shipped_sees_no')
+        + t('admin.up_on_placing_or_accepting_sell'),
+      links: [{ key: 'Roleplay.BurnerPhone.Enabled', label: t('admin.burner_phone_on_or_off') },
+        { key: 'Roleplay.BurnerPhone.Item', label: t('admin.the_item') }] },
+    { title: t('admin.intel_the_informant_in_person'), icon: 'user-secret',
+      text: t('admin.off_as_shipped_on_every_informant')
+        + t('admin.sold_only_to_a_buyer_standing')
+        + t('admin.anywhere_else_it_is_refused_with'),
+      links: [{ key: 'Intel.InPerson.Enabled', label: t('admin.informant_in_person') },
+        { key: 'Intel.InPerson.Locations', label: t('admin.informant_places') }] },
+    { title: t('admin.roleplay_broker_and_informant_placed_from'), icon: 'location-dot',
+      text: t('admin.off_as_shipped_on_the_broker')
+        + t('admin.broker_and_informant_places_stand_there')
+        + t('admin.those_as_their_rotatehours_say_their')
+        + t('admin.are_used_while_no_place_is'),
+      links: [{ key: 'Roleplay.NpcPlaces.Enabled', label: t('admin.placed_from_the_panel_on_or') },
+        { key: 'Intel.Rumours.Locations', label: t('admin.broker_defaults') }] },
+    { title: t('admin.roleplay_reason_quality'), icon: 'pen',
+      text: t('admin.off_as_shipped_on_a_typed')
+        + t('admin.other_reason_rules_a_reason_with')
+        + t('admin.and_put_in_needs_review_as'),
+      links: [{ key: 'Roleplay.ReasonQuality.Enabled', label: t('admin.reason_quality_on_or_off') },
+        { key: 'Roleplay.ReasonQuality.LowEffort', label: t('admin.low_effort_phrases') },
+        { key: 'Roleplay.ReasonQuality.LowEffortAction', label: t('admin.refuse_or_review') }] });
+  });
 
   /* ---------- the improvements (Config.Improvements) ---------- */
 
-  HELP.push(
-    { title: 'Intel: Tip warning delay', icon: 'clock',
-      text: 'Off as shipped. On, the target of an informant tip is told someone knows their rough area '
-        + 'a random while after the tip, between the shortest and longest delay, instead of at once. '
-        + 'A warning still waiting survives a restart and is sent late rather than lost. The time on '
-        + 'the target\'s card is rounded to 5 minutes, so it does not give the delay away.',
-      links: [{ key: 'Intel.WarningDelay.Enabled', label: 'On or off' },
-        { key: 'Intel.WarningDelay.MinSeconds', label: 'Shortest delay' },
-        { key: 'Intel.WarningDelay.MaxSeconds', label: 'Longest delay' }] },
-    { title: 'Intel: Tip limits', icon: 'scale-balanced',
-      text: 'Off as shipped. On, on top of the tips per contract and the wait between them: each hitman '
-        + 'may buy one tip per contract, and/or each further tip on a contract costs twice the one '
-        + 'before, up to the most a tip costs. The card quotes the real next price, and a price that '
-        + 'moved is refused, never charged.',
-      links: [{ key: 'Intel.TipLimits.Enabled', label: 'On or off' },
-        { key: 'Intel.TipLimits.OnePerHitman', label: 'One per hitman' },
-        { key: 'Intel.TipLimits.PriceDoubling', label: 'Price doubling' },
-        { key: 'Intel.TipLimits.MaxCost', label: 'Most a tip costs' }] },
-    { title: 'Intel: Hold before a tip', icon: 'hourglass',
-      text: 'Off as shipped. On, a hitman can buy a tip only once they have held the contract for the '
-        + 'minutes set. Before that the card and the refusal say how long is left; nothing is charged.',
-      links: [{ key: 'Intel.HoldFirst.Enabled', label: 'On or off' },
-        { key: 'Intel.HoldFirst.MinHeldMinutes', label: 'Minutes held' }] },
-    { title: 'Intel: Informant second try', icon: 'user-secret',
-      text: 'Off as shipped. On, the target\'s look-ups after the first on a contract cost this share of '
-        + 'the informant\'s price (100 is the same price). The chance stays the informant\'s own.',
-      links: [{ key: 'Intel.SecondTry.Enabled', label: 'On or off' },
-        { key: 'Intel.SecondTry.SecondTryCostPercent', label: 'Later price' },
-        { key: 'Intel.Informant.RevealChancePercent', label: 'The chance' }] },
-    { title: 'Intel: Tip safe zones', icon: 'shield',
-      text: 'Off as shipped. On, no tip is sold while the target stands inside one of the zones '
-        + '(x, y, radius, name). The hitman is told only "Your informant can\'t place them right now.", '
-        + 'never why or where, and nothing is charged.',
-      links: [{ key: 'Intel.SafeZones.Enabled', label: 'On or off' },
-        { key: 'Intel.SafeZones.Zones', label: 'The zones' }] },
-    { title: 'Intel: Go dark', icon: 'eye-slash',
-      text: 'Off as shipped. On, a target who was told of a tip can pay from On me to go dark. For the '
-        + 'minutes set, every tip bought on them finds nothing: the hitman is told the informant could '
-        + 'not find them and gets the price back in full. Nothing names anybody.',
-      links: [{ key: 'Intel.GoDark.Enabled', label: 'On or off' },
-        { key: 'Intel.GoDark.Cost', label: 'The price' },
-        { key: 'Intel.GoDark.Minutes', label: 'How long' }] });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.intel_tip_warning_delay'), icon: 'clock',
+      text: t('admin.off_as_shipped_on_the_target')
+        + t('admin.a_random_while_after_the_tip')
+        + t('admin.a_warning_still_waiting_survives_a')
+        + t('admin.the_targets_card_is_rounded_to'),
+      links: [{ key: 'Intel.WarningDelay.Enabled', label: t('admin.on_or_off') },
+        { key: 'Intel.WarningDelay.MinSeconds', label: t('admin.shortest_delay') },
+        { key: 'Intel.WarningDelay.MaxSeconds', label: t('admin.longest_delay') }] },
+    { title: t('admin.intel_tip_limits'), icon: 'scale-balanced',
+      text: t('admin.off_as_shipped_on_on_top')
+        + t('admin.may_buy_one_tip_per_contract')
+        + t('admin.before_up_to_the_most_a')
+        + t('admin.moved_is_refused_never_charged'),
+      links: [{ key: 'Intel.TipLimits.Enabled', label: t('admin.on_or_off') },
+        { key: 'Intel.TipLimits.OnePerHitman', label: t('admin.one_per_hitman') },
+        { key: 'Intel.TipLimits.PriceDoubling', label: t('admin.price_doubling') },
+        { key: 'Intel.TipLimits.MaxCost', label: t('admin.most_a_tip_costs') }] },
+    { title: t('admin.intel_hold_before_a_tip'), icon: 'hourglass',
+      text: t('admin.off_as_shipped_on_a_hitman_2')
+        + t('admin.minutes_set_before_that_the_card'),
+      links: [{ key: 'Intel.HoldFirst.Enabled', label: t('admin.on_or_off') },
+        { key: 'Intel.HoldFirst.MinHeldMinutes', label: t('admin.minutes_held') }] },
+    { title: t('admin.intel_informant_second_try'), icon: 'user-secret',
+      text: t('admin.off_as_shipped_on_the_targets')
+        + t('admin.the_informants_price_100_is_the'),
+      links: [{ key: 'Intel.SecondTry.Enabled', label: t('admin.on_or_off') },
+        { key: 'Intel.SecondTry.SecondTryCostPercent', label: t('admin.later_price') },
+        { key: 'Intel.Informant.RevealChancePercent', label: t('admin.the_chance') }] },
+    { title: t('admin.intel_tip_safe_zones'), icon: 'shield',
+      text: t('admin.off_as_shipped_on_no_tip')
+        + t('admin.x_y_radius_name_the_hitman')
+        + t('admin.never_why_or_where_and_nothing'),
+      links: [{ key: 'Intel.SafeZones.Enabled', label: t('admin.on_or_off') },
+        { key: 'Intel.SafeZones.Zones', label: t('admin.the_zones') }] },
+    { title: t('admin.intel_go_dark'), icon: 'eye-slash',
+      text: t('admin.off_as_shipped_on_a_target_3')
+        + t('admin.minutes_set_every_tip_bought_on')
+        + t('admin.not_find_them_and_gets_the'),
+      links: [{ key: 'Intel.GoDark.Enabled', label: t('admin.on_or_off') },
+        { key: 'Intel.GoDark.Cost', label: t('admin.the_price') },
+        { key: 'Intel.GoDark.Minutes', label: t('admin.how_long') }] });
+  });
 
   /* ---------- a character's record (server/record/) ---------- */
 
-  GROUP_INTRO['Record: Reputation'] = 'Trust for a completion scaled by how it was done.';
-  GROUP_INTRO['Record: Placer record'] = 'A placer\'s record on the board, never who they are.';
-  GROUP_INTRO['Record: Hitman heat'] = 'Police attention a hitman\'s work builds up, naming nobody.';
-  GROUP_INTRO['Record: Tiered board'] = 'Bigger rewards locked to higher progression levels.';
+  Text.later(function () {
+    GROUP_INTRO['Record: Reputation'] = t('admin.trust_for_a_completion_scaled_by');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Record: Placer record'] = t('admin.a_placers_record_on_the_board');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Record: Hitman heat'] = t('admin.police_attention_a_hitmans_work_builds');
+  });
+  Text.later(function () {
+    GROUP_INTRO['Record: Tiered board'] = t('admin.bigger_rewards_locked_to_higher_progression');
+  });
 
-  HELP.push(
-    { title: 'Record: Reputation earned in character', icon: 'star',
-      text: 'Off as shipped. On, the progression trust a completion earns is multiplied: a base factor for a '
-        + 'plain completion, plus a bonus each for the thread used, a meeting point, a live handover and no '
-        + 'witnesses near the hitman, up to a cap. The hitman sees the breakdown on their completion notice. '
-        + 'It needs Criminal progression on to give any trust.',
-      links: [{ key: 'Record.Reputation.Enabled', label: 'Reputation' },
-        { key: 'Record.Reputation.BaseFactor', label: 'Factors and cap' },
-        { key: 'Record.Reputation.WitnessRadius', label: 'Witness radius' }] },
-    { title: 'Record: Placer record', icon: 'briefcase',
-      text: 'Off as shipped. On, a board card shows how many contracts its placer placed, had paid out and '
-        + 'cancelled over the last days set, not counting this one, and never who they are. A named placer\'s '
-        + 'counts are exact. An anonymous placer shows nothing unless "anonymous placers too" is on, and then '
-        + 'only their anonymous contracts, in bands (0, 1-4, 5-9, 10+), fixed when the card is first drawn, so '
-        + 'two anonymous contracts cannot be tied to one person by their numbers.',
-      links: [{ key: 'Record.PlacerRecord.Enabled', label: 'Placer record' },
-        { key: 'Record.PlacerRecord.ShowForAnonymous', label: 'Anonymous placers' },
-        { key: 'Record.PlacerRecord.LookbackDays', label: 'Days counted' }] },
-    { title: 'Record: Hitman heat', icon: 'fire',
-      text: 'Off as shipped. On, a hitman gets heat for a completion on a whitelisted-job target, a witness '
-        + 'report on a completion, and a police bulletin about their acceptance or tip on a whitelisted-job '
-        + 'target. Heat fades after the hours set. At the threshold they are known: a contract they take warns '
-        + 'its target (the paranoid alert) at the chance set, and while they hold one, officers get a vague '
-        + 'bulletin at most every so many minutes. Nothing names the hitman, and players never see heat.',
-      links: [{ key: 'Record.Heat.Enabled', label: 'Hitman heat' },
-        { key: 'Record.Heat.Threshold', label: 'Heat and threshold' },
-        { key: 'Record.Heat.DecayHours', label: 'How long heat stays' },
-        { key: 'Record.Heat.BulletinText', label: 'The bulletin' }] },
-    { title: 'Record: Tiered board', icon: 'layer-group',
-      text: 'Off as shipped, and only with Criminal progression on. Each tier is a name, the least reward and '
-        + 'the least level. A hitman\'s level is 1, plus one for each so many contracts they completed. A card '
-        + 'in a tier above their level shows locked, with the level needed, and the server refuses Accept on '
-        + 'it before taking anything.',
-      links: [{ key: 'Record.Tiers.Enabled', label: 'Tiered board' },
-        { key: 'Record.Tiers.Tiers', label: 'Tiers' },
-        { key: 'Record.Tiers.CompletionsPerLevel', label: 'Completions per level' },
-        { key: 'Record.Progression.Enabled', label: 'Criminal progression' }] });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.record_reputation_earned_in_character'), icon: 'star',
+      text: t('admin.off_as_shipped_on_the_progression')
+        + t('admin.plain_completion_plus_a_bonus_each')
+        + t('admin.witnesses_near_the_hitman_up_to')
+        + t('admin.it_needs_criminal_progression_on_to'),
+      links: [{ key: 'Record.Reputation.Enabled', label: t('admin.reputation') },
+        { key: 'Record.Reputation.BaseFactor', label: t('admin.factors_and_cap') },
+        { key: 'Record.Reputation.WitnessRadius', label: t('admin.witness_radius') }] },
+    { title: t('admin.record_placer_record'), icon: 'briefcase',
+      text: t('admin.off_as_shipped_on_a_board')
+        + t('admin.cancelled_over_the_last_days_set')
+        + t('admin.counts_are_exact_an_anonymous_placer')
+        + t('admin.only_their_anonymous_contracts_in_bands')
+        + t('admin.two_anonymous_contracts_cannot_be_tied'),
+      links: [{ key: 'Record.PlacerRecord.Enabled', label: t('admin.placer_record') },
+        { key: 'Record.PlacerRecord.ShowForAnonymous', label: t('admin.anonymous_placers') },
+        { key: 'Record.PlacerRecord.LookbackDays', label: t('admin.days_counted') }] },
+    { title: t('admin.record_hitman_heat'), icon: 'fire',
+      text: t('admin.off_as_shipped_on_a_hitman_3')
+        + t('admin.report_on_a_completion_and_a')
+        + t('admin.target_heat_fades_after_the_hours')
+        + t('admin.its_target_the_paranoid_alert_at')
+        + t('admin.bulletin_at_most_every_so_many'),
+      links: [{ key: 'Record.Heat.Enabled', label: t('admin.hitman_heat') },
+        { key: 'Record.Heat.Threshold', label: t('admin.heat_and_threshold') },
+        { key: 'Record.Heat.DecayHours', label: t('admin.how_long_heat_stays') },
+        { key: 'Record.Heat.BulletinText', label: t('admin.the_bulletin') }] },
+    { title: t('admin.record_tiered_board'), icon: 'layer-group',
+      text: t('admin.off_as_shipped_and_only_with')
+        + t('admin.the_least_level_a_hitmans_level')
+        + t('admin.in_a_tier_above_their_level')
+        + t('admin.it_before_taking_anything'),
+      links: [{ key: 'Record.Tiers.Enabled', label: t('admin.tiered_board') },
+        { key: 'Record.Tiers.Tiers', label: t('admin.tiers') },
+        { key: 'Record.Tiers.CompletionsPerLevel', label: t('admin.completions_per_level') },
+        { key: 'Record.Progression.Enabled', label: t('admin.criminal_progression') }] });
+  });
 
   /* ---------- contract decay (server/imp_board.lua) ---------- */
 
-  GROUP_INTRO['Improvements: Contract decay'] = 'An untaken contract\'s reward rises, or it ends sooner.';
+  Text.later(function () {
+    GROUP_INTRO['Improvements: Contract decay'] = t('admin.an_untaken_contracts_reward_rises_or');
+  });
 
-  HELP.push(
-    { title: 'Improvements: Contract decay', icon: 'hourglass-half',
-      text: 'Off as shipped. On, a contract nobody has taken changes every so many hours. "rise": its reward '
-        + 'goes up by the percent set, charged to its placer through their own add-to-reward path, up to the '
-        + 'most set in all; it waits while they are away, and stops for good if they cannot pay. "shorten": '
-        + 'its deadline comes in by the percent of the time left. The placer is told each time, and can turn '
-        + 'it off for their contract from its card.',
-      links: [{ key: 'Improvements.ContractDecay.Enabled', label: 'Contract decay' },
-        { key: 'Improvements.ContractDecay.Mode', label: 'Rise or shorten' },
-        { key: 'Improvements.ContractDecay.Percent', label: 'Step, cap and account' },
-        { key: 'Improvements.ContractDecay.Hours', label: 'Hours between steps' }] });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.improvements_contract_decay'), icon: 'hourglass-half',
+      text: t('admin.off_as_shipped_on_a_contract')
+        + t('admin.goes_up_by_the_percent_set')
+        + t('admin.most_set_in_all_it_waits')
+        + t('admin.its_deadline_comes_in_by_the')
+        + t('admin.it_off_for_their_contract_from'),
+      links: [{ key: 'Improvements.ContractDecay.Enabled', label: t('admin.contract_decay') },
+        { key: 'Improvements.ContractDecay.Mode', label: t('admin.rise_or_shorten') },
+        { key: 'Improvements.ContractDecay.Percent', label: t('admin.step_cap_and_account') },
+        { key: 'Improvements.ContractDecay.Hours', label: t('admin.hours_between_steps') }] });
+  });
 
   /* ---------- the staff and economy improvements (Config.Improvements) ---------- */
 
-  HELP.push(
-    { title: 'Improvements: Proof items', icon: 'id-card',
-      text: 'Off as shipped. On, a hitman on a contract a kill completes can tap Hand over proof '
-        + 'standing beside the person who placed it, carrying an item taken from the target (as '
-        + 'shipped an id card whose citizenid names them). The server finds the item in the '
-        + 'hitman\'s inventory, checks it names the target and the distance, takes the item and '
-        + 'pays as for a verified kill. A payout refused gives the item back. Contracts placed '
-        + 'for a live delivery only are never paid this way.',
-      links: [{ key: 'Improvements.ProofItems.Enabled', label: 'Proof items on or off' },
-        { key: 'Improvements.ProofItems.Item', label: 'The item' },
-        { key: 'Improvements.ProofItems.MetadataKey', label: 'The field naming the target' },
-        { key: 'Improvements.ProofItems.HandoverRadius', label: 'The distance' }] },
-    { title: 'Improvements: Completion cooldown', icon: 'hourglass',
-      text: 'Off as shipped (0). Set, nobody may place a contract on somebody for this long after '
-        + 'a contract on them was completed, or for the ordinary wait after any contract if that '
-        + 'is longer. The placer is told how many hours are left, and nothing else.',
-      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', label: 'The wait' }] },
-    { title: 'Improvements: Weapon serial scrubbing', icon: 'gun',
-      text: 'Off as shipped. On, a weapon an anonymous placer put up reaches the hitman with a new '
-        + 'random serial, so it cannot be traced back to them by its number. A refund to the placer '
-        + 'is their own weapon unchanged. Each scrub is in the log; the original serial is shown '
-        + 'only to staff with the identity ACE.',
-      links: [{ key: 'Improvements.SerialScrub.Enabled', label: 'Scrubbing on or off' }] },
-    { title: 'Improvements: Weekly stats to Discord', icon: 'chart-column',
-      text: 'Off as shipped. On, once a week on the day and hour set, one post of the last seven '
-        + 'days: contracts placed, contracts completed and money paid out to hitmen. Totals only, '
-        + 'never a name, a citizen id or a handle for any hitman. To the webhook in '
-        + 'crimson_hitman_stats_webhook, or else the alert webhook. At most once a week.',
-      links: [{ key: 'Improvements.WeeklyStats.Enabled', label: 'Weekly stats on or off' },
-        { key: 'Improvements.WeeklyStats.Day', label: 'The day' },
-        { key: 'Improvements.WeeklyStats.Hour', label: 'The hour' }] });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.improvements_proof_items'), icon: 'id-card',
+      text: t('admin.off_as_shipped_on_a_hitman_4')
+        + t('admin.standing_beside_the_person_who_placed')
+        + t('admin.shipped_an_id_card_whose_citizenid')
+        + t('admin.hitmans_inventory_checks_it_names_the')
+        + t('admin.pays_as_for_a_verified_kill')
+        + t('admin.for_a_live_delivery_only_are'),
+      links: [{ key: 'Improvements.ProofItems.Enabled', label: t('admin.proof_items_on_or_off') },
+        { key: 'Improvements.ProofItems.Item', label: t('admin.the_item') },
+        { key: 'Improvements.ProofItems.MetadataKey', label: t('admin.the_field_naming_the_target') },
+        { key: 'Improvements.ProofItems.HandoverRadius', label: t('admin.the_distance') }] },
+    { title: t('admin.improvements_completion_cooldown'), icon: 'hourglass',
+      text: t('admin.off_as_shipped_0_set_nobody')
+        + t('admin.a_contract_on_them_was_completed')
+        + t('admin.is_longer_the_placer_is_told'),
+      links: [{ key: 'Limits.TargetCooldownAfterCompletionSeconds', label: t('admin.the_wait') }] },
+    { title: t('admin.improvements_weapon_serial_scrubbing'), icon: 'gun',
+      text: t('admin.off_as_shipped_on_a_weapon')
+        + t('admin.random_serial_so_it_cannot_be')
+        + t('admin.is_their_own_weapon_unchanged_each')
+        + t('admin.only_to_staff_with_the_identity'),
+      links: [{ key: 'Improvements.SerialScrub.Enabled', label: t('admin.scrubbing_on_or_off') }] },
+    { title: t('admin.improvements_weekly_stats_to_discord'), icon: 'chart-column',
+      text: t('admin.off_as_shipped_on_once_a')
+        + t('admin.days_contracts_placed_contracts_completed_and')
+        + t('admin.never_a_name_a_citizen_id')
+        + t('admin.crimson_hitman_stats_webhook_or_else'),
+      links: [{ key: 'Improvements.WeeklyStats.Enabled', label: t('admin.weekly_stats_on_or_off') },
+        { key: 'Improvements.WeeklyStats.Day', label: t('admin.the_day') },
+        { key: 'Improvements.WeeklyStats.Hour', label: t('admin.the_hour') }] });
+  });
 
   /* ---------- Target limits ----------------------------------------------
 
@@ -7432,11 +7660,14 @@
 
   var TL_SOURCE = { global: 'global', job: 'job', player: 'player' };
   /** The limits' short names, for the job table's columns. */
-  var TL_SHORT = {
-    TargetCooldownAfterResolveSeconds: 'After one ends', SameCreatorSameTargetCooldownSeconds: 'Same placer',
-    TargetCooldownAfterCompletionSeconds: 'After completed', MaxActiveContractsPerTarget: 'Live at once',
+  var TL_SHORT;
+  Text.later(function () {
+    TL_SHORT = {
+    TargetCooldownAfterResolveSeconds: t('admin.after_one_ends'), SameCreatorSameTargetCooldownSeconds: t('admin.same_placer'),
+    TargetCooldownAfterCompletionSeconds: t('admin.after_completed'), MaxActiveContractsPerTarget: t('admin.live_at_once'),
     MaxContractsPerTargetPerDay: 'Per 24 h', MaxContractsPerTargetPerWeek: 'Per 7 days'
   };
+  });
 
   function tlKeys() { return asList(S.tl.meta && S.tl.meta.keys); }
 
@@ -7489,7 +7720,7 @@
       var raw = trim(S.forms[prefix + '.' + k.key]);
       if (!raw) return;
       if (!/^\d{1,7}$/.test(raw) || Number(raw) < k.min || Number(raw) > k.max) {
-        bad = bad || (String(k.label) + ' is a whole number from ' + k.min + ' to ' + k.max + '.');
+        bad = bad || (String(k.label) + t('admin.is_a_whole_number_from') + k.min + ' to ' + k.max + '.');
         return;
       }
       out[k.key] = Number(raw);
@@ -7500,10 +7731,10 @@
 
   function tlJobTable() {
     var jobs = asList(S.tl.meta && S.tl.meta.jobs);
-    if (!jobs.length) return empty('No job has limits of its own: every target has the defaults.');
+    if (!jobs.length) return empty(t('admin.no_job_has_limits_of_its'));
     var keys = tlKeys();
     return h('div.table-wrap', h('table.grid',
-      h('thead', h('tr', h('th', 'Job'), keys.map(function (k) {
+      h('thead', h('tr', h('th', t('admin.job')), keys.map(function (k) {
         return h('th', { title: String(k.label) }, TL_SHORT[k.key] || String(k.label));
       }), h('th', ''))),
       h('tbody', jobs.map(function (j) {
@@ -7512,12 +7743,12 @@
           h('td.mono.tl-job', String(j.job)),
           keys.map(function (k) {
             var mine = own[k.key] !== undefined && own[k.key] !== null;
-            return h('td' + (mine ? '.is-own' : ''), { title: mine ? 'This job\'s own' : 'The default' },
+            return h('td' + (mine ? '.is-own' : ''), { title: mine ? t('admin.this_jobs_own') : t('admin.the_default') },
               tlValue(k, eff[k.key]));
           }),
-          h('td.nowrap', btn('.is-small.ghost', 'tj-edit', { 'data-value': String(j.job) }, 'Edit', 'pen'),
-            ' ', writeBtn('.is-small.danger', 'tj-remove', { 'data-value': String(j.job) }, 'Remove',
-              'Click again to remove ' + String(j.job), 'trash')));
+          h('td.nowrap', btn('.is-small.ghost', 'tj-edit', { 'data-value': String(j.job) }, t('admin.edit'), 'pen'),
+            ' ', writeBtn('.is-small.danger', 'tj-remove', { 'data-value': String(j.job) }, t('admin.remove'),
+              t('admin.click_again_to_remove_2') + String(j.job), 'trash')));
       }))));
   }
 
@@ -7525,7 +7756,7 @@
   function tlJobWho() {
     var job = trim(S.forms['tja.job']).toLowerCase();
     var count = S.tl.jobCountFor === job ? S.tl.jobCount : null;
-    return { count: count, text: count === null ? 'the players of ' + (job || 'that job')
+    return { count: count, text: count === null ? t('admin.the_players_of') + (job || t('admin.that_job'))
       : num(count) + ' player' + (count === 1 ? '' : 's') + ' working ' + job };
   }
 
@@ -7534,55 +7765,55 @@
   function tlManyButtons() {
     var who = tlJobWho().text;
     return frag(
-      modBtn('', 'tja-reset', { 'data-value': 'reset' }, 'Reset cooldowns', 'Click again: reset ' + who,
+      modBtn('', 'tja-reset', { 'data-value': 'reset' }, t('admin.reset_cooldowns'), t('admin.click_again_reset') + who,
         'arrow-rotate-left'),
-      modBtn('', 'tja-reset-all', { 'data-value': 'all' }, 'Reset all', 'Click again: reset all for ' + who,
+      modBtn('', 'tja-reset-all', { 'data-value': 'all' }, t('admin.reset_all'), t('admin.click_again_reset_all_for') + who,
         'arrows-rotate'),
-      modBtn('', 'tja-extend', { 'data-value': 'extend' }, 'Extend cooldowns', 'Click again: extend ' + who,
+      modBtn('', 'tja-extend', { 'data-value': 'extend' }, t('admin.extend_cooldowns'), t('admin.click_again_extend') + who,
         'hourglass'),
-      modBtn('', 'tja-counts', { 'data-value': 'counts' }, 'Reset counts', 'Click again: reset counts for ' + who,
+      modBtn('', 'tja-counts', { 'data-value': 'counts' }, t('admin.reset_counts'), t('admin.click_again_reset_counts_for') + who,
         'eraser'));
   }
 
   function tlJobsBody() {
     if (S.tl.error) return empty(S.tl.error);
-    if (!S.tl.meta) return loading('Reading the job limits…');
+    if (!S.tl.meta) return loading(t('admin.reading_the_job_limits'));
     var open = writesOpen();
     var many = modOpen();
     var counted = tlJobWho();
     return frag(
-      card('A job\'s own limits', frag(
-        h('p.note', 'A target working this job when the contract is placed (their qbx job name) has the limits '
-          + 'you fill in here instead of the defaults; leave a box empty to keep the default. Changing these '
-          + 'needs the staff ACE (Config.Admin.Ace).'),
+      card(t('admin.a_jobs_own_limits'), frag(
+        h('p.note', t('admin.a_target_working_this_job_when')
+          + t('admin.you_fill_in_here_instead_of')
+          + t('admin.needs_the_staff_ace_config_admin')),
         h('div.inline-form.is-wide',
           field('tj.job', { id: 'tj-job', class: 'is-short', maxlength: String((S.tl.meta.jobMax) || 32),
-            placeholder: 'Job name (police)', disabled: !open, 'aria-label': 'Job name' })),
+            placeholder: t('admin.job_name_police'), disabled: !open, 'aria-label': t('admin.job_name') })),
         tlLimitFields('tj', open),
-        h('div.btn-row', writeBtn('.primary', 'tj-save', { id: 'tj-save' }, 'Save job limits',
-          'Click again to save', 'floppy-disk')),
+        h('div.btn-row', writeBtn('.primary', 'tj-save', { id: 'tj-save' }, t('admin.save_job_limits'),
+          t('admin.click_again_to_save'), 'floppy-disk')),
         answerBox(S.tl.jobAnswer))),
-      card('Jobs with their own limits', tlJobTable(), '',
-        h('span.sub', 'what applies; in bold, the job\'s own (the rest are the defaults)')),
-      card('Every player of a job, at once', frag(
-        h('p.note', 'Reset or extend the cooldowns, or reset the day and week counts, of every player in the city '
-          + 'working this job now and every player not in the city whom the latest contract on them in the last '
-          + '7 days recorded as working it. One row goes in the log, with the count.'),
+      card(t('admin.jobs_with_their_own_limits'), tlJobTable(), '',
+        h('span.sub', t('admin.what_applies_in_bold_the_jobs'))),
+      card(t('admin.every_player_of_a_job_at'), frag(
+        h('p.note', t('admin.reset_or_extend_the_cooldowns_or')
+          + t('admin.working_this_job_now_and_every')
+          + t('admin.7_days_recorded_as_working_it')),
         h('div.inline-form.is-wide',
-          field('tja.job', { id: 'tja-job', class: 'is-short', maxlength: '32', placeholder: 'Job name',
-            disabled: !many, 'data-live': 'tja-count', 'aria-label': 'Job name for a job action' }),
+          field('tja.job', { id: 'tja-job', class: 'is-short', maxlength: '32', placeholder: t('admin.job_name'),
+            disabled: !many, 'data-live': 'tja-count', 'aria-label': t('admin.job_name_for_a_job_action') }),
           h('span.sub', { id: 'tja-count' }, counted.count === null ? '' : counted.text),
           field('tja.min', { id: 'tja-min', class: 'is-short', inputmode: 'numeric', maxlength: '5',
-            placeholder: 'Minutes', disabled: !many, 'aria-label': 'Minutes to extend by' })),
+            placeholder: t('admin.minutes'), disabled: !many, 'aria-label': t('admin.minutes_to_extend_by') })),
         h('div.inline-form.is-wide',
           field('tja.reason', { id: 'tja-reason', class: 'is-grow', maxlength: '120', disabled: !many,
-            placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the job action' })),
+            placeholder: t('admin.reason_required_kept_in_the_log'), 'aria-label': t('admin.reason_for_the_job_action') })),
         h('div.btn-row.tl-many', { id: 'tja-buttons' }, tlManyButtons()),
         answerBox(S.tl.jobAnswerMany))));
   }
 
   SHELL.tljobs = function () {
-    return h('section.view', h('p.hint', 'Limits for targets on one job, and one action for every player of a job.'),
+    return h('section.view', h('p.hint', t('admin.limits_for_targets_on_one_job')),
       h('div.stack', { id: 'tl-jobs' }, tlJobsBody()));
   };
   LOAD.tljobs = function () { loadTargetLimits(); };
@@ -7607,12 +7838,12 @@
   ACTIONS['tj-save'] = function (node) {
     var job = trim(S.forms['tj.job']).toLowerCase();
     if (!/^[a-z0-9_]{1,32}$/.test(job)) {
-      return tlJobRefuse('jobAnswer', 'A job name is its qbx name: lower-case letters, digits and _.');
+      return tlJobRefuse('jobAnswer', t('admin.a_job_name_is_its_qbx'));
     }
     var typed = tlLimitsTyped('tj');
     if (typed.bad) return tlJobRefuse('jobAnswer', typed.bad);
-    if (!typed.count) return tlJobRefuse('jobAnswer', 'Fill in at least one limit for the job.');
-    if (!confirmed(node, 'Click again: save limits for ' + job)) return;
+    if (!typed.count) return tlJobRefuse('jobAnswer', t('admin.fill_in_at_least_one_limit'));
+    if (!confirmed(node, t('admin.click_again_save_limits_for') + job)) return;
     write('targetJobSet', { job: job, limits: typed.limits }, 'tl:job:' + job, node).then(function (reply) {
       if (!reply) return;
       S.tl.jobAnswer = { ok: reply.ok === true, text: words(reply) };
@@ -7655,19 +7886,19 @@
   function tlJobAction(node, action, all) {
     var job = trim(S.forms['tja.job']).toLowerCase();
     var reason = trim(S.forms['tja.reason']);
-    if (!/^[a-z0-9_]{1,32}$/.test(job)) return tlJobRefuse('jobAnswerMany', 'Give the job\'s qbx name first.');
+    if (!/^[a-z0-9_]{1,32}$/.test(job)) return tlJobRefuse('jobAnswerMany', t('admin.give_the_jobs_qbx_name_first'));
     var data = { job: job, action: action, all: all === true, reason: reason.slice(0, 120) };
     if (action === 'extend') {
       var min = wholeNumber(S.forms['tja.min']);
       var most = Number(S.tl.meta && S.tl.meta.extendMax) || 43200;
-      if (!min || min > most) return tlJobRefuse('jobAnswerMany', 'Give the minutes to add, 1 to ' + most + '.');
+      if (!min || min > most) return tlJobRefuse('jobAnswerMany', t('admin.give_the_minutes_to_add_1') + most + '.');
       data.minutes = min;
     }
-    if (!reason) return tlJobRefuse('jobAnswerMany', 'Give a reason: it goes on the record.');
+    if (!reason) return tlJobRefuse('jobAnswerMany', t('admin.give_a_reason_it_goes_on'));
     if (S.tl.jobCountFor !== job) {
       // The confirm names how many it reaches: counted first.
       tlJobCount();
-      return tlJobRefuse('jobAnswerMany', 'Counting the players of ' + job + ': click again once the count shows.');
+      return tlJobRefuse('jobAnswerMany', t('admin.counting_the_players_of') + job + t('admin.click_again_once_the_count_shows'));
     }
     if (!confirmed(node)) return;
     write('targetJobAction', data, 'tl:jobaction:' + job, node).then(function (reply) {
@@ -7684,17 +7915,20 @@
 
   /* ---- per player ---- */
 
-  var TL_RULE = {
-    TargetCooldownAfterResolveSeconds: 'the wait after a contract on them ended',
-    TargetCooldownAfterCompletionSeconds: 'the wait after a completed contract',
-    'Immunity.AfterBailoutSeconds': 'the breather after a buyout',
-    staff: 'a cooldown staff extended'
+  var TL_RULE;
+  Text.later(function () {
+    TL_RULE = {
+    TargetCooldownAfterResolveSeconds: t('admin.the_wait_after_a_contract_on'),
+    TargetCooldownAfterCompletionSeconds: t('admin.the_wait_after_a_completed_contract'),
+    'Immunity.AfterBailoutSeconds': t('admin.the_breather_after_a_buyout'),
+    staff: t('admin.a_cooldown_staff_extended')
   };
+  });
 
   function loadTargetStatus(again) {
     var subject = trim(S.forms['tp.q']);
     var byRef = again === true && S.tl.ref ? S.tl.ref : null;
-    if (!subject && !byRef) { toast('Give a player id, a citizen id or a name.', 'error'); return Promise.resolve(); }
+    if (!subject && !byRef) { toast(t('admin.give_a_player_id_a_citizen'), 'error'); return Promise.resolve(); }
     disarm();
     var sent = byRef ? { ref: byRef } : { subject: subject.slice(0, 64) };
     var keep = again === true ? S.tl.answer : null;
@@ -7723,33 +7957,33 @@
     var ov = adj.override;
     return frag(
       h('div.person',
-        h('h2', String(p.name || 'No name on record')),
-        p.cid ? h('span.cid', String(p.cid)) : h('span.chip', 'citizen id hidden'),
-        p.online ? h('span.chip.is-live', 'in the city') : h('span.chip', 'offline'),
-        st.job ? h('span.chip.is-job', 'job: ' + String(st.job) + (st.jobFrom === 'last known' ? ' (last known)' : '')) : null,
-        st.exempt ? h('span.chip.is-warn', 'Exempt from limits') : null),
+        h('h2', String(p.name || t('admin.no_name_on_record'))),
+        p.cid ? h('span.cid', String(p.cid)) : h('span.chip', t('admin.citizen_id_hidden')),
+        p.online ? h('span.chip.is-live', t('admin.in_the_city')) : h('span.chip', 'offline'),
+        st.job ? h('span.chip.is-job', 'job: ' + String(st.job) + (st.jobFrom === 'last known' ? t('admin.last_known') : '')) : null,
+        st.exempt ? h('span.chip.is-warn', t('admin.exempt_from_limits')) : null),
       h('div.tiles.is-compact',
-        tile('Live on them', h('p.big', num(st.live) + ' / ' + (st.exempt ? '—' : num(st.limits && st.limits.MaxActiveContractsPerTarget)))),
+        tile(t('admin.live_on_them_2'), h('p.big', num(st.live) + ' / ' + (st.exempt ? '—' : num(st.limits && st.limits.MaxActiveContractsPerTarget)))),
         tile('Placed, 24 hours', h('p.big', num(st.day))),
         tile('Placed, 7 days', h('p.big', num(st.week))),
-        tile('Cooldown left', h('p.big' + (left > 0 ? '.is-warn' : ''), left > 0 ? exactSpan(left) : 'none'))),
-      left > 0 ? h('p.note', 'Set by ' + (TL_RULE[st.cooldownRule] || String(st.cooldownRule)) + ' (from the '
+        tile(t('admin.cooldown_left'), h('p.big' + (left > 0 ? '.is-warn' : ''), left > 0 ? exactSpan(left) : 'none'))),
+      left > 0 ? h('p.note', t('admin.set_by_2') + (TL_RULE[st.cooldownRule] || String(st.cooldownRule)) + t('admin.from_the')
         + (TL_SOURCE[st.cooldownFrom] || 'global') + ' limits).') : null,
       Number(st.dayAll) !== Number(st.day) || Number(st.weekAll) !== Number(st.week)
-        ? h('p.note', 'Counted since staff reset the counts: ' + num(st.dayAll) + ' in 24 hours and ' + num(st.weekAll)
-          + ' in 7 days in all.') : null,
+        ? h('p.note', t('admin.counted_since_staff_reset_the_counts') + num(st.dayAll) + t('admin.in_24_hours_and') + num(st.weekAll)
+          + t('admin.in_7_days_in_all')) : null,
       h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Limit'), h('th', 'Applies to them'), h('th', 'From'))),
+        h('thead', h('tr', h('th', t('admin.limit')), h('th', t('admin.applies_to_them')), h('th', t('admin.from')))),
         h('tbody', keys.map(function (k) {
           var from = st.source ? st.source[k.key] : 'global';
           return h('tr', h('td', String(k.label)),
             h('td', st.exempt ? 'exempt' : tlValue(k, st.limits ? st.limits[k.key] : 0)),
             h('td', st.exempt ? 'player' : (TL_SOURCE[from] || 'global')));
         })))),
-      ov ? h('p.sub', (ov.exempt ? 'Exempt from limits' : 'Their own limits') + ' '
-        + (ov.until_at ? 'until ' + when(ov.until_at) : 'for good') + (ov.reason ? ': ' + String(ov.reason) : '')) : null,
+      ov ? h('p.sub', (ov.exempt ? t('admin.exempt_from_limits') : t('admin.their_own_limits')) + ' '
+        + (ov.until_at ? 'until ' + when(ov.until_at) : t('admin.for_good_3')) + (ov.reason ? ': ' + String(ov.reason) : '')) : null,
       adj.until_at && Number(adj.until_at) > nowSeconds()
-        ? h('p.sub', 'Cooldown extended by staff until ' + when(adj.until_at)) : null);
+        ? h('p.sub', t('admin.cooldown_extended_by_staff_until') + when(adj.until_at)) : null);
   }
 
   function tlPlayerActions() {
@@ -7758,57 +7992,57 @@
     var a = function (extra) { var o = extra || {}; o['data-ref'] = ref; return o; };
     var keys = tlKeys();
     return frag(
-      card('Staff actions on them', frag(
-        h('p.note', 'Every action takes a reason, goes on the record and needs the moderator ACE or the staff ACE. '
-          + 'Reset cooldown lets them be named now and keeps the same placer\'s wait; Reset all clears that too, '
-          + 'and any extension. Players are never told.'),
+      card(t('admin.staff_actions_on_them'), frag(
+        h('p.note', t('admin.every_action_takes_a_reason_goes')
+          + t('admin.reset_cooldown_lets_them_be_named')
+          + t('admin.and_any_extension_players_are_never')),
         h('div.inline-form.is-wide',
           field('tp.reason', { id: 'tp-reason', class: 'is-grow', maxlength: '120', disabled: !open,
-            placeholder: 'Reason (required, kept in the log)', 'aria-label': 'Reason for the action' })),
+            placeholder: t('admin.reason_required_kept_in_the_log'), 'aria-label': t('admin.reason_for_the_action') })),
         h('div.btn-row.tl-many',
-          modBtn('', 'tp-reset', a(), 'Reset cooldown', 'Click again to reset', 'arrow-rotate-left'),
-          modBtn('', 'tp-reset-all', a(), 'Reset all', 'Click again to reset all', 'arrows-rotate'),
-          modBtn('', 'tp-counts', a(), 'Reset counts', 'Click again to reset the counts', 'eraser')),
+          modBtn('', 'tp-reset', a(), t('admin.reset_cooldown'), t('admin.click_again_to_reset'), 'arrow-rotate-left'),
+          modBtn('', 'tp-reset-all', a(), t('admin.reset_all'), t('admin.click_again_to_reset_all'), 'arrows-rotate'),
+          modBtn('', 'tp-counts', a(), t('admin.reset_counts'), t('admin.click_again_to_reset_the_counts'), 'eraser')),
         h('div.inline-form.is-wide',
           field('tp.min', { id: 'tp-min', class: 'is-short', inputmode: 'numeric', maxlength: '5', disabled: !open,
-            placeholder: 'Minutes', 'aria-label': 'Minutes to extend the cooldown by' }),
-          modBtn('', 'tp-extend', a(), 'Extend by minutes', 'Click again to extend', 'hourglass'),
+            placeholder: t('admin.minutes'), 'aria-label': t('admin.minutes_to_extend_the_cooldown_by') }),
+          modBtn('', 'tp-extend', a(), t('admin.extend_by_minutes'), t('admin.click_again_to_extend'), 'hourglass'),
           field('tp.until', { id: 'tp-until', class: 'is-short', maxlength: '16', disabled: !open,
-            placeholder: 'YYYY-MM-DD HH:MM', 'aria-label': 'Hold the cooldown until' }),
-          modBtn('', 'tp-until-set', a(), 'Hold until', 'Click again to hold until then', 'calendar'))),
+            placeholder: t('admin.yyyy_mm_dd_hh_mm'), 'aria-label': t('admin.hold_the_cooldown_until') }),
+          modBtn('', 'tp-until-set', a(), t('admin.hold_until'), t('admin.click_again_to_hold_until_then'), 'calendar'))),
         '', null),
-      card('Their own limits', frag(
-        h('p.note', 'Over the job\'s and the defaults, for some hours or for good (0). Leave a box empty to keep '
-          + 'what applies now. Exempt lifts every limit; a cooldown staff extended still holds.'),
+      card(t('admin.their_own_limits'), frag(
+        h('p.note', t('admin.over_the_jobs_and_the_defaults')
+          + t('admin.what_applies_now_exempt_lifts_every')),
         h('div.inline-form.is-wide',
-          segmented('tpo-mode', [{ value: 'custom', label: 'Custom limits', disabled: !open },
-            { value: 'exempt', label: 'Exempt from limits', disabled: !open }], S.tl.exempt ? 'exempt' : 'custom'),
+          segmented('tpo-mode', [{ value: 'custom', label: t('admin.custom_limits'), disabled: !open },
+            { value: 'exempt', label: t('admin.exempt_from_limits'), disabled: !open }], S.tl.exempt ? 'exempt' : 'custom'),
           field('tpo.hours', { id: 'tpo-hours', class: 'is-short', inputmode: 'numeric', maxlength: '4',
-            disabled: !open, placeholder: 'Hours (0 = for good)', 'aria-label': 'Hours the override lasts' })),
+            disabled: !open, placeholder: t('admin.hours_0_for_good'), 'aria-label': t('admin.hours_the_override_lasts') })),
         S.tl.exempt ? null : tlLimitFields('tpo', open),
         h('div.btn-row',
-          modBtn('.primary', 'tpo-set', a(), S.tl.exempt ? 'Make exempt' : 'Set their limits',
-            'Click again to set', 'user-shield'),
-          keys.length ? modBtn('', 'tpo-clear', a(), 'Lift their own limits', 'Click again to lift', 'unlock') : null))),
+          modBtn('.primary', 'tpo-set', a(), S.tl.exempt ? t('admin.make_exempt') : t('admin.set_their_limits'),
+            t('admin.click_again_to_set'), 'user-shield'),
+          keys.length ? modBtn('', 'tpo-clear', a(), t('admin.lift_their_own_limits'), t('admin.click_again_to_lift'), 'unlock') : null))),
       answerBox(S.tl.answer));
   }
 
   function tlPlayerBody() {
     var d = S.tl.status;
-    if (!S.tl.meta && !S.tl.error) return loading('Reading the limits…');
-    if (!d) return empty('Look somebody up by their player id, citizen id or name, as Players does.');
+    if (!S.tl.meta && !S.tl.error) return loading(t('admin.reading_the_limits'));
+    if (!d) return empty(t('admin.look_somebody_up_by_their_player'));
     if (d.error) return empty(d.error);
-    return frag(card('As a target', tlStatusCard(d)), tlPlayerActions());
+    return frag(card(t('admin.as_a_target'), tlStatusCard(d)), tlPlayerActions());
   }
 
   SHELL.tlplayer = function () {
     return h('section.view',
       h('div.toolbar',
         h('label.search', icon('magnifying-glass'),
-          field('tp.q', { id: 'tp-q', placeholder: 'Player id, citizen id or name', 'data-enter': 'tp-lookup',
-            'aria-label': 'Player id, citizen id or name' })),
-        btn('.primary', 'tp-lookup', {}, 'Look up', 'arrow-right')),
-      h('p.hint', 'Exact times, which players never see. Each lookup is on the record.'),
+          field('tp.q', { id: 'tp-q', placeholder: t('admin.player_id_citizen_id_or_name'), 'data-enter': 'tp-lookup',
+            'aria-label': t('admin.player_id_citizen_id_or_name') })),
+        btn('.primary', 'tp-lookup', {}, t('admin.look_up'), 'arrow-right')),
+      h('p.hint', t('admin.exact_times_which_players_never_see')),
       h('div.stack', { id: 'tl-player' }, tlPlayerBody()));
   };
   LOAD.tlplayer = function () { if (!S.tl.meta) loadTargetLimits(); };
@@ -7836,9 +8070,9 @@
   };
 
   function tlWrite(node, send, extra) {
-    if (!S.tl.ref) return tlRefuse('Look them up first.');
+    if (!S.tl.ref) return tlRefuse(t('admin.look_them_up_first'));
     var reason = trim(S.forms['tp.reason']);
-    if (!reason) return tlRefuse('Give a reason: it goes on the record.');
+    if (!reason) return tlRefuse(t('admin.give_a_reason_it_goes_on'));
     if (!confirmed(node)) return;
     var data = { ref: S.tl.ref, reason: reason.slice(0, 120) };
     Object.keys(extra || {}).forEach(function (k) { data[k] = extra[k]; });
@@ -7856,13 +8090,13 @@
   ACTIONS['tp-extend'] = function (node) {
     var min = wholeNumber(S.forms['tp.min']);
     var most = Number(S.tl.meta && S.tl.meta.extendMax) || 43200;
-    if (!min || min > most) return tlRefuse('Give the minutes to add, 1 to ' + most + '.');
+    if (!min || min > most) return tlRefuse(t('admin.give_the_minutes_to_add_1') + most + '.');
     tlWrite(node, TL_SEND.extend, { minutes: min });
   };
   ACTIONS['tp-until-set'] = function (node) {
     var at = parseWhen(S.forms['tp.until'], false);
-    if (!at) return tlRefuse('Give the time as YYYY-MM-DD HH:MM.');
-    if (at <= nowSeconds()) return tlRefuse('That time has passed.');
+    if (!at) return tlRefuse(t('admin.give_the_time_as_yyyy_mm'));
+    if (at <= nowSeconds()) return tlRefuse(t('admin.that_time_has_passed'));
     tlWrite(node, TL_SEND.extend, { untilAt: at });
   };
   ACTIONS['tpo-mode'] = function (node) {
@@ -7873,30 +8107,34 @@
   ACTIONS['tpo-set'] = function (node) {
     var raw = trim(S.forms['tpo.hours']);
     var max = Number(S.tl.meta && S.tl.meta.overrideMaxHours) || 8760;
-    if (!/^\d{1,4}$/.test(raw) || Number(raw) > max) return tlRefuse('Give the hours, 0 for good, up to ' + max + '.');
+    if (!/^\d{1,4}$/.test(raw) || Number(raw) > max) return tlRefuse(t('admin.give_the_hours_0_for_good') + max + '.');
     if (S.tl.exempt) return tlWrite(node, TL_SEND.override, { exempt: true, hours: Number(raw) });
     var typed = tlLimitsTyped('tpo');
     if (typed.bad) return tlRefuse(typed.bad);
-    if (!typed.count) return tlRefuse('Fill in at least one limit, or choose Exempt.');
+    if (!typed.count) return tlRefuse(t('admin.fill_in_at_least_one_limit_2'));
     tlWrite(node, TL_SEND.override, { exempt: false, limits: typed.limits, hours: Number(raw) });
   };
   ACTIONS['tpo-clear'] = function (node) { tlWrite(node, TL_SEND.clear, {}); };
 
 
-  STAFF_ACTIONS.push(
-    { title: 'Target limits', icon: 'user-clock', view: 'tlplayer', go: 'Open Per player',
-      text: 'How often one person may have a contract placed on them: the defaults, a job\'s own, and one '
-        + 'player\'s cooldown reset or extended, counts reset, own limits or exempt; the same for every player '
-        + 'of a job at once. Live contracts by target opens Contracts with the live ones grouped by target.',
-      also: { view: 'tljobs', go: 'Per job' } });
+  Text.later(function () {
+    STAFF_ACTIONS.push(
+    { title: t('admin.target_limits'), icon: 'user-clock', view: 'tlplayer', go: t('admin.open_per_player'),
+      text: t('admin.how_often_one_person_may_have_3')
+        + t('admin.players_cooldown_reset_or_extended_counts')
+        + t('admin.of_a_job_at_once_live'),
+      also: { view: 'tljobs', go: t('admin.per_job') } });
+  });
 
-  HELP.push(
-    { title: 'Target limits', icon: 'user-clock',
-      text: 'The limits on how often one person may be targeted. A player\'s own override wins, then their job\'s '
-        + '(the job they are working when the contract is placed), then the defaults. Day and week caps are off '
-        + 'as shipped. Players are told only what the target rules always said, never a time, a job or staff.',
-      links: [{ key: 'Limits.MaxContractsPerTargetPerDay', label: 'Day cap' },
-        { key: 'Limits.MaxContractsPerTargetPerWeek', label: 'Week cap' }] });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.target_limits'), icon: 'user-clock',
+      text: t('admin.the_limits_on_how_often_one')
+        + t('admin.the_job_they_are_working_when')
+        + t('admin.as_shipped_players_are_told_only'),
+      links: [{ key: 'Limits.MaxContractsPerTargetPerDay', label: t('admin.day_cap') },
+        { key: 'Limits.MaxContractsPerTargetPerWeek', label: t('admin.week_cap') }] });
+  });
 
   /* ---------- the new layout's own clicks: chips, search, areas -------- */
 
@@ -7989,7 +8227,7 @@
   ACTIONS['pl-diag'] = function () {
     var ref = S.players.ref;
     if (!ref) return;
-    var run = { ref: ref, lines: ['Running…'], later: [] };
+    var run = { ref: ref, lines: [t('admin.running')], later: [] };
     S.tools.pdiag = run;
     drawTools();
     // Its own channel, apart from Health's server diagnosis.
@@ -8049,7 +8287,7 @@
   function searchSettings() {
     if (settingsIndex) return settingsIndex;
     settingsIndex = allSettings().map(function (e) {
-      return { e: e, text: [e.key, e.label, e.about, e.group, areaLabel(areaOf(e))].map(function (v) {
+      return { e: e, text: [e.key, e.label, e.about, e.group, e.groupLabel, areaLabel(areaOf(e))].map(function (v) {
         return v == null ? '' : String(v);
       }).join(' ').toLowerCase() };
     });
@@ -8062,29 +8300,29 @@
     var hits = [];
     var contract = /^ct[a-z0-9]{3,}$/i.test(trim(raw));
     var digits = /^\d{1,6}$/.test(trim(raw));
-    if (contract) hits.push({ kind: 'Contract', label: 'Open contract ' + trim(raw), act: 'gs-contract', value: trim(raw) });
-    if (digits) hits.push({ kind: 'Player', label: 'Look up player id ' + trim(raw), act: 'gs-player', value: trim(raw) });
+    if (contract) hits.push({ kind: t('admin.contract'), label: t('admin.open_contract') + trim(raw), act: 'gs-contract', value: trim(raw) });
+    if (digits) hits.push({ kind: t('admin.player'), label: t('admin.look_up_player_id') + trim(raw), act: 'gs-player', value: trim(raw) });
     SECTIONS.forEach(function (view) {
       if (!viewShown(view)) return;
       var g = groupOf(view);
       var label = (VIEW_LABEL[view] || [view])[0];
       if ((label + ' ' + (g ? g.label : '')).toLowerCase().indexOf(q) !== -1) {
-        hits.push({ kind: 'Section', label: (g ? g.label + ' › ' : '') + label, act: 'gs-view', value: view });
+        hits.push({ kind: t('admin.section'), label: (g ? g.label + ' › ' : '') + label, act: 'gs-view', value: view });
       }
     });
     STAFF_ACTIONS.forEach(function (a, i) {
       if ((a.title + ' ' + a.text).toLowerCase().indexOf(q) !== -1 && viewAllowed(resolveView(a.view))) {
-        hits.push({ kind: 'Action', label: a.title, act: 'gs-action', value: String(i) });
+        hits.push({ kind: t('admin.action'), label: a.title, act: 'gs-action', value: String(i) });
       }
     });
     searchSettings().forEach(function (row) {
       if (row.text.indexOf(q) !== -1) {
-        hits.push({ kind: 'Setting', label: String(row.e.label || row.e.key), sub: areaLabel(areaOf(row.e))
-          + ' · ' + (row.e.secret ? 'server.cfg' : 'Config.' + row.e.key), act: 'gs-setting', value: row.e.key });
+        hits.push({ kind: t('admin.setting'), label: String(row.e.label || row.e.key), sub: areaLabel(areaOf(row.e))
+          + ' · ' + (row.e.secret ? 'server.cfg' : t('admin.config') + row.e.key), act: 'gs-setting', value: row.e.key });
       }
     });
     if (!contract && !digits) {
-      hits.push({ kind: 'Player', label: 'Look up “' + trim(raw).slice(0, 64) + '” as a player',
+      hits.push({ kind: t('admin.player'), label: t('admin.look_up_2') + trim(raw).slice(0, 64) + t('admin.as_a_player'),
         act: 'gs-player', value: trim(raw).slice(0, 64) });
     }
     return hits.slice(0, SEARCH_MAX);
@@ -8095,13 +8333,13 @@
     if (!S.search.open || !trim(q)) return frag();
     var hits = searchHits(q);
     if (!S.settings.data) {
-      hits.push({ kind: 'Note', label: 'Reading the settings: their rows join the list in a moment.', act: null });
+      hits.push({ kind: t('admin.note'), label: t('admin.reading_the_settings_their_rows_join'), act: null });
     }
     return frag(hits.length ? hits.map(function (hit, i) {
       return h('button.gs-hit' + (i === 0 ? '.is-first' : ''), { type: 'button', 'data-act': hit.act || 'gs-none',
         'data-value': hit.value == null ? '' : String(hit.value), role: 'option' },
         h('span.gs-kind', hit.kind), h('span.gs-label', hit.label), hit.sub ? h('span.gs-sub', hit.sub) : null);
-    }) : h('p.empty', 'No setting, action or section matches. Press Enter to look it up as a player.'));
+    }) : h('p.empty', t('admin.no_setting_action_or_section_matches')));
   }
 
   function drawSearch() {
@@ -8210,9 +8448,15 @@
 
   S.disposal = { data: null, error: null, errCode: null, answers: {} };
 
-  var DISPOSAL_STAGE = { body: 'Body not loaded yet', loaded: 'Loaded, on the way to the drop-off' };
-  var DISPOSAL_TIMEOUT = { pay: 'paid in full', reduced: 'paid in part, the rest back to the placer',
-    refund: 'refunded to the placer' };
+  var DISPOSAL_STAGE;
+  Text.later(function () {
+    DISPOSAL_STAGE = { body: t('admin.body_not_loaded_yet'), loaded: t('admin.loaded_on_the_way_to_the') };
+  });
+  var DISPOSAL_TIMEOUT;
+  Text.later(function () {
+    DISPOSAL_TIMEOUT = { pay: t('admin.paid_in_full'), reduced: t('admin.paid_in_part_the_rest_back'),
+    refund: t('admin.refunded_to_the_placer') };
+  });
 
   function loadDisposal() {
     return ask('disposalList', {}, 'disposal').then(function (reply) {
@@ -8238,19 +8482,19 @@
     if (!d) {
       // A server without disposal answers unknown_op: nothing to say here.
       return where === 'contracts' && S.disposal.error && S.disposal.errCode !== 'unknown_op'
-        ? h('p.note.is-error', 'Body disposal could not be read: ' + S.disposal.error) : frag();
+        ? h('p.note.is-error', t('admin.body_disposal_could_not_be_read') + S.disposal.error) : frag();
     }
     if (!steps.length) {
       return where === 'contracts' && d.enabled
-        ? h('p.note', 'Body disposal is on: nobody is disposing of a body right now.') : frag();
+        ? h('p.note', t('admin.body_disposal_is_on_nobody_is')) : frag();
     }
-    var timeout = DISPOSAL_TIMEOUT[d.onTimeout] || String(d.onTimeout || 'paid in full');
-    return card('Body disposal in progress (' + num(steps.length) + ')', frag(
-      h('p.about', 'A verified kill\'s payout waits until the body is dropped off. Each has '
-        + exactSpan(d.limitSeconds) + ' in all; on running out it is ' + timeout + '. Skip finishes one as if the '
-        + 'body was dropped off; Respawn vehicle makes the vehicle again at the spawn spot.'),
+    var timeout = DISPOSAL_TIMEOUT[d.onTimeout] || String(d.onTimeout || t('admin.paid_in_full'));
+    return card(t('admin.body_disposal_in_progress') + num(steps.length) + ')', frag(
+      h('p.about', t('admin.a_verified_kills_payout_waits_until')
+        + exactSpan(d.limitSeconds) + t('admin.in_all_on_running_out_it') + timeout + t('admin.skip_finishes_one_as_if_the')
+        + t('admin.body_was_dropped_off_respawn_vehicle')),
       h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Contract'), h('th', 'Stage'), h('th', 'Time left'), h('th', ''))),
+        h('thead', h('tr', h('th', t('admin.contract')), h('th', t('admin.stage')), h('th', t('admin.time_left')), h('th', ''))),
         h('tbody', steps.map(function (step) {
           var cid = String(step.contract || '');
           return h('tr',
@@ -8258,17 +8502,17 @@
               h('span.sub', ' payout ' + num(step.slot)),
               canIdentify() && step.hitman ? h('div.sub.mono', String(step.hitman)) : null),
             h('td', DISPOSAL_STAGE[step.stage] || String(step.stage || '—'),
-              h('div.sub', 'vehicle ' + (step.vehicle ? 'there' : 'not made'), Number(step.respawns) > 0
+              h('div.sub', 'vehicle ' + (step.vehicle ? 'there' : t('admin.not_made')), Number(step.respawns) > 0
                 ? h('span.chip', num(step.respawns) + ' respawn' + (Number(step.respawns) === 1 ? '' : 's')) : null)),
-            h('td.nowrap', exactSpan(step.secondsLeft), step.held ? h('div', h('span.chip.is-warn', 'clock held')) : null),
+            h('td.nowrap', exactSpan(step.secondsLeft), step.held ? h('div', h('span.chip.is-warn', t('admin.clock_held'))) : null),
             h('td', h('div.inline-form',
-              writeBtn('.is-small', 'dp-skip', { 'data-id': String(step.id), 'data-contract': cid }, 'Skip',
-                'Click again to skip', 'forward'),
+              writeBtn('.is-small', 'dp-skip', { 'data-id': String(step.id), 'data-contract': cid }, t('admin.skip'),
+                t('admin.click_again_to_skip'), 'forward'),
               writeBtn('.is-small.ghost', 'dp-respawn', { 'data-id': String(step.id), 'data-contract': cid },
-                'Respawn vehicle', 'Click again to respawn', 'truck'))));
+                t('admin.respawn_vehicle'), t('admin.click_again_to_respawn'), 'truck'))));
         })))),
       answerBox(S.disposal.answers.list)), '.dp-steps',
-      btn('.is-small.ghost', 'dp-refresh', {}, 'Refresh', 'rotate'));
+      btn('.is-small.ghost', 'dp-refresh', {}, t('admin.refresh'), 'rotate'));
   }
 
   function disposalWrite(op, data, slot, node) {
@@ -8284,25 +8528,27 @@
   ACTIONS['dp-refresh'] = function () { loadDisposal(); };
   ACTIONS['dp-skip'] = function (node) {
     var cid = node.getAttribute('data-contract');
-    if (!armed(node, 'Click again: finish the disposal on ' + cid + ' and hand over its payout')) return;
+    if (!armed(node, t('admin.click_again_finish_the_disposal_on') + cid + t('admin.and_hand_over_its_payout'))) return;
     disposalWrite('disposalSkip', { id: node.getAttribute('data-id') }, 'list', node);
   };
   ACTIONS['dp-respawn'] = function (node) {
     var cid = node.getAttribute('data-contract');
-    if (!armed(node, 'Click again: make the vehicle for ' + cid + ' again at the spawn spot')) return;
+    if (!armed(node, t('admin.click_again_make_the_vehicle_for') + cid + t('admin.again_at_the_spawn_spot'))) return;
     disposalWrite('disposalRespawn', { id: node.getAttribute('data-id') }, 'list', node);
   };
 
-  STAFF_ACTIONS.push(
-    { title: 'Change a reward or give a contract to another hitman', icon: 'sack-dollar', view: 'contracts',
-      go: 'Contracts',
-      text: 'Open the contract: Money, Change reward raises or lowers the collection paid next (added by staff or '
-        + 'charged to the placer), with the figures before it arms. People, Reassign gives it to the hitman you '
-        + 'looked up in Players, taking off whoever is on it.' },
-    { title: 'Help with a body disposal', icon: 'truck', view: 'contracts', go: 'Contracts',
-      text: 'Every body being disposed of is listed on Contracts (and on Home while there is one): Skip pays it as '
-        + 'if dropped off, Respawn vehicle makes the vehicle again. The vehicle spawn and the drop-off are set in '
-        + 'Locations.', also: { view: 'locations', go: 'Locations' } });
+  Text.later(function () {
+    STAFF_ACTIONS.push(
+    { title: t('admin.change_a_reward_or_give_a'), icon: 'sack-dollar', view: 'contracts',
+      go: t('admin.contracts'),
+      text: t('admin.open_the_contract_money_change_reward')
+        + t('admin.charged_to_the_placer_with_the')
+        + t('admin.looked_up_in_players_taking_off') },
+    { title: t('admin.help_with_a_body_disposal'), icon: 'truck', view: 'contracts', go: t('admin.contracts'),
+      text: t('admin.every_body_being_disposed_of_is')
+        + t('admin.if_dropped_off_respawn_vehicle_makes')
+        + t('admin.locations_2'), also: { view: 'locations', go: t('admin.locations') } });
+  });
 
   /* ---------- Hitman organisation, Boss permissions, Locations ----------
 
@@ -8325,9 +8571,12 @@
   orgReset();
 
   var ORG_TABS = ['members', 'roles', 'pay', 'funds', 'contracts', 'locations', 'notices', 'settings', 'log'];
-  var AREA_NAMES = { members: 'Members', roles: 'Roles', pay: 'Pay', money: 'Money & cuts', contracts: 'Contracts',
-    locations: 'Locations', notices: 'Notices', armory: 'Armory', garage: 'Garage', settings: 'Settings',
-    delegation: 'Delegation' };
+  var AREA_NAMES;
+  Text.later(function () {
+    AREA_NAMES = { members: t('admin.members'), roles: t('admin.roles'), pay: t('admin.pay'), money: t('admin.money_cuts'), contracts: t('admin.contracts'),
+    locations: t('admin.locations'), notices: t('admin.notices'), armory: t('admin.armory'), garage: t('admin.garage'), settings: t('admin.settings_2'),
+    delegation: t('admin.delegation') };
+  });
   var ORG_ACTIONS = ['org_created', 'org_member_hired', 'org_member_fired', 'org_member_role', 'org_member_suspended',
     'org_member_limits', 'org_member_grant', 'org_member_staff', 'org_role_created', 'org_role_edited',
     'org_role_deleted', 'org_role_power', 'org_role_pay', 'org_grant', 'org_limits', 'org_office_rule',
@@ -8407,24 +8656,24 @@
     var d = S.org.data || {};
     var e = settingEntry('Organisation.Enabled');
     if (!e && !S.settings.data) loadSettings();
-    return card('The hitman job is switched off', frag(
-      h('p.about', 'The hitman job is off. Turn it on here: a real qbx_core job (' + String(d.job || 'hitman')
-        + ') with roles, members, funds, Boss permissions and its own places. Off, no job is registered and nothing '
-        + 'changes for anybody. ' + (what || '')),
+    return card(t('admin.the_hitman_job_is_switched_off'), frag(
+      h('p.about', t('admin.the_hitman_job_is_off_turn') + String(d.job || 'hitman')
+        + t('admin.with_roles_members_funds_boss_permissions')
+        + t('admin.changes_for_anybody') + (what || '')),
       e ? h('div.st-row', { id: 'st-row-' + e.key, 'data-key': e.key }, settingInner(e))
-        : loading('Reading the switch…')), '.is-warn.org-off');
+        : loading(t('admin.reading_the_switch'))), '.is-warn.org-off');
   }
 
   function orgViewBody() {
     var d = S.org.data;
-    if (!d) return S.org.error ? empty(S.org.error) : loading('Reading the organisation…');
-    if (!d.enabled) return offCard(S.section === 'orgsetup' ? '' : 'Setup has its other settings.');
+    if (!d) return S.org.error ? empty(S.org.error) : loading(t('admin.reading_the_organisation'));
+    if (!d.enabled) return offCard(S.section === 'orgsetup' ? '' : t('admin.setup_has_its_other_settings'));
     if (!d.loaded) {
-      return card('On, and not read yet', frag(
-        h('p.about', 'The switch is on, but the organisation has not been read from the store yet. Create / sync '
-          + 'registers the job in qbx_core and brings every online member in step.'),
-        h('div.btn-row', writeBtn('.primary', 'org-setup', {}, 'Create / sync job',
-          'Click again: register ' + String(d.job || 'the job') + ' in qbx_core', 'rotate')),
+      return card(t('admin.on_and_not_read_yet'), frag(
+        h('p.about', t('admin.the_switch_is_on_but_the')
+          + t('admin.registers_the_job_in_qbx_core')),
+        h('div.btn-row', writeBtn('.primary', 'org-setup', {}, t('admin.create_sync_job'),
+          t('admin.click_again_register') + String(d.job || t('admin.the_job')) + t('admin.in_qbx_core'), 'rotate')),
         orgAnswer('setup')), '.is-warn');
     }
     switch (S.section) {
@@ -8456,7 +8705,7 @@
     return asList(d.powers).filter(function (p) { return p.code === code; })[0];
   }
   function powerName(d, code) {
-    if (code === 'TAKE') return 'Take contracts';
+    if (code === 'TAKE') return t('admin.take_contracts');
     var p = powerOf(d, code);
     return p ? String(p.label) : String(code);
   }
@@ -8473,33 +8722,33 @@
     if (!d.several) return null;
     var orgs = asList(d.orgs);
     var full = orgs.length >= Number(d.maxOrgs || 1);
-    return card('Organisations', frag(
-      h('p.about', 'Each organisation is its own qbx_core job with its own roles, members, funds, places and Boss '
-        + 'permissions. Pick the one every Hitman organisation, Boss permissions and Locations view works on. A '
-        + 'citizen is a member of one at most.'),
+    return card(t('admin.organisations'), frag(
+      h('p.about', t('admin.each_organisation_is_its_own_qbx')
+        + t('admin.permissions_pick_the_one_every_hitman')
+        + t('admin.citizen_is_a_member_of_one')),
       h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Organisation'), h('th', 'Job'), h('th', 'Members'), h('th', ''))),
+        h('thead', h('tr', h('th', 'Organisation'), h('th', t('admin.job')), h('th', t('admin.members')), h('th', ''))),
         h('tbody', orgs.map(function (o) {
           var on = String(o.id) === String(d.id);
           return h('tr' + (on ? '.is-on' : ''),
             h('td', String(o.label || o.id), o.first ? h('span.chip.is-label', 'config.lua') : null),
             h('td.mono', String(o.job || o.id)), h('td', num(o.members || 0)),
             h('td', h('div.btn-row',
-              on ? h('span.chip.is-label', 'Working on this one')
-                : h('button.btn', { type: 'button', 'data-act': 'org-scope', 'data-id': String(o.id) }, 'Work on this'),
-              (!o.first && !on) ? writeBtn('.danger', 'org-remove', { 'data-id': String(o.id) }, 'Take off',
-                'Click again: take ' + String(o.label || o.id) + ' off the list', 'trash') : null)));
+              on ? h('span.chip.is-label', t('admin.working_on_this_one'))
+                : h('button.btn', { type: 'button', 'data-act': 'org-scope', 'data-id': String(o.id) }, t('admin.work_on_this')),
+              (!o.first && !on) ? writeBtn('.danger', 'org-remove', { 'data-id': String(o.id) }, t('admin.take_off'),
+                t('admin.click_again_take') + String(o.label || o.id) + t('admin.off_the_list'), 'trash') : null)));
         })))),
       orgAnswer('orgremove'),
-      h('h4', 'Add an organisation'),
-      full ? h('p.about', 'At the most organisations staff set (Organisation.MaxOrganisations: '
+      h('h4', t('admin.add_an_organisation')),
+      full ? h('p.about', t('admin.at_the_most_organisations_staff_set')
         + num(d.maxOrgs) + ').') : frag(
         h('div.toolbar',
-          field('org.new.job', { class: 'is-mid', maxlength: '32', placeholder: 'job name, e.g. syndicate',
-            'aria-label': 'New organisation job name' }),
-          field('org.new.label', { class: 'is-grow', maxlength: '64', placeholder: 'label players see',
-            'aria-label': 'New organisation label' }),
-          writeBtn('.primary', 'org-create', {}, 'Add', 'Click again: add this organisation', 'plus')),
+          field('org.new.job', { class: 'is-mid', maxlength: '32', placeholder: t('admin.job_name_e_g_syndicate'),
+            'aria-label': t('admin.new_organisation_job_name') }),
+          field('org.new.label', { class: 'is-grow', maxlength: '64', placeholder: t('admin.label_players_see'),
+            'aria-label': t('admin.new_organisation_label') }),
+          writeBtn('.primary', 'org-create', {}, t('admin.add'), t('admin.click_again_add_this_organisation'), 'plus')),
         orgAnswer('orgcreate'))));
   }
 
@@ -8515,35 +8764,35 @@
     rows.sort(function (a, b) { return (a.kind === 'switch' ? 0 : 1) - (b.kind === 'switch' ? 0 : 1); });
     return frag(
       orgPickCard(d),
-      card('The job', frag(
+      card(t('admin.the_job_2'), frag(
         h('dl.facts',
-          h('dt', 'Job (qbx_core)'), h('dd.mono', String(d.job || '—')),
-          h('dt', 'Label'), h('dd', String(d.label || '—')),
-          h('dt', 'Type'), h('dd', String(d.type || '—')),
-          h('dt', 'Only members may accept'), h('dd', d.requireJob ? 'Yes' : 'No'),
-          h('dt', 'Members'), h('dd', num(members.length) + ' · ' + num(online) + ' in the city'),
-          h('dt', 'Roles'), h('dd', num(asList(d.roles).length)),
-          h('dt', 'Funds'), h('dd', money(d.balance) + ' · ' + (d.bank ? 'Renewed-Banking society account'
-            : 'this resource\'s own ledger'))),
+          h('dt', t('admin.job_qbx_core')), h('dd.mono', String(d.job || '—')),
+          h('dt', t('admin.label')), h('dd', String(d.label || '—')),
+          h('dt', t('admin.type')), h('dd', String(d.type || '—')),
+          h('dt', t('admin.only_members_may_accept')), h('dd', d.requireJob ? t('admin.yes') : t('admin.no')),
+          h('dt', t('admin.members')), h('dd', num(members.length) + ' · ' + num(online) + t('admin.in_the_city_2')),
+          h('dt', t('admin.roles')), h('dd', num(asList(d.roles).length)),
+          h('dt', t('admin.funds')), h('dd', money(d.balance) + ' · ' + (d.bank ? t('admin.renewed_banking_society_account')
+            : t('admin.this_resources_own_ledger')))),
         warnings.length ? h('ul.warnings', warnings.map(function (w) { return h('li', String(w)); })) : null,
-        h('div.btn-row', writeBtn('', 'org-setup', {}, 'Create / sync job',
-          'Click again: register ' + String(d.job || 'the job') + ' in qbx_core', 'rotate')),
+        h('div.btn-row', writeBtn('', 'org-setup', {}, t('admin.create_sync_job'),
+          t('admin.click_again_register') + String(d.job || t('admin.the_job')) + t('admin.in_qbx_core'), 'rotate')),
         orgAnswer('setup'))),
-      card('Rename', frag(
-        h('p.about', 'The label players see; never the job name members hold in qbx_core.'),
+      card(t('admin.rename'), frag(
+        h('p.about', t('admin.the_label_players_see_never_the')),
         h('div.toolbar', field('org.label', { class: 'is-grow', value: String(d.label || ''), maxlength: '64',
           'aria-label': 'Organisation label' }),
-          writeBtn('', 'org-rename', {}, 'Rename', 'Click again to rename', 'pen')),
+          writeBtn('', 'org-rename', {}, t('admin.rename'), t('admin.click_again_to_rename'), 'pen')),
         orgAnswer('rename'))),
-      card('Boss menu', frag(
-        h('p.about', 'What each tab of the phone\'s Organisation tab is called, and the roles a tab is hidden from.'),
+      card(t('admin.boss_menu'), frag(
+        h('p.about', t('admin.what_each_tab_of_the_phones')),
         h('div.table-wrap', h('table.grid',
-          h('thead', h('tr', h('th', 'Tab'), h('th', 'Label'), h('th', 'Hidden from'))),
+          h('thead', h('tr', h('th', t('admin.tab')), h('th', t('admin.label')), h('th', t('admin.hidden_from')))),
           h('tbody', ORG_TABS.map(function (tab) {
             var hidden = (layout.hidden && layout.hidden[tab]) || asList((saved.hidden || {})[tab]).map(String);
             return h('tr', h('td.mono', tab),
               h('td', field('org.tab.' + tab, { class: 'is-mid', maxlength: '24',
-                value: String(((saved.labels || {})[tab]) || ''), placeholder: tab, 'aria-label': 'Label of ' + tab })),
+                value: String(((saved.labels || {})[tab]) || ''), placeholder: tab, 'aria-label': t('admin.label_of') + tab })),
               h('td', h('div.chips', asList(d.roles).map(function (r) {
                 var on = hidden.indexOf(String(r.grade)) !== -1;
                 return h('button.chip.is-link' + (on ? '.is-warn' : ''), { type: 'button', 'data-act': 'org-tab-hide',
@@ -8551,10 +8800,10 @@
                   roleName(d, r.grade));
               }))));
           })))),
-        h('div.btn-row', writeBtn('', 'org-layout', {}, 'Save the boss menu', 'Click again: save the boss menu', 'check')),
+        h('div.btn-row', writeBtn('', 'org-layout', {}, t('admin.save_the_boss_menu'), t('admin.click_again_save_the_boss_menu'), 'check')),
         orgAnswer('layout'))),
-      card('Settings', rows.length ? h('div.stack', rows.map(settingRow))
-        : (S.settings.data ? empty('No organisation settings.') : loading('Reading the settings…'))));
+      card(t('admin.settings_2'), rows.length ? h('div.stack', rows.map(settingRow))
+        : (S.settings.data ? empty(t('admin.no_organisation_settings')) : loading(t('admin.reading_the_settings')))));
   }
 
   /* -- Roles & pay -- */
@@ -8563,27 +8812,27 @@
     var roles = asList(d.roles);
     var sel = S.org.role != null ? roles.filter(function (r) { return Number(r.grade) === Number(S.org.role); })[0] : null;
     return frag(
-      card('Roles', roles.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th.num', 'Grade'), h('th', 'Name'), h('th', 'Label'), h('th.num', 'Pay ($ per cycle)'),
-          h('th', 'Boss'), h('th.num', 'Members'), h('th', ''))),
+      card(t('admin.roles'), roles.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th.num', t('admin.grade')), h('th', t('admin.name')), h('th', t('admin.label')), h('th.num', t('admin.pay_per_cycle')),
+          h('th', t('admin.boss')), h('th.num', t('admin.members')), h('th', ''))),
         h('tbody', roles.map(function (r) {
           return h('tr' + (sel && Number(sel.grade) === Number(r.grade) ? '.is-open' : ''),
             h('td.num', num(r.grade)), h('td.mono', String(r.name || '—')), h('td', String(r.label || '—'),
               r.locked ? h('span.chip.is-warn', 'locked') : null),
             h('td.num', money(r.pay)), h('td', r.boss ? h('span.chip.is-panel', 'boss') : '—'),
             h('td.num', num(r.members)),
-            h('td', btn('.is-small.ghost', 'org-role-open', { 'data-id': String(r.grade) }, 'Edit & powers', 'pen')));
-        })))) : empty('No roles yet. Add one below.'), '', h('span.sub', num(roles.length))),
+            h('td', btn('.is-small.ghost', 'org-role-open', { 'data-id': String(r.grade) }, t('admin.edit_powers'), 'pen')));
+        })))) : empty(t('admin.no_roles_yet_add_one_below')), '', h('span.sub', num(roles.length))),
       sel ? orgRoleCard(d, sel) : null,
-      card('Add a role', frag(
+      card(t('admin.add_a_role'), frag(
         h('div.toolbar',
-          field('org.new.grade', { class: 'is-short', inputmode: 'numeric', placeholder: 'Grade', 'aria-label': 'Grade' }),
-          field('org.new.name', { class: 'is-mid', maxlength: '64', placeholder: 'name (job grade)', 'aria-label': 'Name' }),
-          field('org.new.label', { class: 'is-mid', maxlength: '64', placeholder: 'Label', 'aria-label': 'Label' }),
-          field('org.new.pay', { class: 'is-short', inputmode: 'numeric', placeholder: '$ pay', 'aria-label': 'Pay' }),
-          segmented('org-new-boss', [{ value: 'no', label: 'Not boss' }, { value: 'yes', label: 'Boss' }],
+          field('org.new.grade', { class: 'is-short', inputmode: 'numeric', placeholder: t('admin.grade'), 'aria-label': t('admin.grade') }),
+          field('org.new.name', { class: 'is-mid', maxlength: '64', placeholder: t('admin.name_job_grade'), 'aria-label': t('admin.name') }),
+          field('org.new.label', { class: 'is-mid', maxlength: '64', placeholder: t('admin.label'), 'aria-label': t('admin.label') }),
+          field('org.new.pay', { class: 'is-short', inputmode: 'numeric', placeholder: '$ pay', 'aria-label': t('admin.pay') }),
+          segmented('org-new-boss', [{ value: 'no', label: t('admin.not_boss') }, { value: 'yes', label: t('admin.boss') }],
             S.org.newBoss ? 'yes' : 'no'),
-          writeBtn('.primary', 'org-role-add', {}, 'Add role', 'Click again to add', 'plus')),
+          writeBtn('.primary', 'org-role-add', {}, t('admin.add_role'), t('admin.click_again_to_add'), 'plus')),
         orgAnswer('role-add'))));
   }
 
@@ -8591,32 +8840,32 @@
     var g = String(r.grade);
     var ceiling = (d.ceiling && d.ceiling.role && d.ceiling.role[g]) || {};
     var powers = r.powers || {};
-    var codes = [{ code: 'TAKE', area: 'contracts', label: 'Take contracts', about: 'May accept contracts, when only '
-      + 'roles given it may (Config.Organisation.AcceptNeedsPower).' }].concat(asList(d.powers));
+    var codes = [{ code: 'TAKE', area: 'contracts', label: t('admin.take_contracts'), about: t('admin.may_accept_contracts_when_only')
+      + t('admin.roles_given_it_may_config_organisation') }].concat(asList(d.powers));
     return card('Role: ' + roleName(d, r.grade), frag(
       h('div.toolbar',
-        h('label.st-pair', h('span', 'Name'), field('org.role.' + g + '.name', { class: 'is-mid', value: String(r.name || ''),
-          maxlength: '64', 'aria-label': 'Name' })),
-        h('label.st-pair', h('span', 'Label'), field('org.role.' + g + '.label', { class: 'is-mid',
-          value: String(r.label || ''), maxlength: '64', 'aria-label': 'Label' })),
+        h('label.st-pair', h('span', t('admin.name')), field('org.role.' + g + '.name', { class: 'is-mid', value: String(r.name || ''),
+          maxlength: '64', 'aria-label': t('admin.name') })),
+        h('label.st-pair', h('span', t('admin.label')), field('org.role.' + g + '.label', { class: 'is-mid',
+          value: String(r.label || ''), maxlength: '64', 'aria-label': t('admin.label') })),
         h('label.st-pair', h('span', 'Pay $'), field('org.role.' + g + '.pay', { class: 'is-short', inputmode: 'numeric',
-          value: String(r.pay == null ? '' : r.pay), 'aria-label': 'Pay' })),
-        h('label.st-pair', h('span', 'Grade'), field('org.role.' + g + '.grade', { class: 'is-short', inputmode: 'numeric',
-          value: g, 'aria-label': 'Grade (order)' }))),
+          value: String(r.pay == null ? '' : r.pay), 'aria-label': t('admin.pay') })),
+        h('label.st-pair', h('span', t('admin.grade')), field('org.role.' + g + '.grade', { class: 'is-short', inputmode: 'numeric',
+          value: g, 'aria-label': t('admin.grade_order') }))),
       h('div.toolbar',
-        segmented('org-role-boss', [{ value: 'no', label: 'Not boss' }, { value: 'yes', label: 'Boss' }],
+        segmented('org-role-boss', [{ value: 'no', label: t('admin.not_boss') }, { value: 'yes', label: t('admin.boss') }],
           (S.org.staged['boss:' + g] != null ? S.org.staged['boss:' + g] : !!r.boss) ? 'yes' : 'no', { 'data-id': g }),
-        segmented('org-role-lock', [{ value: 'no', label: 'Bosses may edit' }, { value: 'yes', label: 'Locked' }],
+        segmented('org-role-lock', [{ value: 'no', label: t('admin.bosses_may_edit') }, { value: 'yes', label: t('admin.locked') }],
           (S.org.staged['lock:' + g] != null ? S.org.staged['lock:' + g] : !!r.locked) ? 'yes' : 'no', { 'data-id': g }),
-        writeBtn('.primary', 'org-role-save', { 'data-id': g }, 'Save role', 'Click again to save', 'check'),
+        writeBtn('.primary', 'org-role-save', { 'data-id': g }, t('admin.save_role'), t('admin.click_again_to_save'), 'check'),
         writeBtn('.danger', 'org-role-remove', { 'data-id': g, disabled: Number(r.members) > 0 || null,
-          title: Number(r.members) > 0 ? 'A role cannot be removed while it holds members' : null },
-          'Remove role', 'Click again: remove ' + roleName(d, r.grade), 'trash-can')),
-      Number(r.members) > 0 ? h('p.note', 'A role cannot be removed while it holds members.') : null,
+          title: Number(r.members) > 0 ? t('admin.a_role_cannot_be_removed_while') : null },
+          t('admin.remove_role'), t('admin.click_again_remove') + roleName(d, r.grade), 'trash-can')),
+      Number(r.members) > 0 ? h('p.note', t('admin.a_role_cannot_be_removed_while_2')) : null,
       orgAnswer('role:' + g),
-      h('h3.st-group-title', 'Powers of this role'),
-      h('p.hint', 'What members holding this role may use. A boss reaches a power only once Boss permissions allows it '
-        + 'for the role (or them); greyed rows are above that ceiling. Staff may set any.'),
+      h('h3.st-group-title', t('admin.powers_of_this_role')),
+      h('p.hint', t('admin.what_members_holding_this_role_may')
+        + t('admin.for_the_role_or_them_greyed')),
       h('div.table-wrap', h('table.grid.org-powers',
         h('tbody', codes.map(function (p) {
           var on = !!powers[p.code];
@@ -8624,11 +8873,11 @@
           return h('tr' + (above ? '.is-dim' : ''),
             h('td', h('b', String(p.label)), h('span.sub', ' ' + String(AREA_NAMES[p.area] || p.area || ''))),
             h('td.detail', String(p.about || '')),
-            h('td', above ? h('span.chip', 'above the ceiling') : h('span.chip.is-panel', 'within the ceiling')),
+            h('td', above ? h('span.chip', t('admin.above_the_ceiling')) : h('span.chip.is-panel', t('admin.within_the_ceiling'))),
             h('td', writeBtn('.is-small' + (on ? '.primary' : ''), 'org-role-power', { 'data-id': g,
-              'data-power': p.code, 'data-value': on ? 'off' : 'on' }, on ? 'Given' : 'Not given',
-              on ? 'Click again: take ' + p.label + ' from ' + roleName(d, r.grade)
-                : 'Click again: give ' + p.label + ' to ' + roleName(d, r.grade), on ? 'check' : 'plus')));
+              'data-power': p.code, 'data-value': on ? 'off' : 'on' }, on ? t('admin.given') : t('admin.not_given'),
+              on ? t('admin.click_again_take') + p.label + ' from ' + roleName(d, r.grade)
+                : t('admin.click_again_give') + p.label + ' to ' + roleName(d, r.grade), on ? 'check' : 'plus')));
         })))),
       orgAnswer('power:' + g)), '.is-identity');
   }
@@ -8641,24 +8890,24 @@
     var player = hasPlayer() ? (S.players.data.player || {}) : null;
     var hireGrade = S.org.hire != null ? S.org.hire : (asList(d.roles).length ? String(asList(d.roles)[asList(d.roles).length - 1].grade) : '');
     return frag(
-      card('Hire', frag(
-        h('p.about', player ? 'Hire the player selected in Players, ' + String(player.name || 'them') + ', into a role.'
-          : 'Look a player up in Players first (the header\'s Player chip), or give their exact citizen id.'),
+      card(t('admin.hire'), frag(
+        h('p.about', player ? t('admin.hire_the_player_selected_in_players') + String(player.name || 'them') + t('admin.into_a_role')
+          : t('admin.look_a_player_up_in_players')),
         h('div.toolbar',
-          player ? h('span.chip.is-live', icon('user'), ' ', String(player.name || 'No name on record'))
-            : field('org.hire.cid', { class: 'is-mid', placeholder: 'Exact citizen id', maxlength: '64',
-              'aria-label': 'Citizen id' }),
+          player ? h('span.chip.is-live', icon('user'), ' ', String(player.name || t('admin.no_name_on_record')))
+            : field('org.hire.cid', { class: 'is-mid', placeholder: t('admin.exact_citizen_id'), maxlength: '64',
+              'aria-label': t('admin.citizen_id') }),
           h('span.sub', 'as'),
           h('div.seg', { role: 'group' }, asList(d.roles).map(function (r) {
             var on = String(r.grade) === String(hireGrade);
             return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'org-hire-grade',
               'data-value': String(r.grade), 'aria-pressed': on ? 'true' : 'false' }, roleName(d, r.grade));
           })),
-          writeBtn('.primary', 'org-hire', {}, 'Hire', 'Click again to hire', 'user-plus')),
+          writeBtn('.primary', 'org-hire', {}, t('admin.hire'), t('admin.click_again_to_hire'), 'user-plus')),
         orgAnswer('hire'))),
-      card('Members', members.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Name'), h('th', 'Role'), h('th', 'In the city'), h('th', 'Joined'), h('th', 'Last seen'),
-          h('th', 'Flags'), h('th', ''))),
+      card(t('admin.members'), members.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.name')), h('th', t('admin.role')), h('th', t('admin.in_the_city_3')), h('th', t('admin.joined')), h('th', t('admin.last_seen')),
+          h('th', t('admin.flags')), h('th', ''))),
         h('tbody', members.map(function (m) {
           var suspended = m.suspendedUntil && Number(m.suspendedUntil) > nowSeconds();
           return h('tr' + (sel && sel.ref === m.ref ? '.is-open' : ''),
@@ -8669,8 +8918,8 @@
               suspended ? h('span.chip.is-warn', 'suspended') : null,
               Object.keys(m.grants || {}).length ? h('span.chip', num(Object.keys(m.grants).length) + ' granted') : null,
               Object.keys(m.denies || {}).length ? h('span.chip', num(Object.keys(m.denies).length) + ' denied') : null),
-            h('td', btn('.is-small.ghost', 'org-member-open', { 'data-id': String(m.ref) }, 'Manage', 'pen')));
-        })))) : empty('Nobody is a member yet. Hire somebody above.'), '', h('span.sub', num(members.length))),
+            h('td', btn('.is-small.ghost', 'org-member-open', { 'data-id': String(m.ref) }, t('admin.manage'), 'pen')));
+        })))) : empty(t('admin.nobody_is_a_member_yet_hire')), '', h('span.sub', num(members.length))),
       sel ? orgMemberCard(d, sel) : null);
   }
 
@@ -8685,73 +8934,74 @@
     var limits = m.limits || {};
     return card('Member: ' + name, frag(
       h('dl.facts',
-        h('dt', 'Role'), h('dd', roleName(d, m.grade)),
-        h('dt', 'Holds now'), h('dd', held.length ? held.map(function (c) { return powerName(d, c); }).join(', ') : 'nothing'),
-        h('dt', 'Own grants'), h('dd', Object.keys(grants).length ? Object.keys(grants).map(function (c) {
+        h('dt', t('admin.role')), h('dd', roleName(d, m.grade)),
+        h('dt', t('admin.holds_now')), h('dd', held.length ? held.map(function (c) { return powerName(d, c); }).join(', ') : 'nothing'),
+        h('dt', t('admin.own_grants')), h('dd', Object.keys(grants).length ? Object.keys(grants).map(function (c) {
           return powerName(d, c) + (grants[c].inactive ? ' (inactive: ' + String(grants[c].inactive) + ')' : '')
             + ' by ' + String(grants[c].by);
         }).join(', ') : 'none'),
-        h('dt', 'Own denies'), h('dd', Object.keys(denies).length ? Object.keys(denies).map(function (c) {
+        h('dt', t('admin.own_denies')), h('dd', Object.keys(denies).length ? Object.keys(denies).map(function (c) {
           return powerName(d, c) + ' by ' + String(denies[c]);
         }).join(', ') : 'none'),
-        h('dt', 'Limits'), h('dd', (limits.maxAtOnce ? num(limits.maxAtOnce) + ' at once' : 'server\'s at once') + ' · '
-          + (limits.cooldownMinutes != null ? num(limits.cooldownMinutes) + ' min between accepts' : 'server\'s cooldown')),
-        m.suspendedUntil ? h('dt', 'Suspended until') : null, m.suspendedUntil ? h('dd', when(m.suspendedUntil)) : null),
-      h('h3.st-group-title', 'Role'),
+        h('dt', t('admin.limits')), h('dd', (limits.maxAtOnce ? num(limits.maxAtOnce) + t('admin.at_once') : t('admin.servers_at_once')) + ' · '
+          + (limits.cooldownMinutes != null ? num(limits.cooldownMinutes) + t('admin.min_between_accepts') : t('admin.servers_cooldown'))),
+        m.suspendedUntil ? h('dt', t('admin.suspended_until')) : null, m.suspendedUntil ? h('dd', when(m.suspendedUntil)) : null),
+      h('h3.st-group-title', t('admin.role')),
       h('div.toolbar',
         h('div.seg', { role: 'group' }, asList(d.roles).map(function (r) {
           var on = String(r.grade) === String(roleSel);
           return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'org-member-grade',
             'data-id': ref, 'data-value': String(r.grade) }, roleName(d, r.grade));
         })),
-        writeBtn('', 'org-member-role', { 'data-id': ref }, 'Set role', 'Click again to set', 'id-badge')),
+        writeBtn('', 'org-member-role', { 'data-id': ref }, t('admin.set_role'), t('admin.click_again_to_set'), 'id-badge')),
       orgAnswer('role-of:' + ref),
-      h('h3.st-group-title', 'Suspend from contracts'),
+      h('h3.st-group-title', t('admin.suspend_from_contracts')),
       h('div.toolbar',
-        field('org.m.' + ref + '.hours', { class: 'is-short', inputmode: 'numeric', placeholder: 'Hours (0 lifts)',
-          'aria-label': 'Hours' }),
-        field('org.m.' + ref + '.sreason', { class: 'is-grow', maxlength: '160', placeholder: 'Reason (kept in the log)',
-          'aria-label': 'Reason' }),
-        writeBtn('', 'org-member-suspend', { 'data-id': ref }, 'Suspend', 'Click again to suspend', 'ban')),
+        field('org.m.' + ref + '.hours', { class: 'is-short', inputmode: 'numeric', placeholder: t('admin.hours_0_lifts'),
+          'aria-label': t('admin.hours') }),
+        field('org.m.' + ref + '.sreason', { class: 'is-grow', maxlength: '160', placeholder: t('admin.reason_kept_in_the_log_2'),
+          'aria-label': t('admin.reason') }),
+        writeBtn('', 'org-member-suspend', { 'data-id': ref }, t('admin.suspend'), t('admin.click_again_to_suspend'), 'ban')),
       orgAnswer('suspend:' + ref),
-      h('h3.st-group-title', 'Own limits'),
+      h('h3.st-group-title', t('admin.own_limits')),
       h('div.toolbar',
-        h('label.st-pair', h('span', 'At once'), field('org.m.' + ref + '.at', { class: 'is-short', inputmode: 'numeric',
-          value: limits.maxAtOnce == null ? '' : String(limits.maxAtOnce), placeholder: '1-50', 'aria-label': 'At once' })),
-        h('label.st-pair', h('span', 'Cooldown (min)'), field('org.m.' + ref + '.cd', { class: 'is-short',
+        h('label.st-pair', h('span', t('admin.at_once_2')), field('org.m.' + ref + '.at', { class: 'is-short', inputmode: 'numeric',
+          value: limits.maxAtOnce == null ? '' : String(limits.maxAtOnce), placeholder: '1-50', 'aria-label': t('admin.at_once_2') })),
+        h('label.st-pair', h('span', t('admin.cooldown_min')), field('org.m.' + ref + '.cd', { class: 'is-short',
           inputmode: 'numeric', value: limits.cooldownMinutes == null ? '' : String(limits.cooldownMinutes),
-          placeholder: '0-10080', 'aria-label': 'Cooldown minutes' })),
-        writeBtn('', 'org-member-limits', { 'data-id': ref }, 'Save limits', 'Click again to save', 'check')),
+          placeholder: '0-10080', 'aria-label': t('admin.cooldown_minutes') })),
+        writeBtn('', 'org-member-limits', { 'data-id': ref }, t('admin.save_limits'), t('admin.click_again_to_save'), 'check')),
       orgAnswer('limits:' + ref),
-      h('h3.st-group-title', 'A power of their own'),
+      h('h3.st-group-title', t('admin.a_power_of_their_own')),
       h('div.toolbar',
         dropdown('org-mpower:' + ref),
-        segmented('org-member-state', [{ value: 'grant', label: 'Grant' }, { value: 'deny', label: 'Deny' },
-          { value: 'clear', label: 'Clear' }], state, { 'data-id': ref }),
-        writeBtn('', 'org-member-grant', { 'data-id': ref, 'data-power': power }, 'Save', 'Click again to save', 'key')),
+        segmented('org-member-state', [{ value: 'grant', label: t('admin.grant') }, { value: 'deny', label: t('admin.deny') },
+          { value: 'clear', label: t('admin.clear') }], state, { 'data-id': ref }),
+        writeBtn('', 'org-member-grant', { 'data-id': ref, 'data-power': power }, t('admin.save'), t('admin.click_again_to_save'), 'key')),
       orgAnswer('grant:' + ref),
-      h('h3.st-group-title', 'Codename and lock'),
+      h('h3.st-group-title', t('admin.codename_and_lock')),
       h('div.toolbar',
-        field('org.m.' + ref + '.codename', { class: 'is-mid', maxlength: '32', placeholder: 'Codename (empty clears)',
-          'aria-label': 'Codename' }),
-        writeBtn('', 'org-member-codename', { 'data-id': ref }, 'Save codename', 'Click again to save', 'mask'),
+        field('org.m.' + ref + '.codename', { class: 'is-mid', maxlength: '32', placeholder: t('admin.codename_empty_clears'),
+          'aria-label': t('admin.codename') }),
+        writeBtn('', 'org-member-codename', { 'data-id': ref }, t('admin.save_codename'), t('admin.click_again_to_save'), 'mask'),
         writeBtn('', 'org-member-lock', { 'data-id': ref, 'data-value': m.locked ? 'off' : 'on' },
-          m.locked ? 'Unlock' : 'Lock against boss edits',
-          m.locked ? 'Click again: let bosses edit ' + name : 'Click again: lock ' + name, m.locked ? 'unlock' : 'lock')),
+          m.locked ? t('admin.unlock') : t('admin.lock_against_boss_edits'),
+          m.locked ? t('admin.click_again_let_bosses_edit') + name : t('admin.click_again_lock') + name, m.locked ? 'unlock' : 'lock')),
       orgAnswer('staff:' + ref),
-      h('h3.st-group-title', 'Fire'),
+      h('h3.st-group-title', t('admin.fire')),
       h('div.toolbar',
-        field('org.m.' + ref + '.freason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason (kept in the log)',
-          'aria-label': 'Reason for firing' }),
-        writeBtn('.danger', 'org-member-fire', { 'data-id': ref }, 'Fire', 'Click again: fire ' + name, 'user-minus')),
+        field('org.m.' + ref + '.freason', { class: 'is-grow', maxlength: '200', placeholder: t('admin.reason_kept_in_the_log_2'),
+          'aria-label': t('admin.reason_for_firing') }),
+        writeBtn('.danger', 'org-member-fire', { 'data-id': ref }, t('admin.fire'), t('admin.click_again_fire') + name, 'user-minus')),
       orgAnswer('fire:' + ref)), '.is-identity');
   }
 
-  DD['org-mpower'] = {
-    prefix: 'Power',
+  Text.later(function () {
+    DD['org-mpower'] = {
+    prefix: t('admin.power'),
     options: function () {
       var d = S.org.data || {};
-      return [{ value: 'TAKE', label: 'Take contracts' }].concat(asList(d.powers).map(function (p) {
+      return [{ value: 'TAKE', label: t('admin.take_contracts') }].concat(asList(d.powers).map(function (p) {
         return { value: p.code, label: String(p.label) };
       }));
     },
@@ -8761,6 +9011,7 @@
     },
     pick: function (v, ref) { disarm(); S.org.staged['power:' + ref] = v; drawOrg(); }
   };
+  });
 
   /* -- Applications -- */
 
@@ -8777,36 +9028,36 @@
           value: qs[i] !== undefined ? String(qs[i]) : '', placeholder: 'Question ' + (i + 1) + ' (empty: none)',
           'aria-label': 'Question ' + (i + 1) })));
       }
-      form = card('Application form', frag(
-        h('p.about', 'The questions an applicant answers, up to ' + most + '. Bosses holding Edit application form '
-          + 'set them too.'),
-        rows.length ? h('div.stack', rows) : empty('Questions on the form at most is 0 in Setup.'),
-        h('div.btn-row', writeBtn('.primary', 'org-form-save', { 'data-count': String(most) }, 'Save the form',
-          'Click again: save these questions', 'check')),
+      form = card(t('admin.application_form'), frag(
+        h('p.about', t('admin.the_questions_an_applicant_answers_up') + most + t('admin.bosses_holding_edit_application_form')
+          + t('admin.set_them_too')),
+        rows.length ? h('div.stack', rows) : empty(t('admin.questions_on_the_form_at_most')),
+        h('div.btn-row', writeBtn('.primary', 'org-form-save', { 'data-count': String(most) }, t('admin.save_the_form'),
+          t('admin.click_again_save_these_questions'), 'check')),
         orgAnswer('form')));
     }
-    return frag(form, card('Applications', apps.length ? h('div.stack', apps.map(function (a) {
+    return frag(form, card(t('admin.applications'), apps.length ? h('div.stack', apps.map(function (a) {
       var id = String(a.id);
       return h('article.card.org-app',
-        h('header.card-head', h('h3', String(a.name || 'Applicant')), h('span.sub', a.at ? ago(a.at) : '')),
+        h('header.card-head', h('h3', String(a.name || t('admin.applicant'))), h('span.sub', a.at ? ago(a.at) : '')),
         h('p.al-text', String(a.body || '')),
         asList(a.form).length ? h('div.stack', asList(a.form).map(function (f) {
           return h('div.org-answer', h('p.sub', String(f.q || '')), h('blockquote.org-notice', String(f.a || '')));
         })) : null,
         x.Recruitment ? frag(
-          a.note ? h('p.sub', 'Interview note (' + String(a.note.by || 'Staff') + '): ' + String(a.note.text || '')) : null,
+          a.note ? h('p.sub', t('admin.interview_note') + String(a.note.by || t('admin.staff')) + '): ' + String(a.note.text || '')) : null,
           h('div.toolbar', field('org.note.' + id, { class: 'is-grow', maxlength: '2000',
-            placeholder: 'Interview note', 'aria-label': 'Interview note' }),
-            writeBtn('.ghost', 'org-note-save', { 'data-id': id }, 'Save note', 'Click again: save the note', 'pen'),
-            a.note ? writeBtn('.ghost', 'org-note-clear', { 'data-id': id }, 'Clear', 'Click again: clear the note',
+            placeholder: t('admin.interview_note_2'), 'aria-label': t('admin.interview_note_2') }),
+            writeBtn('.ghost', 'org-note-save', { 'data-id': id }, t('admin.save_note'), t('admin.click_again_save_the_note'), 'pen'),
+            a.note ? writeBtn('.ghost', 'org-note-clear', { 'data-id': id }, t('admin.clear'), t('admin.click_again_clear_the_note'),
               'eraser') : null)) : null,
         h('div.btn-row',
-          writeBtn('.primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, 'Accept',
-            'Click again: hire ' + String(a.name || 'them') + ' into the lowest role', 'check'),
-          writeBtn('.danger', 'org-app', { 'data-id': id, 'data-value': 'no' }, 'Reject',
-            'Click again: reject ' + String(a.name || 'them'), 'xmark')),
+          writeBtn('.primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, t('admin.accept'),
+            t('admin.click_again_hire') + String(a.name || 'them') + t('admin.into_the_lowest_role'), 'check'),
+          writeBtn('.danger', 'org-app', { 'data-id': id, 'data-value': 'no' }, t('admin.reject'),
+            t('admin.click_again_reject') + String(a.name || 'them'), 'xmark')),
         orgAnswer('app:' + id));
-    })) : empty('No open applications. Players apply from the app (at a sign-up spot, when that is the rule).'),
+    })) : empty(t('admin.no_open_applications_players_apply_from')),
     '', h('span.sub', num(apps.length))));
   }
 
@@ -8838,66 +9089,66 @@
         h('td.num', '0–' + num(cap) + '%'), h('td.num', bossMax == null ? '—' : '0–' + num(bossMax) + '%'),
         h('td', h('div.inline-form', field('org.cut.' + kind, { class: 'is-short', inputmode: 'numeric', placeholder: '%',
           'aria-label': label + ' (percent)' }),
-          writeBtn('.is-small', 'org-cut', { 'data-value': kind }, 'Save', 'Click again to save', 'check'))));
+          writeBtn('.is-small', 'org-cut', { 'data-value': kind }, t('admin.save'), t('admin.click_again_to_save'), 'check'))));
     }
     return frag(
       h('div.tiles',
-        tile('Balance', frag(h('p.big', fundsReady(d, f) ? money(f ? f.balance : d.balance) : 'Unknown'),
-          h('p.sub', fundsReady(d, f) ? (fundsBackend(d, f) === 'bank' ? 'Renewed-Banking society account'
-            : 'this resource\'s own ledger') : 'the bank is not answering: the balance cannot be read')),
+        tile(t('admin.balance'), frag(h('p.big', fundsReady(d, f) ? money(f ? f.balance : d.balance) : t('admin.unknown')),
+          h('p.sub', fundsReady(d, f) ? (fundsBackend(d, f) === 'bank' ? t('admin.renewed_banking_society_account')
+            : t('admin.this_resources_own_ledger')) : t('admin.the_bank_is_not_answering_the'))),
           fundsReady(d, f) ? '' : '.is-warn')),
       fundsBackendCard(d, f),
-      card('Move money', frag(
-        h('p.about', 'Staff money into the funds or out of them, or a bonus from the funds to a member, with a reason. '
-          + 'Sent once however often it is clicked: a retry after no answer is the same movement.'),
+      card(t('admin.move_money'), frag(
+        h('p.about', t('admin.staff_money_into_the_funds_or')
+          + t('admin.sent_once_however_often_it_is')),
         h('div.toolbar',
-          segmented('org-dir', [{ value: 'deposit', label: 'Deposit' }, { value: 'withdraw', label: 'Withdraw' },
-            { value: 'bonus', label: 'Bonus to a member' }], dir),
+          segmented('org-dir', [{ value: 'deposit', label: t('admin.deposit') }, { value: 'withdraw', label: t('admin.withdraw') },
+            { value: 'bonus', label: t('admin.bonus_to_a_member') }], dir),
           dir === 'bonus' ? dropdown('org-bonus-to') : null),
         h('div.toolbar',
-          field('org.funds.amount', { class: 'is-short', inputmode: 'numeric', placeholder: '$ amount', 'aria-label': 'Amount' }),
-          field('org.funds.reason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason (kept in the log)',
-            'aria-label': 'Reason' }),
-          writeBtn('.primary', 'org-funds', {}, dir === 'deposit' ? 'Deposit' : dir === 'withdraw' ? 'Withdraw' : 'Pay bonus',
-            'Click again', dir === 'withdraw' ? 'arrow-up-from-bracket' : 'arrow-down-to-bracket')),
+          field('org.funds.amount', { class: 'is-short', inputmode: 'numeric', placeholder: '$ amount', 'aria-label': t('admin.amount') }),
+          field('org.funds.reason', { class: 'is-grow', maxlength: '200', placeholder: t('admin.reason_kept_in_the_log_2'),
+            'aria-label': t('admin.reason') }),
+          writeBtn('.primary', 'org-funds', {}, dir === 'deposit' ? t('admin.deposit') : dir === 'withdraw' ? t('admin.withdraw') : t('admin.pay_bonus'),
+            t('admin.click_again_2'), dir === 'withdraw' ? 'arrow-up-from-bracket' : 'arrow-down-to-bracket')),
         orgAnswer('funds'))),
-      card('Cuts', frag(
-        h('p.about', 'The share of what a member is paid that goes to the funds, frozen onto a contract when the member '
-          + 'accepts it: a change never touches money already promised. Staff may set any cut up to the cap on all cuts '
-          + 'of one payout (' + num(cap) + '%); a boss only within the limits in Boss permissions. 0 is always allowed.'),
+      card(t('admin.cuts'), frag(
+        h('p.about', t('admin.the_share_of_what_a_member')
+          + t('admin.accepts_it_a_change_never_touches')
+          + t('admin.of_one_payout') + num(cap) + t('admin.a_boss_only_within_the_limits')),
         h('div.table-wrap', h('table.grid',
-          h('thead', h('tr', h('th', 'Cut'), h('th.num', 'Now'), h('th.num', 'Staff may set'), h('th.num', 'A boss may set'),
+          h('thead', h('tr', h('th', t('admin.cut')), h('th.num', t('admin.now')), h('th.num', t('admin.staff_may_set')), h('th.num', t('admin.a_boss_may_set')),
             h('th', ''))),
           h('tbody',
-            cutRow('payout', 'Organisation cut of payouts', cuts.payout, Math.min(cap, Number(lim.CutMaxPercent) || 0)),
-            cutRow('stake', 'Cut on stakes', cuts.stake, Math.min(cap, Number(lim.StakeCutMaxPercent) || 0)),
-            cutRow('buyout', 'Cut on buyouts', cuts.buyout, Math.min(cap, Number(lim.BuyoutCutMaxPercent) || 0)),
+            cutRow('payout', t('admin.organisation_cut_of_payouts'), cuts.payout, Math.min(cap, Number(lim.CutMaxPercent) || 0)),
+            cutRow('stake', t('admin.cut_on_stakes'), cuts.stake, Math.min(cap, Number(lim.StakeCutMaxPercent) || 0)),
+            cutRow('buyout', t('admin.cut_on_buyouts'), cuts.buyout, Math.min(cap, Number(lim.BuyoutCutMaxPercent) || 0)),
             asList(d.roles).map(function (r) {
               var v = (cuts.byRole || {})[String(r.grade)];
-              return h('tr', h('td', 'Role: ' + roleName(d, r.grade)), h('td.num', v == null ? 'as the organisation' : num(v) + '%'),
+              return h('tr', h('td', 'Role: ' + roleName(d, r.grade)), h('td.num', v == null ? t('admin.as_the_organisation') : num(v) + '%'),
                 h('td.num', '0–' + num(cap) + '%'), h('td.num', '0–' + num(Math.min(cap, Number(lim.CutMaxPercent) || 0)) + '%'),
                 h('td', h('div.inline-form', field('org.cut.role.' + r.grade, { class: 'is-short', inputmode: 'numeric',
-                  placeholder: '%', 'aria-label': 'Cut for ' + roleName(d, r.grade) }),
-                  writeBtn('.is-small', 'org-cut', { 'data-value': 'role', 'data-id': String(r.grade) }, 'Save',
-                    'Click again to save', 'check'),
+                  placeholder: '%', 'aria-label': t('admin.cut_for') + roleName(d, r.grade) }),
+                  writeBtn('.is-small', 'org-cut', { 'data-value': 'role', 'data-id': String(r.grade) }, t('admin.save'),
+                    t('admin.click_again_to_save'), 'check'),
                   v == null ? null : writeBtn('.is-small.ghost', 'org-cut-clear', { 'data-id': String(r.grade) },
-                    'Clear', 'Click again: ' + roleName(d, r.grade) + ' as the organisation', 'eraser'))));
+                    t('admin.clear'), t('admin.click_again') + roleName(d, r.grade) + t('admin.as_the_organisation_2'), 'eraser'))));
             })))),
-        byMember ? h('p.note', num(byMember) + ' member' + (byMember === 1 ? ' has a cut' : 's have cuts')
-          + ' of their own.') : null,
+        byMember ? h('p.note', num(byMember) + ' member' + (byMember === 1 ? t('admin.has_a_cut') : t('admin.have_cuts'))
+          + t('admin.of_their_own')) : null,
         orgAnswer('cut'))),
-      card('Ledger', f ? (asList(f.rows).length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'When'), h('th', 'Kind'), h('th.num', 'Amount'), h('th', 'Reason'), h('th', 'Contract'),
-          canIdentify() ? h('th', 'By') : null)),
+      card(t('admin.ledger'), f ? (asList(f.rows).length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.when')), h('th', t('admin.kind')), h('th.num', t('admin.amount')), h('th', t('admin.reason')), h('th', t('admin.contract')),
+          canIdentify() ? h('th', t('admin.by_2')) : null)),
         h('tbody', asList(f.rows).map(function (r) {
           return h('tr', h('td.nowrap', when(r.at)), h('td', String(r.kind || '—')), h('td.num', money(r.amount)),
             h('td', String(r.reason || '—')),
             h('td', r.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': String(r.contract) },
               String(r.contract)) : '—'),
             canIdentify() ? h('td.mono', String(r.actor || '—')) : null);
-        })))) : empty('Nothing has moved yet.'))
-        : (S.org.fundsError ? empty(S.org.fundsError) : loading('Reading the ledger…')), '',
-        btn('.is-small.ghost', 'org-funds-refresh', {}, 'Refresh', 'rotate')));
+        })))) : empty(t('admin.nothing_has_moved_yet')))
+        : (S.org.fundsError ? empty(S.org.fundsError) : loading(t('admin.reading_the_ledger'))), '',
+        btn('.is-small.ghost', 'org-funds-refresh', {}, t('admin.refresh'), 'rotate')));
   }
 
   /** Where the funds are kept, as orgFunds (or orgGet) says: 'internal' or 'bank'. */
@@ -8917,23 +9168,23 @@
     var now = fundsBackend(d, f);
     var ready = fundsReady(d, f);
     var other = now === 'bank' ? 'internal' : 'bank';
-    var otherName = other === 'bank' ? 'Renewed-Banking' : 'this resource\'s own ledger';
-    return card('Where the funds are kept', frag(
-      h('p.about', 'Now: ' + (now === 'bank' ? 'Renewed-Banking\'s society account' : 'this resource\'s own ledger')
-        + (ready ? '.' : ', which is not answering.') + ' Switching moves the balance to the other, on the record.'),
+    var otherName = other === 'bank' ? 'Renewed-Banking' : t('admin.this_resources_own_ledger');
+    return card(t('admin.where_the_funds_are_kept'), frag(
+      h('p.about', 'Now: ' + (now === 'bank' ? t('admin.renewed_bankings_society_account') : t('admin.this_resources_own_ledger'))
+        + (ready ? '.' : t('admin.which_is_not_answering')) + t('admin.switching_moves_the_balance_to_the')),
       // A switch carries the balance across, so it needs Renewed-Banking
       // answering on both sides (Funds.switch): while the bank is down the
       // only way off it is Abandon, and the server refuses a plain switch.
       h('div.btn-row', writeBtn('', 'org-backend', { 'data-value': other,
-        title: ready ? null : 'The bank is not answering: a switch would carry nothing across. Abandon it below.' },
-        'Switch to ' + otherName, 'Click again: move the funds to ' + otherName, 'right-left', false,
+        title: ready ? null : t('admin.the_bank_is_not_answering_a') },
+        t('admin.switch_to') + otherName, t('admin.click_again_move_the_funds_to') + otherName, 'right-left', false,
         ready ? undefined : false)),
       !ready && now === 'bank' ? h('div.org-abandon',
-        h('p.note.is-error', 'The bank is down. Abandon leaves it carrying nothing: the funds start again from $0 in '
-          + otherName + ', and whatever the bank holds is not moved or counted. Only do this if the bank will not '
-          + 'come back.'),
+        h('p.note.is-error', t('admin.the_bank_is_down_abandon_leaves')
+          + otherName + t('admin.and_whatever_the_bank_holds_is')
+          + t('admin.come_back')),
         h('div.btn-row', writeBtn('.danger', 'org-backend', { 'data-value': other, 'data-how': 'abandon' },
-          'Abandon the bank', 'Click again: abandon the bank, start from $0 in ' + otherName, 'triangle-exclamation')))
+          t('admin.abandon_the_bank'), t('admin.click_again_abandon_the_bank_start') + otherName, 'triangle-exclamation')))
         : null,
       orgAnswer('backend')), ready ? '' : '.is-warn');
   }
@@ -8943,9 +9194,9 @@
   function orgAccessBody(d) {
     var access = d.access || {};
     return frag(
-      card('Which contracts each role may take', frag(
-        h('p.about', 'Only ever stricter than the server\'s own rules, which still apply first. Empty is no rule of the '
-          + 'organisation\'s own.'),
+      card(t('admin.which_contracts_each_role_may_take'), frag(
+        h('p.about', t('admin.only_ever_stricter_than_the_servers')
+          + t('admin.organisations_own')),
         h('div.org-access', asList(d.roles).map(function (r) {
           var g = String(r.grade);
           var a = access[g] || {};
@@ -8954,28 +9205,28 @@
           return h('div.org-access-role',
             h('b', roleName(d, g)),
             h('div.toolbar',
-              h('label.st-pair', h('span', 'Most reward ($)'), field('org.acc.' + g + '.max', { class: 'is-short',
-                inputmode: 'numeric', value: a.maxReward == null ? '' : String(a.maxReward), 'aria-label': 'Most reward' })),
-              h('label.st-pair', h('span', 'At once'), field('org.acc.' + g + '.at', { class: 'is-short',
-                inputmode: 'numeric', value: a.maxAtOnce == null ? '' : String(a.maxAtOnce), 'aria-label': 'At once' })),
-              h('label.st-pair', h('span', 'Cooldown (min)'), field('org.acc.' + g + '.cd', { class: 'is-short',
+              h('label.st-pair', h('span', t('admin.most_reward')), field('org.acc.' + g + '.max', { class: 'is-short',
+                inputmode: 'numeric', value: a.maxReward == null ? '' : String(a.maxReward), 'aria-label': t('admin.most_reward_2') })),
+              h('label.st-pair', h('span', t('admin.at_once_2')), field('org.acc.' + g + '.at', { class: 'is-short',
+                inputmode: 'numeric', value: a.maxAtOnce == null ? '' : String(a.maxAtOnce), 'aria-label': t('admin.at_once_2') })),
+              h('label.st-pair', h('span', t('admin.cooldown_min')), field('org.acc.' + g + '.cd', { class: 'is-short',
                 inputmode: 'numeric', value: a.cooldownMinutes == null ? '' : String(a.cooldownMinutes),
-                'aria-label': 'Cooldown' }))),
+                'aria-label': t('admin.cooldown') }))),
             h('div.toolbar',
-              segmented('org-acc-rule', [{ value: '', label: 'Any rule' }, { value: 'alive', label: 'Alive only' },
-                { value: 'either', label: 'Kill or alive' }], rule, { 'data-id': g }),
-              segmented('org-acc-wl', [{ value: 'yes', label: 'Whitelisted-job targets allowed' },
-                { value: 'no', label: 'Not on whitelisted jobs' }], wl, { 'data-id': g }),
-              writeBtn('.is-small', 'org-access', { 'data-id': g }, 'Save', 'Click again: save for ' + roleName(d, g),
+              segmented('org-acc-rule', [{ value: '', label: t('admin.any_rule') }, { value: 'alive', label: t('admin.alive_only') },
+                { value: 'either', label: t('admin.kill_or_alive') }], rule, { 'data-id': g }),
+              segmented('org-acc-wl', [{ value: 'yes', label: t('admin.whitelisted_job_targets_allowed') },
+                { value: 'no', label: t('admin.not_on_whitelisted_jobs') }], wl, { 'data-id': g }),
+              writeBtn('.is-small', 'org-access', { 'data-id': g }, t('admin.save'), t('admin.click_again_save_for') + roleName(d, g),
                 'check')));
         })),
         orgAnswer('access'))),
-      card('Boss pick', frag(
-        h('p.about', 'Pin a contract to a member on their board, as a boss would; Nobody clears the pick.'),
+      card(t('admin.boss_pick'), frag(
+        h('p.about', t('admin.pin_a_contract_to_a_member')),
         h('div.toolbar',
-          field('org.pick.id', { class: 'is-mid', maxlength: '64', placeholder: 'Contract id', 'aria-label': 'Contract id' }),
+          field('org.pick.id', { class: 'is-mid', maxlength: '64', placeholder: t('admin.contract_id'), 'aria-label': t('admin.contract_id') }),
           dropdown('org-pick-to'),
-          writeBtn('', 'org-pick', {}, 'Pick', 'Click again', 'thumbtack')),
+          writeBtn('', 'org-pick', {}, t('admin.pick'), t('admin.click_again_2'), 'thumbtack')),
         orgAnswer('pick'))));
   }
 
@@ -8985,202 +9236,215 @@
       return { value: String(m.ref), label: String(m.name || '—') };
     }));
   }
-  DD['org-pick-to'] = {
-    prefix: 'Member',
-    options: function () { return memberOptions('Nobody (clear the pick)'); },
+  Text.later(function () {
+    DD['org-pick-to'] = {
+    prefix: t('admin.member'),
+    options: function () { return memberOptions(t('admin.nobody_clear_the_pick')); },
     value: function () { return S.org.staged.pick || ''; },
     pick: function (v) { disarm(); S.org.staged.pick = v; drawOrg(); }
   };
-  DD['org-bonus-to'] = {
-    prefix: 'To',
-    options: function () { return memberOptions('Pick a member'); },
+  });
+  Text.later(function () {
+    DD['org-bonus-to'] = {
+    prefix: t('admin.to'),
+    options: function () { return memberOptions(t('admin.pick_a_member')); },
     value: function () { return S.org.bonusTo || ''; },
     pick: function (v) { disarm(); S.org.bonusTo = v; drawOrg(); }
   };
+  });
 
   /* -- Notices -- */
 
   function orgNoticesBody(d) {
     var n = d.notice;
     var text = n && typeof n === 'object' ? n.text : null;
-    return card('The board notice', frag(
-      text ? h('blockquote.org-notice', String(text)) : empty('No notice posted.'),
+    return card(t('admin.the_board_notice'), frag(
+      text ? h('blockquote.org-notice', String(text)) : empty(t('admin.no_notice_posted')),
       n && n.at ? h('p.sub', 'Posted ' + ago(n.at)) : null,
       h('div.toolbar',
         field('org.notice', { class: 'is-grow', maxlength: String((d.limits || {}).NoticeMaxLength || 2000),
-          placeholder: 'New notice', 'aria-label': 'Notice' })),
+          placeholder: t('admin.new_notice'), 'aria-label': t('admin.notice') })),
       h('div.toolbar',
-        segmented('org-broadcast', [{ value: 'no', label: 'On the board' }, { value: 'yes', label: 'And message every member' }],
+        segmented('org-broadcast', [{ value: 'no', label: t('admin.on_the_board') }, { value: 'yes', label: t('admin.and_message_every_member') }],
           S.org.staged.broadcast ? 'yes' : 'no'),
-        writeBtn('.primary', 'org-notice', {}, 'Post', 'Click again to post', 'thumbtack'),
-        text ? writeBtn('.ghost', 'org-notice-clear', {}, 'Take it down', 'Click again: take the notice down', 'eraser')
+        writeBtn('.primary', 'org-notice', {}, t('admin.post'), t('admin.click_again_to_post'), 'thumbtack'),
+        text ? writeBtn('.ghost', 'org-notice-clear', {}, t('admin.take_it_down'), t('admin.click_again_take_the_notice_down'), 'eraser')
           : null),
       orgAnswer('notice')));
   }
 
   /* -- Work & channel: the organisation extras (server/org/extras.lua) -- */
 
-  var DOSSIER_RULES = [{ value: 'discreet', label: 'Discreet' }, { value: 'clean', label: 'Clean' },
-    { value: 'open', label: 'Open' }];
+  var DOSSIER_RULES;
+  Text.later(function () {
+    DOSSIER_RULES = [{ value: 'discreet', label: t('admin.discreet') }, { value: 'clean', label: t('admin.clean') },
+    { value: 'open', label: t('admin.open') }];
+  });
 
-  DD['org-work-member'] = {
-    prefix: 'To',
+  Text.later(function () {
+    DD['org-work-member'] = {
+    prefix: t('admin.to'),
     options: function () {
-      return [{ value: '', label: 'Pick a member' }].concat(asList((S.org.data || {}).members).map(function (m) {
-        return { value: String(m.ref), label: String(m.name || 'member') + (m.onDuty === false ? ' (off duty)' : '') };
+      return [{ value: '', label: t('admin.pick_a_member') }].concat(asList((S.org.data || {}).members).map(function (m) {
+        return { value: String(m.ref), label: String(m.name || 'member') + (m.onDuty === false ? t('admin.off_duty') : '') };
       }));
     },
     value: function (id) { return S.org.work.member[id] || ''; },
     pick: function (v, id) { disarm(); S.org.work.member[id] = v; }
   };
-  DD['org-work-spot'] = {
-    prefix: 'Meet at',
+  });
+  Text.later(function () {
+    DD['org-work-spot'] = {
+    prefix: t('admin.meet_at'),
     options: function () {
       var w = ((S.org.data || {}).extras || {}).work || {};
-      return [{ value: '', label: 'No spot' }].concat(asList(w.spots).map(function (p) {
-        return { value: String(p.id), label: String(p.label || 'Meeting spot') };
+      return [{ value: '', label: t('admin.no_spot') }].concat(asList(w.spots).map(function (p) {
+        return { value: String(p.id), label: String(p.label || t('admin.meeting_spot')) };
       }));
     },
     value: function (id) { return S.org.work.spot[id] || ''; },
     pick: function (v, id) { disarm(); S.org.work.spot[id] = v; }
   };
+  });
 
   function dossierText(dz) {
     if (!dz) return null;
     return h('div.org-dossier',
       dz.notes ? h('blockquote.org-notice', String(dz.notes)) : null,
-      h('p.sub', [dz.spot ? 'Meet at ' + String(dz.spot.label || 'a meeting spot') : null,
-        dz.rulesText ? String(dz.rulesText) : null].filter(Boolean).join(' · ') || 'Notes only'));
+      h('p.sub', [dz.spot ? t('admin.meet_at_2') + String(dz.spot.label || t('admin.a_meeting_spot')) : null,
+        dz.rulesText ? String(dz.rulesText) : null].filter(Boolean).join(' · ') || t('admin.notes_only')));
   }
 
   function orgWorkBody(d) {
     var x = d.extras;
     if (!x) {
-      return card('Every extra is switched off', h('p.about', 'Contracts to the organisation, accept approval, '
-        + 'probation, duty, the private channel and dossiers are each a switch in Setup, all off as shipped. '
-        + 'Each boss power they add is its own row in Boss permissions, off until you allow it.'), '.is-warn');
+      return card(t('admin.every_extra_is_switched_off'), h('p.about', t('admin.contracts_to_the_organisation_accept_approval')
+        + t('admin.probation_duty_the_private_channel_and')
+        + t('admin.each_boss_power_they_add_is')), '.is-warn');
     }
     var w = x.work || {};
     var parts = [];
     if (x.AcceptApproval) {
       var aps = asList(w.approvals);
-      parts.push(card('Accepts waiting for approval', aps.length ? h('div.stack', aps.map(function (a) {
+      parts.push(card(t('admin.accepts_waiting_for_approval'), aps.length ? h('div.stack', aps.map(function (a) {
         var id = String(a.id);
-        var who = String((a.member && a.member.name) || 'a member');
+        var who = String((a.member && a.member.name) || t('admin.a_member'));
         return h('article.card',
           h('header.card-head', h('h3', who + ' · ' + String(a.contractId || '')),
-            h('span.sub', 'about ' + Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60)) + ' min left')),
-          h('p.sub', 'Worth ' + money(a.worth) + (a.probation ? ', on probation' : '') + '. Nothing is taken until '
-            + 'it is approved.'),
+            h('span.sub', 'about ' + Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60)) + t('admin.min_left'))),
+          h('p.sub', 'Worth ' + money(a.worth) + (a.probation ? t('admin.on_probation') : '') + t('admin.nothing_is_taken_until')
+            + t('admin.it_is_approved')),
           h('div.btn-row',
-            writeBtn('.primary', 'org-work-approve', { 'data-id': id, 'data-value': 'yes' }, 'Approve',
-              'Click again: run ' + who + '\'s accept now', 'check'),
-            writeBtn('.danger', 'org-work-approve', { 'data-id': id, 'data-value': 'no' }, 'Refuse',
-              'Click again: refuse it; nothing was taken', 'xmark')),
+            writeBtn('.primary', 'org-work-approve', { 'data-id': id, 'data-value': 'yes' }, t('admin.approve'),
+              t('admin.click_again_run') + who + t('admin.accept_now'), 'check'),
+            writeBtn('.danger', 'org-work-approve', { 'data-id': id, 'data-value': 'no' }, t('admin.refuse'),
+              t('admin.click_again_refuse_it_nothing_was'), 'xmark')),
           orgAnswer('ap:' + id));
-      })) : empty('No accept waits for approval.'), '', h('span.sub', num(aps.length))));
+      })) : empty(t('admin.no_accept_waits_for_approval')), '', h('span.sub', num(aps.length))));
     }
     if (x.OrgContracts) {
       var cs = asList(w.contracts);
-      parts.push(card('Contracts sent to the organisation', cs.length ? h('div.stack', cs.map(function (c) {
+      parts.push(card(t('admin.contracts_sent_to_the_organisation'), cs.length ? h('div.stack', cs.map(function (c) {
         var id = String(c.id);
-        var who = c.member ? String(c.member.name || 'a member') : null;
+        var who = c.member ? String(c.member.name || t('admin.a_member')) : null;
         return h('article.card',
-          h('header.card-head', h('h3', String(c.targetName || 'A contract') + ' · ' + id),
-            h('span.sub', c.state === 'waiting' ? 'not assigned' : c.state === 'taken' ? 'taken by ' + who
-              : 'assigned to ' + who)),
+          h('header.card-head', h('h3', String(c.targetName || t('admin.a_contract')) + ' · ' + id),
+            h('span.sub', c.state === 'waiting' ? t('admin.not_assigned') : c.state === 'taken' ? t('admin.taken_by') + who
+              : t('admin.assigned_to') + who)),
           h('p.sub', 'Worth ' + money(c.worth) + (c.staked ? ', staked' : '') + (c.expiresIn
-            ? '. On the open board in about ' + Math.max(1, Math.ceil(Number(c.expiresIn) / 60)) + ' min.' : '.')),
+            ? t('admin.on_the_open_board_in_about') + Math.max(1, Math.ceil(Number(c.expiresIn) / 60)) + t('admin.min') : '.')),
           c.state !== 'taken' ? h('div.toolbar', dropdown('org-work-member:' + id),
-            writeBtn('.primary', 'org-work-assign', { 'data-id': id }, c.state === 'waiting' ? 'Assign' : 'Reassign',
-              'Click again: give it to the member picked', 'user-check'),
-            writeBtn('.ghost', 'org-work-release', { 'data-id': id }, 'Send to the open board',
-              'Click again: put it on the open board now', 'share')) : null,
+            writeBtn('.primary', 'org-work-assign', { 'data-id': id }, c.state === 'waiting' ? t('admin.assign') : t('admin.reassign'),
+              t('admin.click_again_give_it_to_the'), 'user-check'),
+            writeBtn('.ghost', 'org-work-release', { 'data-id': id }, t('admin.send_to_the_open_board'),
+              t('admin.click_again_put_it_on_the'), 'share')) : null,
           x.Dossiers ? dossierText(c.dossier) : null,
           x.Dossiers && c.state !== 'waiting' ? frag(
             h('div.toolbar', field('org.dossier.' + id, { class: 'is-grow', maxlength: '2000',
-              placeholder: 'Dossier notes (no citizen ids)', 'aria-label': 'Dossier notes' })),
+              placeholder: t('admin.dossier_notes_no_citizen_ids'), 'aria-label': t('admin.dossier_notes') })),
             h('div.toolbar', dropdown('org-work-spot:' + id),
               segmented('org-work-rules', DOSSIER_RULES, S.org.work.rules[id] || '', { 'data-id': id }),
-              writeBtn('.ghost', 'org-work-dossier', { 'data-id': id }, 'Save dossier', 'Click again: save it', 'file-pen'),
-              c.dossier ? writeBtn('.ghost', 'org-work-dclear', { 'data-id': id }, 'Clear',
-                'Click again: clear the dossier', 'eraser') : null)) : null,
+              writeBtn('.ghost', 'org-work-dossier', { 'data-id': id }, t('admin.save_dossier'), t('admin.click_again_save_it'), 'file-pen'),
+              c.dossier ? writeBtn('.ghost', 'org-work-dclear', { 'data-id': id }, t('admin.clear'),
+                t('admin.click_again_clear_the_dossier'), 'eraser') : null)) : null,
           orgAnswer('work:' + id));
-      })) : empty('Nothing sent to the organisation is waiting. Placers tick Send to the organisation on the form.'),
+      })) : empty(t('admin.nothing_sent_to_the_organisation_is')),
       '', h('span.sub', num(cs.length))));
     }
     var members = asList(d.members);
     if (x.Probation) {
       var pro = members.filter(function (m) { return m.probation; });
-      parts.push(card('On probation', pro.length ? h('div.stack', pro.map(function (m) {
+      parts.push(card(t('admin.on_probation_2'), pro.length ? h('div.stack', pro.map(function (m) {
         var ref = String(m.ref);
         return h('div.toolbar', h('span.is-grow', String(m.name || 'member') + ' · ' + (Number(m.probation.done) || 0)
           + ' of ' + (Number(m.probation.need) || 0) + ' completions'),
-          writeBtn('.ghost', 'org-probation', { 'data-ref': ref, 'data-value': 'yes' }, 'End probation',
-            'Click again: end ' + String(m.name || 'their') + ' probation', 'check'),
+          writeBtn('.ghost', 'org-probation', { 'data-ref': ref, 'data-value': 'yes' }, t('admin.end_probation'),
+            t('admin.click_again_end') + String(m.name || 'their') + ' probation', 'check'),
           orgAnswer('pro:' + ref));
-      })) : empty('Nobody is on probation.')));
+      })) : empty(t('admin.nobody_is_on_probation'))));
       var back = members.filter(function (m) { return !m.probation; });
       if (back.length) {
-        parts.push(card('Put on probation again', h('div.stack', back.map(function (m) {
+        parts.push(card(t('admin.put_on_probation_again'), h('div.stack', back.map(function (m) {
           var ref = String(m.ref);
           return h('div.toolbar', h('span.is-grow', String(m.name || 'member')),
-            writeBtn('.ghost', 'org-probation', { 'data-ref': ref, 'data-value': 'no' }, 'Probation again',
-              'Click again: put them on probation, counted from now', 'rotate-left'),
+            writeBtn('.ghost', 'org-probation', { 'data-ref': ref, 'data-value': 'no' }, t('admin.probation_again'),
+              t('admin.click_again_put_them_on_probation'), 'rotate-left'),
             orgAnswer('pro:' + ref));
         }))));
       }
     }
     if (x.Duty) {
       var on = members.filter(function (m) { return m.onDuty; });
-      parts.push(card('On duty', on.length ? h('div.stack', on.map(function (m) {
+      parts.push(card(t('admin.on_duty'), on.length ? h('div.stack', on.map(function (m) {
         var ref = String(m.ref);
         return h('div.toolbar', h('span.is-grow', String(m.name || 'member')),
-          writeBtn('.ghost', 'org-duty-off', { 'data-ref': ref }, 'Send off duty',
-            'Click again: send ' + String(m.name || 'them') + ' off duty', 'power-off'),
+          writeBtn('.ghost', 'org-duty-off', { 'data-ref': ref }, t('admin.send_off_duty'),
+            t('admin.click_again_send') + String(m.name || 'them') + t('admin.off_duty_2'), 'power-off'),
           orgAnswer('duty:' + ref));
-      })) : empty('Nobody is on duty.'), '', h('span.sub', num(on.length))));
+      })) : empty(t('admin.nobody_is_on_duty')), '', h('span.sub', num(on.length))));
     }
     if (x.Channel) {
       var msgs = asList(x.channel);
-      parts.push(card('The channel', frag(
+      parts.push(card(t('admin.the_channel'), frag(
         msgs.length ? h('div.stack', msgs.map(function (r) {
           var id = String(r.id);
           return h('div.org-message',
-            h('p.sub', String(r.from || 'A member') + (r.at ? ' · ' + ago(r.at) : '')),
+            h('p.sub', String(r.from || t('admin.a_member_2')) + (r.at ? ' · ' + ago(r.at) : '')),
             h('blockquote.org-notice', String(r.body || '')),
             h('div.btn-row',
-              writeBtn('.ghost', 'org-chan-remove', { 'data-id': id }, 'Remove', 'Click again: remove it', 'trash'),
-              r.member ? writeBtn('.ghost', 'org-chan-mute', { 'data-ref': String(r.member) }, 'Mute',
-                'Click again: mute the writer for the hours below', 'volume-xmark') : null),
+              writeBtn('.ghost', 'org-chan-remove', { 'data-id': id }, t('admin.remove'), t('admin.click_again_remove_it'), 'trash'),
+              r.member ? writeBtn('.ghost', 'org-chan-mute', { 'data-ref': String(r.member) }, t('admin.mute'),
+                t('admin.click_again_mute_the_writer_for'), 'volume-xmark') : null),
             orgAnswer('msg:' + id));
-        })) : empty('No messages yet.'),
+        })) : empty(t('admin.no_messages_yet')),
         h('div.toolbar', field('org.mute.hours', { type: 'number', min: '0', max: '720', value: '24',
-          'aria-label': 'Mute for hours' }), h('span.sub', 'hours a mute lasts (0 lifts it)')),
-        h('div.toolbar', field('org.channel', { class: 'is-grow', maxlength: '1000', placeholder: 'Write as Staff',
-          'aria-label': 'Message' }), writeBtn('.primary', 'org-chan-post', {}, 'Post', 'Click again: post it', 'paper-plane')),
+          'aria-label': t('admin.mute_for_hours') }), h('span.sub', t('admin.hours_a_mute_lasts_0_lifts'))),
+        h('div.toolbar', field('org.channel', { class: 'is-grow', maxlength: '1000', placeholder: t('admin.write_as_staff'),
+          'aria-label': t('admin.message') }), writeBtn('.primary', 'org-chan-post', {}, t('admin.post'), t('admin.click_again_post_it'), 'paper-plane')),
         orgAnswer('chan')), '', h('span.sub', num(msgs.length))));
     }
-    return h('div.stack', parts.length ? parts : [empty('Turn a switch on in Setup.')]);
+    return h('div.stack', parts.length ? parts : [empty(t('admin.turn_a_switch_on_in_setup'))]);
   }
 
   /* -- Armory, Record & discipline: the organisation extras 2
      (server/org/extras2.lua) -- */
 
-  DD['org-x2-member'] = {
-    prefix: 'Member',
+  Text.later(function () {
+    DD['org-x2-member'] = {
+    prefix: t('admin.member'),
     options: function () {
-      return [{ value: '', label: 'Pick a member' }].concat(asList((S.org.data || {}).members).map(function (m) {
+      return [{ value: '', label: t('admin.pick_a_member') }].concat(asList((S.org.data || {}).members).map(function (m) {
         return { value: String(m.ref), label: String(m.name || 'member') + ' · ' + String(m.role || '') };
       }));
     },
     value: function () { return S.org.x2.member || ''; },
     pick: function (v) { disarm(); S.org.x2.member = v; }
   };
+  });
 
   function x2Off(name, what) {
-    return card(name + ' is switched off', h('p.about', what + ' It is a switch in Setup, off as shipped; each boss '
-      + 'power it adds is its own row in Boss permissions, off until you allow it.'), '.is-warn');
+    return card(name + t('admin.is_switched_off'), h('p.about', what + t('admin.it_is_a_switch_in_setup')
+      + t('admin.power_it_adds_is_its_own')), '.is-warn');
   }
 
   /** Organisation extras 3 (server/org/extras3.lua): every one off as
@@ -9190,105 +9454,105 @@
     var parts = [];
     if (x.Reputation) {
       var r = x.reputation || {};
-      parts.push(card('Reputation', frag(
+      parts.push(card(t('admin.reputation'), frag(
         h('dl.facts',
-          h('dt', 'Standing'), h('dd', num(r.points) + ' points' + (r.tier ? ' · ' + String(r.tier.label) : '')),
-          h('dt', 'Earned'), h('dd', num(r.earned) + ' (' + num(r.completed) + ' done, ' + num(r.failed) + ' failed)'),
-          h('dt', 'Heat off'), h('dd', num(r.heat)),
-          h('dt', 'Next tier'), h('dd', r.next ? String(r.next.label) + ' at ' + num(r.next.points) : '—')),
-        h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th.num', 'Points'), h('th', 'Tier'),
-          h('th', 'Most an accept is worth'))), h('tbody', asList(r.tiers).map(function (t) {
-          return h('tr', h('td.num', num(t.points)), h('td', String(t.label)),
-            h('td', Number(t.max) > 0 ? money(t.max) : 'no cap'));
+          h('dt', t('admin.standing')), h('dd', num(r.points) + ' points' + (r.tier ? ' · ' + String(r.tier.label) : '')),
+          h('dt', t('admin.earned')), h('dd', num(r.earned) + ' (' + num(r.completed) + ' done, ' + num(r.failed) + ' failed)'),
+          h('dt', t('admin.heat_off')), h('dd', num(r.heat)),
+          h('dt', t('admin.next_tier')), h('dd', r.next ? String(r.next.label) + ' at ' + num(r.next.points) : '—')),
+        h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th.num', t('admin.points')), h('th', t('admin.tier')),
+          h('th', t('admin.most_an_accept_is_worth')))), h('tbody', asList(r.tiers).map(function (tv) {
+          return h('tr', h('td.num', num(tv.points)), h('td', String(tv.label)),
+            h('td', Number(tv.max) > 0 ? money(tv.max) : t('admin.no_cap')));
         })))),
         h('div.toolbar', field('org.rep.points', { class: 'is-mid', type: 'number', placeholder: '+/- points',
-          'aria-label': 'Points to add or take off' }), field('org.rep.reason', { class: 'is-grow', maxlength: '200',
-          placeholder: 'Reason', 'aria-label': 'Reason' }),
-          writeBtn('.primary', 'org-rep-adjust', {}, 'Adjust', 'Click again: adjust the reputation', 'pen')),
+          'aria-label': t('admin.points_to_add_or_take_off') }), field('org.rep.reason', { class: 'is-grow', maxlength: '200',
+          placeholder: t('admin.reason'), 'aria-label': t('admin.reason') }),
+          writeBtn('.primary', 'org-rep-adjust', {}, t('admin.adjust'), t('admin.click_again_adjust_the_reputation'), 'pen')),
         orgAnswer('rep'))));
     }
     if (x.DeadDrops) {
       var dd = x.deadDrops || {};
       var drops = asList(dd.rows);
-      parts.push(card('Dead drops', frag(
-        h('p.about', 'Payouts are ' + (dd.method === 'deaddrop' ? 'left at the dead drop' : 'handed over the usual way')
-          + '. Unclaimed: ' + (dd.unclaimed === 'refund' ? 'back to the placer' : 'handed over anyway') + '.'
-          + (dd.spot ? '' : ' No dead drop is set yet: Locations, Dead drops.')),
+      parts.push(card(t('admin.dead_drops'), frag(
+        h('p.about', t('admin.payouts_are') + (dd.method === 'deaddrop' ? t('admin.left_at_the_dead_drop') : t('admin.handed_over_the_usual_way'))
+          + '. Unclaimed: ' + (dd.unclaimed === 'refund' ? t('admin.back_to_the_placer') : t('admin.handed_over_anyway')) + '.'
+          + (dd.spot ? '' : t('admin.no_dead_drop_is_set_yet'))),
         h('div.btn-row', writeBtn('', 'org-pay-method', { 'data-value': dd.method === 'deaddrop' ? 'bank' : 'deaddrop' },
-          dd.method === 'deaddrop' ? 'Pay the usual way' : 'Pay at the dead drop', 'Click again: change it', 'box')),
+          dd.method === 'deaddrop' ? t('admin.pay_the_usual_way') : t('admin.pay_at_the_dead_drop'), t('admin.click_again_change_it'), 'box')),
         orgAnswer('paymethod'),
-        drops.length ? h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th', 'Member'), h('th', 'Left'),
-          h('th', 'Runs out'), h('th', ''))), h('tbody', drops.map(function (row) {
+        drops.length ? h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th', t('admin.member')), h('th', t('admin.left')),
+          h('th', t('admin.runs_out_2')), h('th', ''))), h('tbody', drops.map(function (row) {
           var key = String(row.key);
           return h('tr', h('td', String(row.name)), h('td', row.at ? ago(row.at) : '—'),
             h('td', row.expires ? ago(row.expires) : '—'),
             h('td', h('div.btn-row', writeBtn('.ghost', 'org-drop-settle', { 'data-id': key, 'data-value': 'release' },
-              'Hand over', 'Click again: hand it over now', 'check'),
-              writeBtn('.danger', 'org-drop-settle', { 'data-id': key, 'data-value': 'refund' }, 'Refund',
-                'Click again: back to the placer', 'rotate-left')), orgAnswer('drop:' + key)));
-        })))) : empty('No payout waits at a drop.'))));
+              t('admin.hand_over'), t('admin.click_again_hand_it_over_now'), 'check'),
+              writeBtn('.danger', 'org-drop-settle', { 'data-id': key, 'data-value': 'refund' }, t('admin.refund'),
+                t('admin.click_again_back_to_the_placer'), 'rotate-left')), orgAnswer('drop:' + key)));
+        })))) : empty(t('admin.no_payout_waits_at_a_drop')))));
     }
     if (x.Territory) {
-      var t = x.territory || {};
-      parts.push(card('Territory', frag(
-        h('p.about', num(t.zones) + ' zone(s). Draw them in Locations, Territory (a centre and a radius). A contract '
-          + 'placed on somebody in one, while a member of the organisation stands near them, is held for it first; '
-          + 'nobody is told why or where, and no zone is ever sent to a game.'),
-        t.needsOrgContracts ? h('p.about.is-warn', 'It needs Contracts to the organisation on.') : null)));
+      var tv = x.territory || {};
+      parts.push(card(t('admin.territory'), frag(
+        h('p.about', num(tv.zones) + t('admin.zone_draw_them_in_locations_territory')
+          + t('admin.placed_on_somebody_in_one_while')
+          + t('admin.nobody_is_told_why_or_where')),
+        tv.needsOrgContracts ? h('p.about.is-warn', t('admin.it_needs_contracts_to_the_organisation')) : null)));
     }
     if (x.Garage) {
       var g = x.garage || {};
-      parts.push(card('Garage', frag(
-        h('p.about', (g.ready ? '' : 'No vehicle adapter answers (Config.Integrations.Garage). ')
-          + (g.hasSpot ? '' : 'No garage spot is set yet: Locations, Garage. ') + num(asList(g.out).length) + ' of '
-          + num(g.max) + ' out.'),
+      parts.push(card(t('admin.garage'), frag(
+        h('p.about', (g.ready ? '' : t('admin.no_vehicle_adapter_answers_config_integrations'))
+          + (g.hasSpot ? '' : t('admin.no_garage_spot_is_set_yet')) + num(asList(g.out).length) + ' of '
+          + num(g.max) + t('admin.out')),
         h('div.chips', asList(g.all).map(function (a) {
           var on = S.org.garage && S.org.garage[a.model] !== undefined ? S.org.garage[a.model] : a.offered === true;
           return h('button.chip.is-link' + (on ? '' : '.is-warn'), { type: 'button', 'data-act': 'org-garage-toggle',
             'data-value': String(a.model), 'aria-pressed': on ? 'true' : 'false' }, String(a.model));
         })),
-        h('div.btn-row', writeBtn('', 'org-garage-offer', {}, 'Save what is offered', 'Click again: save it', 'check')),
+        h('div.btn-row', writeBtn('', 'org-garage-offer', {}, t('admin.save_what_is_offered'), t('admin.click_again_save_it'), 'check')),
         orgAnswer('garage'),
-        asList(g.out).length ? h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th', 'Member'),
-          h('th', 'Vehicle'), h('th', 'Out since'), h('th', ''))), h('tbody', asList(g.out).map(function (o) {
+        asList(g.out).length ? h('div.table-wrap', h('table.grid', h('thead', h('tr', h('th', t('admin.member')),
+          h('th', t('admin.vehicle')), h('th', t('admin.out_since')), h('th', ''))), h('tbody', asList(g.out).map(function (o) {
           var ref = String(o.ref || '');
           return h('tr', h('td', String(o.name)), h('td.mono', String(o.model)), h('td', o.at ? ago(o.at) : '—'),
-            h('td', writeBtn('.danger', 'org-garage-remove', { 'data-ref': ref }, 'Take away',
-              'Click again: take it away', 'trash'), orgAnswer('garage:' + ref)));
+            h('td', writeBtn('.danger', 'org-garage-remove', { 'data-ref': ref }, t('admin.take_away'),
+              t('admin.click_again_take_it_away'), 'trash'), orgAnswer('garage:' + ref)));
         })))) : null)));
     }
     if (x.InternalContracts) {
       var reqs = asList(x.internal);
-      parts.push(card('Internal contracts', reqs.length ? h('div.stack', reqs.map(function (q) {
+      parts.push(card(t('admin.internal_contracts'), reqs.length ? h('div.stack', reqs.map(function (q) {
         var id = String(q.id);
         return h('article.card', h('header.card-head', h('h3', String(q.name)),
-          h('span.sub', String(q.state) + ' · asked by ' + String(q.by) + (q.at ? ' · ' + ago(q.at) : ''))),
+          h('span.sub', String(q.state) + t('admin.asked_by') + String(q.by) + (q.at ? ' · ' + ago(q.at) : ''))),
           h('blockquote.org-notice', String(q.reason || '')),
           h('p.sub', money(q.amount) + ' cash' + (q.anonymous ? ', anonymous' : '')),
           q.state === 'pending' ? h('div.btn-row',
-            writeBtn('.primary', 'org-internal', { 'data-id': id, 'data-value': 'yes' }, 'Approve',
-              'Click again: place it in the boss\'s name', 'check'),
-            writeBtn('.danger', 'org-internal', { 'data-id': id, 'data-value': 'no' }, 'Decline',
-              'Click again: decline it', 'xmark')) : null,
+            writeBtn('.primary', 'org-internal', { 'data-id': id, 'data-value': 'yes' }, t('admin.approve'),
+              t('admin.click_again_place_it_in_the'), 'check'),
+            writeBtn('.danger', 'org-internal', { 'data-id': id, 'data-value': 'no' }, t('admin.decline'),
+              t('admin.click_again_decline_it'), 'xmark')) : null,
           orgAnswer('ic:' + id));
-      })) : empty('No request.')));
+      })) : empty(t('admin.no_request'))));
     }
     if (x.Handler) {
-      parts.push(card('Handler', h('p.about', 'The organisation\'s NPC spots (Locations, NPC spots) brief a member who '
-        + 'talks to them and, with The handler hands out contracts on, give one on duty the oldest contract waiting.')));
+      parts.push(card(t('admin.handler'), h('p.about', t('admin.the_organisations_npc_spots_locations_npc')
+        + t('admin.talks_to_them_and_with_the'))));
     }
     if (x.ActivityLog) {
       var log = asList(x.activity);
-      parts.push(card('Activity log', log.length ? h('div.table-wrap', h('table.grid', h('thead', h('tr',
-        h('th', 'When'), h('th', 'What'), h('th', 'By'), h('th', 'Member'), h('th.num', 'Amount'))),
+      parts.push(card(t('admin.activity_log'), log.length ? h('div.table-wrap', h('table.grid', h('thead', h('tr',
+        h('th', t('admin.when')), h('th', t('admin.what')), h('th', t('admin.by_2')), h('th', t('admin.member')), h('th.num', t('admin.amount')))),
         h('tbody', log.map(function (e) {
           return h('tr', h('td', e.at ? ago(e.at) : '—'), h('td', String(e.what || '')), h('td', String(e.by || '')),
             h('td', String(e.member || '')), h('td.num', e.amount != null ? money(e.amount) : ''));
-        })))) : empty('Nothing logged yet.'), '', h('span.sub', 'what a boss holding View org log sees')));
+        })))) : empty(t('admin.nothing_logged_yet')), '', h('span.sub', t('admin.what_a_boss_holding_view_org'))));
     }
     if (!parts.length) {
-      return x2Off('Reputation, dead drops and the garage', 'Reputation, dead drops, territory, the garage, internal '
-        + 'contracts, the handler and the activity log are seven switches.');
+      return x2Off(t('admin.reputation_dead_drops_and_the_garage'), t('admin.reputation_dead_drops_territory_the_garage')
+        + t('admin.contracts_the_handler_and_the_activity'));
     }
     return h('div.stack', parts);
   }
@@ -9296,49 +9560,49 @@
   function orgArmoryBody(d) {
     var x = d.extras2 || {};
     if (!x.Armory) {
-      return x2Off('The armory', 'An ox_inventory stash of the organisation\'s, reached only through the app.');
+      return x2Off(t('admin.the_armory'), t('admin.an_ox_inventory_stash_of_the'));
     }
     var a = x.armory || {};
-    if (a.error) { return card('The armory cannot be read', h('p.about', String(a.error)), '.is-warn'); }
+    if (a.error) { return card(t('admin.the_armory_cannot_be_read'), h('p.about', String(a.error)), '.is-warn'); }
     var items = asList(a.items);
     var log = asList(a.log);
     var allowed = asList(a.allowed);
     return frag(
-      card('In the armory', items.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Item'), h('th.num', 'Count'), h('th', 'Take out (removed for good)'))),
+      card(t('admin.in_the_armory'), items.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.item')), h('th.num', t('admin.count')), h('th', t('admin.take_out_removed_for_good')))),
         h('tbody', items.map(function (it) {
           var slot = String(it.slot);
           return h('tr', h('td', String(it.label || it.name) + ' ', h('span.mono.sub', String(it.name))),
             h('td.num', num(it.count)),
             h('td', h('div.toolbar', field('org.arm.out.' + slot, { type: 'number', min: '1', max: '1000', value: '1',
-              class: 'is-short', 'aria-label': 'How many' }),
-              writeBtn('.danger', 'org-arm-remove', { 'data-id': slot }, 'Remove', 'Click again: remove them for good',
+              class: 'is-short', 'aria-label': t('admin.how_many') }),
+              writeBtn('.danger', 'org-arm-remove', { 'data-id': slot }, t('admin.remove'), t('admin.click_again_remove_them_for_good'),
                 'trash')), orgAnswer('arm:' + slot)));
-        })))) : empty('Empty. Members put in what the allow-list lets them; you can stock it below.'),
+        })))) : empty(t('admin.empty_members_put_in_what_the')),
         '', h('span.sub', num(items.length))),
-      card('Stock it', frag(
-        h('p.about', allowed.length ? 'Allowed: ' + allowed.join(', ') + '. Change the list in Setup (Items allowed '
-          + 'in the armory).' : 'Nothing is allowed yet: add item names in Setup (Items allowed in the armory).'),
-        h('div.toolbar', field('org.arm.item', { class: 'is-mid', maxlength: '64', placeholder: 'item name',
-          'aria-label': 'Item' }), field('org.arm.count', { type: 'number', min: '1', max: '1000', value: '1',
-          class: 'is-short', 'aria-label': 'How many' }),
-          writeBtn('.primary', 'org-arm-stock', {}, 'Stock', 'Click again: add them to the armory', 'plus')),
+      card(t('admin.stock_it'), frag(
+        h('p.about', allowed.length ? 'Allowed: ' + allowed.join(', ') + t('admin.change_the_list_in_setup_items')
+          + t('admin.in_the_armory_2') : t('admin.nothing_is_allowed_yet_add_item')),
+        h('div.toolbar', field('org.arm.item', { class: 'is-mid', maxlength: '64', placeholder: t('admin.item_name'),
+          'aria-label': t('admin.item') }), field('org.arm.count', { type: 'number', min: '1', max: '1000', value: '1',
+          class: 'is-short', 'aria-label': t('admin.how_many') }),
+          writeBtn('.primary', 'org-arm-stock', {}, t('admin.stock'), t('admin.click_again_add_them_to_the'), 'plus')),
         orgAnswer('arm:stock'))),
-      card('Limits a day, by role', frag(
-        h('p.about', 'Items each member of a role takes out a day; 0 is none. Bosses holding Set armory limits set '
-          + 'roles below them, up to ' + num(a.withdrawMax) + '.'),
+      card(t('admin.limits_a_day_by_role'), frag(
+        h('p.about', t('admin.items_each_member_of_a_role')
+          + t('admin.roles_below_them_up_to') + num(a.withdrawMax) + '.'),
         h('div.stack', asList(d.roles).map(function (r) {
           var g = String(r.grade);
-          return h('div.toolbar', h('span.is-grow', roleName(d, r.grade) + ' · now ' + num((a.limits || {})[g] || 0)),
+          return h('div.toolbar', h('span.is-grow', roleName(d, r.grade) + t('admin.now_2') + num((a.limits || {})[g] || 0)),
             field('org.arm.lim.' + g, { type: 'number', min: '0', max: '1000', class: 'is-short',
-              value: String((a.limits || {})[g] || 0), 'aria-label': 'Limit for ' + roleName(d, r.grade) }),
-            writeBtn('.ghost', 'org-arm-limit', { 'data-id': g }, 'Set', 'Click again: set the limit', 'check'),
+              value: String((a.limits || {})[g] || 0), 'aria-label': t('admin.limit_for') + roleName(d, r.grade) }),
+            writeBtn('.ghost', 'org-arm-limit', { 'data-id': g }, t('admin.set'), t('admin.click_again_set_the_limit'), 'check'),
             orgAnswer('arm:lim:' + g));
         })))),
-      card('Log', log.length ? h('div.stack', log.slice(0, 50).map(function (e) {
+      card(t('admin.log'), log.length ? h('div.stack', log.slice(0, 50).map(function (e) {
         return h('p.sub', (e.dir === 'in' ? 'In: ' : 'Out: ') + String(e.item) + ' × ' + num(e.count) + ' · '
-          + String(e.who || 'a member') + (e.at ? ' · ' + ago(e.at) : ''));
-      })) : empty('Nothing moved yet. Every move is in the Org audit too.'), '', h('span.sub', num(log.length))));
+          + String(e.who || t('admin.a_member')) + (e.at ? ' · ' + ago(e.at) : ''));
+      })) : empty(t('admin.nothing_moved_yet_every_move_is')), '', h('span.sub', num(log.length))));
   }
 
   function orgRecordBody(d) {
@@ -9346,60 +9610,60 @@
     var parts = [];
     if (x.Stats) {
       var rows = asList(x.leaderboard);
-      parts.push(card('Leaderboard', rows.length ? frag(h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th.num', '#'), h('th', 'Member'), h('th.num', 'Done'), h('th.num', 'Failed'),
-          h('th.num', 'Earned'), h('th.num', 'Reliable'), h('th', 'Average'), h('th', ''))),
+      parts.push(card(t('admin.leaderboard'), rows.length ? frag(h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th.num', '#'), h('th', t('admin.member')), h('th.num', t('admin.done')), h('th.num', t('admin.failed')),
+          h('th.num', t('admin.earned')), h('th.num', t('admin.reliable')), h('th', t('admin.average')), h('th', ''))),
         h('tbody', rows.map(function (r) {
           var ref = String(r.ref || '');
           return h('tr', h('td.num', num(r.rank)), h('td', String(r.name || 'member')), h('td.num', num(r.completed)),
             h('td.num', num(r.failed)), h('td.num', money(r.earned)),
             h('td.num', r.rate != null ? r.rate + '%' : '—'),
-            h('td', r.avgMinutes != null ? num(r.avgMinutes) + ' min (' + String(r.band || '') + ')' : '—'),
-            h('td', ref ? writeBtn('.ghost', 'org-stats-reset', { 'data-ref': ref }, 'Reset',
-              'Click again: reset their counts', 'rotate-left') : null, orgAnswer('stats:' + ref)));
+            h('td', r.avgMinutes != null ? num(r.avgMinutes) + t('admin.min_2') + String(r.band || '') + ')' : '—'),
+            h('td', ref ? writeBtn('.ghost', 'org-stats-reset', { 'data-ref': ref }, t('admin.reset'),
+              t('admin.click_again_reset_their_counts'), 'rotate-left') : null, orgAnswer('stats:' + ref)));
         })))),
-        h('div.btn-row', writeBtn('.danger', 'org-stats-reset', { 'data-ref': '' }, 'Reset everybody',
-          'Click again: reset every member\'s counts', 'rotate-left')), orgAnswer('stats:'))
-        : empty('Nobody is counted yet: completions and failures count from when the record is on.'),
-        '', h('span.sub', 'players see bands, never these minutes')));
+        h('div.btn-row', writeBtn('.danger', 'org-stats-reset', { 'data-ref': '' }, t('admin.reset_everybody'),
+          t('admin.click_again_reset_every_members_counts'), 'rotate-left')), orgAnswer('stats:'))
+        : empty(t('admin.nobody_is_counted_yet_completions_and')),
+        '', h('span.sub', t('admin.players_see_bands_never_these_minutes'))));
     }
     if (x.Discipline) {
       var rules = x.disciplineRules || {};
       var recs = asList(x.discipline);
-      parts.push(card('Give a strike or a warning', frag(
-        h('p.about', 'A strike counts for ' + num(rules.decayDays) + ' days. ' + (Number(rules.suspendAt) > 0
-          ? num(rules.suspendAt) + ' standing bar the member from contracts for ' + num(rules.suspendHours) + ' h. '
-          : '') + (Number(rules.demoteAt) > 0 ? num(rules.demoteAt) + ' move them one role down. ' : '')
-          + 'The member is told.'),
+      parts.push(card(t('admin.give_a_strike_or_a_warning'), frag(
+        h('p.about', t('admin.a_strike_counts_for') + num(rules.decayDays) + ' days. ' + (Number(rules.suspendAt) > 0
+          ? num(rules.suspendAt) + t('admin.standing_bar_the_member_from_contracts') + num(rules.suspendHours) + ' h. '
+          : '') + (Number(rules.demoteAt) > 0 ? num(rules.demoteAt) + t('admin.move_them_one_role_down') : '')
+          + t('admin.the_member_is_told')),
         h('div.toolbar', dropdown('org-x2-member'),
-          segmented('org-x2-kind', [{ value: 'strike', label: 'Strike' }, { value: 'warning', label: 'Warning' }],
+          segmented('org-x2-kind', [{ value: 'strike', label: t('admin.strike') }, { value: 'warning', label: t('admin.warning') }],
             S.org.x2.kind || 'strike')),
-        h('div.toolbar', field('org.disc.reason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason',
-          'aria-label': 'Reason' }), writeBtn('.primary', 'org-disc-give', {}, 'Give', 'Click again: give it', 'gavel')),
+        h('div.toolbar', field('org.disc.reason', { class: 'is-grow', maxlength: '200', placeholder: t('admin.reason'),
+          'aria-label': t('admin.reason') }), writeBtn('.primary', 'org-disc-give', {}, t('admin.give'), t('admin.click_again_give_it'), 'gavel')),
         orgAnswer('disc'))));
-      parts.push(card('Records', recs.length ? h('div.stack', recs.map(function (rec) {
+      parts.push(card(t('admin.records'), recs.length ? h('div.stack', recs.map(function (rec) {
         var ref = String(rec.ref);
         return h('article.card',
           h('header.card-head', h('h3', String(rec.name || 'member')), h('span.sub', num(rec.strikes) + ' standing')),
           h('div.stack', asList(rec.rows).map(function (e) {
             var id = String(e.id);
             return h('div.org-discipline',
-              h('p.sub', (e.kind === 'strike' ? 'Strike' : 'Warning') + ' · ' + (e.at ? ago(e.at) : '') + ' · '
-                + String(e.by || '') + (e.overturned ? ' · overturned: ' + String(e.overturnReason || '')
-                  : e.kind === 'strike' && !e.active ? ' · no longer counts' : '')
-                + (e.consequence ? ' · then ' + String(e.consequence) : '')),
+              h('p.sub', (e.kind === 'strike' ? t('admin.strike') : t('admin.warning')) + ' · ' + (e.at ? ago(e.at) : '') + ' · '
+                + String(e.by || '') + (e.overturned ? t('admin.overturned') + String(e.overturnReason || '')
+                  : e.kind === 'strike' && !e.active ? t('admin.no_longer_counts') : '')
+                + (e.consequence ? t('admin.then') + String(e.consequence) : '')),
               h('blockquote.org-notice', String(e.reason || '')),
               e.overturned ? null : h('div.toolbar', field('org.over.' + id, { class: 'is-grow', maxlength: '200',
-                placeholder: 'Why it is overturned', 'aria-label': 'Why it is overturned' }),
-                writeBtn('.ghost', 'org-disc-over', { 'data-ref': ref, 'data-id': id }, 'Overturn',
-                  'Click again: overturn it; the member is told', 'rotate-left')),
+                placeholder: t('admin.why_it_is_overturned'), 'aria-label': t('admin.why_it_is_overturned') }),
+                writeBtn('.ghost', 'org-disc-over', { 'data-ref': ref, 'data-id': id }, t('admin.overturn'),
+                  t('admin.click_again_overturn_it_the_member'), 'rotate-left')),
               orgAnswer('over:' + id));
           })));
-      })) : empty('No strikes or warnings on anybody\'s record.'), '', h('span.sub', num(recs.length))));
+      })) : empty(t('admin.no_strikes_or_warnings_on_anybodys')), '', h('span.sub', num(recs.length))));
     }
     if (!parts.length) {
-      return x2Off('The record and discipline', 'Each member\'s record and the leaderboard, and strikes and warnings, '
-        + 'are two switches.');
+      return x2Off(t('admin.the_record_and_discipline'), t('admin.each_members_record_and_the_leaderboard_2')
+        + t('admin.are_two_switches'));
     }
     return h('div.stack', parts);
   }
@@ -9423,20 +9687,22 @@
     });
   }
 
-  DD['org-audit'] = {
-    prefix: 'Action',
+  Text.later(function () {
+    DD['org-audit'] = {
+    prefix: t('admin.action'),
     options: function () {
-      return [{ value: '', label: 'Every action' }].concat(ORG_ACTIONS.map(function (a) {
+      return [{ value: '', label: t('admin.every_action') }].concat(ORG_ACTIONS.map(function (a) {
         return { value: a, label: a.replace(/^org_/, '').replace(/_/g, ' ') };
       }));
     },
     value: function () { return S.org.auditAction; },
     pick: function (v) { S.org.auditAction = v; S.org.audit = null; drawOrg(); loadOrgAudit(v); }
   };
+  });
 
   function auditTable(rows) {
     return h('div.table-wrap', h('table.grid.is-log',
-      h('thead', h('tr', h('th', 'When'), h('th', 'Action'), h('th', 'By'), h('th', 'Detail'))),
+      h('thead', h('tr', h('th', t('admin.when')), h('th', t('admin.action')), h('th', t('admin.by_2')), h('th', t('admin.detail')))),
       h('tbody', rows.map(function (r) {
         return h('tr', h('td.nowrap', when(r.ts)), h('td.mono', String(r.action || '').replace(/^org_/, '')),
           h('td', String(r.by || '—')), h('td.detail', detailText(r.detail)));
@@ -9446,9 +9712,9 @@
   function orgAuditBody() {
     var rows = S.org.audit;
     return frag(
-      h('div.toolbar', dropdown('org-audit'), btn('.ghost', 'org-audit-refresh', {}, 'Refresh', 'rotate')),
-      card('Every boss and staff action on the organisation', rows ? (rows.length ? auditTable(rows)
-        : empty('Nothing on the record yet.')) : (S.org.auditError ? empty(S.org.auditError) : loading('Reading the log…'))));
+      h('div.toolbar', dropdown('org-audit'), btn('.ghost', 'org-audit-refresh', {}, t('admin.refresh'), 'rotate')),
+      card(t('admin.every_boss_and_staff_action_on'), rows ? (rows.length ? auditTable(rows)
+        : empty(t('admin.nothing_on_the_record_yet'))) : (S.org.auditError ? empty(S.org.auditError) : loading(t('admin.reading_the_log')))));
   }
 
   /* -- Boss permissions: the matrix -- */
@@ -9476,7 +9742,10 @@
     var p = S.org.bp.pending[col.key + '|' + code];
     return p || bpSaved(d, col, code);
   }
-  var BP_WORD = { allow: 'Allow', off: 'Off', deny: 'Deny', inherit: 'Inherit role' };
+  var BP_WORD;
+  Text.later(function () {
+    BP_WORD = { allow: t('admin.allow'), off: t('admin.off'), deny: t('admin.deny'), inherit: t('admin.inherit_role') };
+  });
   function bpPendingList(d) {
     var cols = bpColumns(d);
     var out = [];
@@ -9488,7 +9757,7 @@
       var state = S.org.bp.pending[k];
       out.push({ col: col, code: code, state: state,
         text: (state === 'allow' ? '+ ' : state === 'inherit' ? '↺ ' : '− ') + powerName(d, code) + ' for '
-          + col.label + (state === 'deny' ? ' (deny)' : state === 'inherit' ? ' (inherit role)' : '') });
+          + col.label + (state === 'deny' ? ' (deny)' : state === 'inherit' ? t('admin.inherit_role_2') : '') });
     });
     return out;
   }
@@ -9502,41 +9771,48 @@
     });
   }
 
-  DD['bp-area'] = {
-    prefix: 'Area',
+  Text.later(function () {
+    DD['bp-area'] = {
+    prefix: t('admin.area'),
     options: function () {
-      return [{ value: '', label: 'Every area' }].concat(Object.keys(AREA_NAMES).map(function (a) {
+      return [{ value: '', label: t('admin.every_area') }].concat(Object.keys(AREA_NAMES).map(function (a) {
         return { value: a, label: AREA_NAMES[a] };
       }));
     },
     value: function () { return S.org.bp.area; },
     pick: function (v) { S.org.bp.area = v; drawOrg(); }
   };
-  DD['bp-add'] = {
-    prefix: 'Add an individual boss',
+  });
+  Text.later(function () {
+    DD['bp-add'] = {
+    prefix: t('admin.add_an_individual_boss'),
     options: function () {
       var d = S.org.data || {};
       var shown = {};
       bpColumns(d).forEach(function (c) { shown[c.key] = true; });
-      return [{ value: '', label: 'Pick a member' }].concat(asList(d.members).filter(function (m) {
+      return [{ value: '', label: t('admin.pick_a_member') }].concat(asList(d.members).filter(function (m) {
         return !shown['member:' + m.ref];
       }).map(function (m) { return { value: String(m.ref), label: String(m.name || '—') + ' · ' + String(m.role || '') }; }));
     },
     value: function () { return ''; },
     pick: function (v) { if (v) { S.org.bp.cols.push(v); drawOrg(); } }
   };
-  DD['bp-col'] = {
-    prefix: 'Show',
+  });
+  Text.later(function () {
+    DD['bp-col'] = {
+    prefix: t('admin.show'),
     options: function () {
-      return [{ value: '', label: 'Every column' }].concat(bpColumns(S.org.data || {}).map(function (c) {
+      return [{ value: '', label: t('admin.every_column') }].concat(bpColumns(S.org.data || {}).map(function (c) {
         return { value: c.key, label: c.label };
       }));
     },
     value: function () { return S.org.bp.col; },
     pick: function (v) { S.org.bp.col = v; drawOrg(); }
   };
-  DD['bp-copy'] = {
-    prefix: 'Copy from',
+  });
+  Text.later(function () {
+    DD['bp-copy'] = {
+    prefix: t('admin.copy_from'),
     options: function (colKey) {
       return [{ value: '', label: '…' }].concat(bpColumns(S.org.data || {}).filter(function (c) {
         return c.key !== colKey;
@@ -9559,6 +9835,7 @@
       drawOrg();
     }
   };
+  });
 
   function bpStage(d, col, code, state) {
     var k = col.key + '|' + code;
@@ -9583,37 +9860,37 @@
     var areas = [];
     powers.forEach(function (p) { if (areas.indexOf(p.area) === -1) areas.push(p.area); });
     return frag(
-      h('p.hint', 'The ceiling: every power is off for every boss until it is allowed here, for a boss role or for one '
-        + 'boss. A boss\'s own column overrides their role: Allow, Deny, or Inherit role. Click cells to change them; '
-        + 'nothing is saved until Save. Staff may always do everything themselves.'),
+      h('p.hint', t('admin.the_ceiling_every_power_is_off')
+        + t('admin.boss_a_bosss_own_column_overrides')
+        + t('admin.nothing_is_saved_until_save_staff')),
       h('div.toolbar',
         dropdown('bp-area'),
-        h('label.search', icon('magnifying-glass'), field('bp.q', { placeholder: 'Find a power', 'data-live': 'bp-filter',
-          'aria-label': 'Find a power' })),
-        segmented('bp-granted', [{ value: 'all', label: 'Every power' }, { value: 'granted', label: 'Only granted' }],
+        h('label.search', icon('magnifying-glass'), field('bp.q', { placeholder: t('admin.find_a_power'), 'data-live': 'bp-filter',
+          'aria-label': t('admin.find_a_power') })),
+        segmented('bp-granted', [{ value: 'all', label: t('admin.every_power') }, { value: 'granted', label: t('admin.only_granted') }],
           S.org.bp.granted ? 'granted' : 'all'),
         dropdown('bp-col'),
         dropdown('bp-add')),
-      allCols.length ? null : h('p.note.is-warn', 'No role is marked boss, and no boss column is added: mark a role boss '
-        + 'in Roles & pay, or add an individual boss.'),
+      allCols.length ? null : h('p.note.is-warn', t('admin.no_role_is_marked_boss_and')
+        + t('admin.in_roles_pay_or_add_an')),
       h('div.table-wrap.bp-wrap', h('table.grid.bp-grid',
         h('thead',
-          h('tr', h('th', 'Power'), cols.map(function (c) {
-            return h('th.bp-col', h('span.bp-col-name', c.label), h('span.sub', c.subject === 'role' ? 'role' : 'one boss'));
+          h('tr', h('th', t('admin.power')), cols.map(function (c) {
+            return h('th.bp-col', h('span.bp-col-name', c.label), h('span.sub', c.subject === 'role' ? 'role' : t('admin.one_boss')));
           })),
           h('tr.bp-tools', h('th', ''), cols.map(function (c) {
             return h('th', h('div.bp-col-tools', dropdown('bp-copy:' + c.key, '.is-small'),
-              writeBtn('.is-small.danger', 'bp-revoke', { 'data-id': c.key }, 'Revoke all',
-                'Click again: revoke every power from ' + c.label, 'ban')));
+              writeBtn('.is-small.danger', 'bp-revoke', { 'data-id': c.key }, t('admin.revoke_all'),
+                t('admin.click_again_revoke_every_power_from') + c.label, 'ban')));
           }))),
         h('tbody', areas.map(function (area) {
           return frag(h('tr.tl-group', h('td', { colspan: String(cols.length + 1) }, AREA_NAMES[area] || area)),
             powers.filter(function (p) { return p.area === area; }).map(function (p) {
               return h('tr',
-                h('td.bp-power', h('b', String(p.label)), office[p.code] ? h('span.chip.is-warn', { title: 'Needs the boss office' },
+                h('td.bp-power', h('b', String(p.label)), office[p.code] ? h('span.chip.is-warn', { title: t('admin.needs_the_boss_office') },
                   icon('lock'), ' office') : null,
                   asList(p.limits).length ? h('button.link.bp-limits-link', { type: 'button', 'data-act': 'section',
-                    'data-section': 'bplimits' }, 'Limits ▸') : null,
+                    'data-section': 'bplimits' }, t('admin.limits_2')) : null,
                   h('span.detail', ' ' + String(p.about || ''))),
                 cols.map(function (c) {
                   var st = bpState(d, c, p.code);
@@ -9622,18 +9899,18 @@
                   return h('td.bp-cell',
                     h('button.bp-btn.is-' + st + (dirty ? '.is-pending' : ''), { type: 'button', 'data-act': 'bp-cell',
                       'data-id': c.key, 'data-power': p.code, disabled: !writesOpen() || null,
-                      title: (dirty ? 'Changed, not saved: ' : '') + BP_WORD[st] + (warn ? ' · its limit is still the '
-                        + 'default: set bounds in Limits' : ''), 'aria-label': p.label + ' for ' + c.label + ': ' + BP_WORD[st] },
+                      title: (dirty ? t('admin.changed_not_saved') : '') + BP_WORD[st] + (warn ? t('admin.its_limit_is_still_the')
+                        + t('admin.default_set_bounds_in_limits') : ''), 'aria-label': p.label + ' for ' + c.label + ': ' + BP_WORD[st] },
                       h('span.lbl', BP_WORD[st]), warn ? h('span.bp-warn', { 'aria-hidden': 'true' }, '⚠') : null));
                 }));
             }));
         })))),
-      card('Changes to save (' + num(pending.length) + ')', pending.length ? frag(
+      card(t('admin.changes_to_save') + num(pending.length) + ')', pending.length ? frag(
         h('ul.plain.bp-diff', pending.map(function (x) { return h('li', x.text); })),
         h('div.btn-row',
           writeBtn('.primary', 'bp-save', {}, 'Save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'),
-            'Click again: save ' + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'), 'check'),
-          btn('.ghost', 'bp-discard', {}, 'Discard', 'xmark'))) : empty('Nothing changed yet: click a cell.'),
+            t('admin.click_again_save') + num(pending.length) + ' change' + (pending.length === 1 ? '' : 's'), 'check'),
+          btn('.ghost', 'bp-discard', {}, t('admin.discard'), 'xmark'))) : empty(t('admin.nothing_changed_yet_click_a_cell')),
         pending.length ? '.is-warn' : ''),
       orgAnswer('bp'));
   }
@@ -9648,10 +9925,10 @@
       asList(p.limits).forEach(function (k) { (usedBy[k] = usedBy[k] || []).push(String(p.label)); });
     });
     return frag(
-      h('p.hint', 'The bounds every boss power works within, for this organisation. config.lua\'s are the defaults '
-        + '(Config.Organisation.Limits); Reset puts one back to it.'),
-      card('Limits', h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Limit'), h('th.num', 'Now'), h('th.num', 'config.lua'), h('th', 'Used by'), h('th', ''))),
+      h('p.hint', t('admin.the_bounds_every_boss_power_works')
+        + t('admin.config_organisation_limits_reset_puts_one')),
+      card(t('admin.limits'), h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', t('admin.limit')), h('th.num', t('admin.now')), h('th.num', 'config.lua'), h('th', t('admin.used_by')), h('th', ''))),
         h('tbody', keys.map(function (k) {
           var e = settingEntry('Organisation.Limits.' + k);
           var label = e ? String(e.label) : k;
@@ -9662,9 +9939,9 @@
             h('td.num', e ? show(e.value) : '—'), h('td.detail', asList(usedBy[k]).join(', ') || '—'),
             h('td', h('div.inline-form', field('bp.lim.' + k, { class: 'is-short', inputmode: 'decimal',
               placeholder: String(lim[k]), 'aria-label': label }),
-              writeBtn('.is-small', 'bp-limit', { 'data-id': k }, 'Save', 'Click again to save', 'check'),
+              writeBtn('.is-small', 'bp-limit', { 'data-id': k }, t('admin.save'), t('admin.click_again_to_save'), 'check'),
               e && Number(e.value) !== Number(lim[k]) ? writeBtn('.is-small.ghost', 'bp-limit-reset', { 'data-id': k },
-                'Reset', 'Click again: back to ' + show(e.value), 'arrow-rotate-left') : null)));
+                t('admin.reset'), t('admin.click_again_back_to') + show(e.value), 'arrow-rotate-left') : null)));
         })))), '', h('span.sub', num(keys.length))),
       orgAnswer('limits'));
   }
@@ -9673,56 +9950,56 @@
     var office = d.officeStaff || {};
     var bossOwn = d.officeBoss || {};
     return frag(
-      card('Needs the boss office', frag(
-        h('p.about', 'Powers a boss may use only while standing in the boss office (Locations). Staff\'s list is forced: a '
-          + 'boss may add more for themselves (Office requirement), never lift one of these.'),
+      card(t('admin.needs_the_boss_office'), frag(
+        h('p.about', t('admin.powers_a_boss_may_use_only')
+          + t('admin.boss_may_add_more_for_themselves')),
         h('div.table-wrap', h('table.grid',
-          h('thead', h('tr', h('th', 'Power'), h('th', 'Staff require it'), h('th', 'A boss added it'), h('th', ''))),
+          h('thead', h('tr', h('th', t('admin.power')), h('th', t('admin.staff_require_it')), h('th', t('admin.a_boss_added_it')), h('th', ''))),
           h('tbody', asList(d.powers).map(function (p) {
             var on = !!office[p.code];
             return h('tr', h('td', h('b', String(p.label)), h('span.sub', ' ' + (AREA_NAMES[p.area] || p.area))),
               h('td', on ? h('span.chip.is-warn', icon('lock'), ' office') : 'no'),
               h('td', bossOwn[p.code] ? 'yes' : '—'),
               h('td', writeBtn('.is-small', 'bp-office', { 'data-power': p.code, 'data-value': on ? 'off' : 'on' },
-                on ? 'Stop requiring it' : 'Require the office',
-                on ? 'Click again: ' + p.label + ' anywhere' : 'Click again: ' + p.label + ' only in the office', 'building')));
+                on ? t('admin.stop_requiring_it') : t('admin.require_the_office'),
+                on ? t('admin.click_again') + p.label + ' anywhere' : t('admin.click_again') + p.label + t('admin.only_in_the_office'), 'building')));
           })))),
         orgAnswer('office'))),
-      card('Delegation rules', h('ul.plain.bp-rules',
-        h('li', 'A boss passes on only powers they hold themselves, after this ceiling and their denies, and never with '
-          + 'wider limits than their own.'),
-        h('li', 'Rank: a boss never creates, edits or assigns a role at or above their own, or acts on a member at or above '
-          + 'it, unless given Promote to own rank, which allows equal and never above.'),
-        h('li', 'No self-escalation: a boss never changes their own role, powers or limits, or another boss of equal or '
-          + 'higher rank.'),
-        h('li', 'Revoking a power here makes every grant that boss made of it inactive, not deleted: allowing it again '
-          + 'restores them.'),
-        h('li', 'Staff may edit any role, member or grant, and lock a role or member against boss edits.'),
-        h('li', 'The organisation is never left without a member in its top boss role, except by staff.'),
-        h('li', 'Every rule is checked on the server for every request; the phone only greys out what it may not do.'))));
+      card(t('admin.delegation_rules'), h('ul.plain.bp-rules',
+        h('li', t('admin.a_boss_passes_on_only_powers')
+          + t('admin.wider_limits_than_their_own')),
+        h('li', t('admin.rank_a_boss_never_creates_edits')
+          + t('admin.it_unless_given_promote_to_own')),
+        h('li', t('admin.no_self_escalation_a_boss_never')
+          + t('admin.higher_rank')),
+        h('li', t('admin.revoking_a_power_here_makes_every')
+          + t('admin.restores_them')),
+        h('li', t('admin.staff_may_edit_any_role_member')),
+        h('li', t('admin.the_organisation_is_never_left_without')),
+        h('li', t('admin.every_rule_is_checked_on_the')))));
   }
 
   function bpHistoryBody() {
     var rows = S.org.history;
     var d = S.org.data || {};
     return frag(
-      h('div.toolbar', btn('.ghost', 'bp-history-refresh', {}, 'Refresh', 'rotate')),
-      card('Grant history', rows ? (rows.length ? h('div.table-wrap', h('table.grid.is-log',
-        h('thead', h('tr', h('th', 'When'), h('th', 'By'), h('th', 'Column'), h('th', 'Power'), h('th', 'Before'),
-          h('th', 'After'), h('th', ''))),
+      h('div.toolbar', btn('.ghost', 'bp-history-refresh', {}, t('admin.refresh'), 'rotate')),
+      card(t('admin.grant_history'), rows ? (rows.length ? h('div.table-wrap', h('table.grid.is-log',
+        h('thead', h('tr', h('th', t('admin.when')), h('th', t('admin.by_2')), h('th', t('admin.column')), h('th', t('admin.power')), h('th', t('admin.before')),
+          h('th', t('admin.after')), h('th', ''))),
         h('tbody', rows.map(function (r, i) {
           var det = r.detail || {};
           var isRole = det.subject === 'role';
           var undoTo = isRole ? (det.before === 'allow' ? 'allow' : 'off') : null;
           return h('tr', h('td.nowrap', when(r.ts)), h('td', String(r.by || '—')),
-            h('td', isRole ? 'Role: ' + roleName(d, det.id) : 'One boss'),
+            h('td', isRole ? 'Role: ' + roleName(d, det.id) : t('admin.one_boss_2')),
             h('td', powerName(d, det.power)), h('td', String(det.before || 'off')), h('td', String(det.after || 'off')),
             h('td', isRole && det.before !== det.after ? writeBtn('.is-small.ghost', 'bp-undo', { 'data-index': String(i),
-              'data-id': String(det.id), 'data-power': String(det.power), 'data-value': undoTo }, 'Undo',
-              'Click again: ' + powerName(d, det.power) + ' back to ' + undoTo, 'arrow-rotate-left')
-              : (isRole ? null : h('span.sub', 'change it in the Matrix'))));
-        })))) : empty('Nothing granted or revoked yet.'))
-        : (S.org.historyError ? empty(S.org.historyError) : loading('Reading the history…'))),
+              'data-id': String(det.id), 'data-power': String(det.power), 'data-value': undoTo }, t('admin.undo'),
+              t('admin.click_again') + powerName(d, det.power) + t('admin.back_to') + undoTo, 'arrow-rotate-left')
+              : (isRole ? null : h('span.sub', t('admin.change_it_in_the_matrix')))));
+        })))) : empty(t('admin.nothing_granted_or_revoked_yet')))
+        : (S.org.historyError ? empty(S.org.historyError) : loading(t('admin.reading_the_history')))),
       orgAnswer('bp'));
   }
 
@@ -9741,15 +10018,18 @@
      filling a line. */
   S.places = { data: null, error: null, errCode: null, answers: {}, edit: {}, staged: {}, pos: null, posAt: 0 };
 
-  var PLACE_GROUPS = {
-    org: { title: 'Organisation places' },
-    npc: { title: 'Broker and informant places',
-      hint: 'Where the broker (Rumours) and the informant NPC stand. With none set, each uses its Locations list in '
-        + 'the settings below, which stays the default.' },
-    disposal: { title: 'Body disposal',
-      hint: 'Where the disposal vehicle is made, and where the body is dropped off (Config.Disposal). Config.lua\'s '
-        + 'VehicleSpawn and DropOff apply while one is not set.' }
+  var PLACE_GROUPS;
+  Text.later(function () {
+    PLACE_GROUPS = {
+    org: { title: t('admin.organisation_places') },
+    npc: { title: t('admin.broker_and_informant_places'),
+      hint: t('admin.where_the_broker_rumours_and_the')
+        + t('admin.the_settings_below_which_stays_the') },
+    disposal: { title: t('admin.body_disposal'),
+      hint: t('admin.where_the_disposal_vehicle_is_made')
+        + t('admin.vehiclespawn_and_dropoff_apply_while_one') }
   };
+  });
 
   function loadPlaces() {
     return ask('placeList', {}, 'places').then(function (reply) {
@@ -9795,21 +10075,21 @@
       g.kinds.push(k);
     });
     return frag(
-      h('p.hint', 'Every place this resource uses, by kind. Stand on the spot in game and press Use my position: the '
-        + 'server reads where you stand. Adjust, then save; every save takes two clicks.'),
-      pos ? h('p.note', 'Your position: x ' + fmt(pos.x) + ', y ' + fmt(pos.y) + ', z ' + fmt(pos.z) + ', heading '
+      h('p.hint', t('admin.every_place_this_resource_uses_by')
+        + t('admin.server_reads_where_you_stand_adjust')),
+      pos ? h('p.note', t('admin.your_position_x') + fmt(pos.x) + ', y ' + fmt(pos.y) + ', z ' + fmt(pos.z) + ', heading '
         + fmt(pos.heading, 0) + ' (read ' + ago(S.places.posAt) + ')') : null,
       placeAnswer('pos'),
-      !d ? (S.places.error ? (S.places.errCode === 'unknown_op' ? empty('This server has no panel-set places.')
-        : empty(S.places.error)) : loading('Reading the places…'))
+      !d ? (S.places.error ? (S.places.errCode === 'unknown_op' ? empty(t('admin.this_server_has_no_panel_set'))
+        : empty(S.places.error)) : loading(t('admin.reading_the_places')))
         : groups.map(placeGroup),
-      h('h3.st-group-title', 'Places in the settings'),
-      S.settings.data ? placeSettings() : loading('Reading the settings…'));
+      h('h3.st-group-title', t('admin.places_in_the_settings')),
+      S.settings.data ? placeSettings() : loading(t('admin.reading_the_settings')));
   }
 
   /** One group of kinds; all of it off for one reason: said once, with its switch. */
   function placeGroup(g) {
-    var about = PLACE_GROUPS[g.id] || { title: String(g.id || 'Places') };
+    var about = PLACE_GROUPS[g.id] || { title: String(g.id || t('admin.places')) };
     var first = g.kinds[0] || {};
     var allOff = g.kinds.every(function (k) { return k.off && k.off === first.off; });
     return frag(h('h3.st-group-title', about.title),
@@ -9818,11 +10098,11 @@
   }
   function switchRow(key) {
     var sw = key ? settingEntry(key) : null;
-    if (!sw) return key ? (S.settings.data ? null : loading('Reading the switch…')) : null;
+    if (!sw) return key ? (S.settings.data ? null : loading(t('admin.reading_the_switch'))) : null;
     return h('div.st-row', { id: 'st-row-' + sw.key, 'data-key': sw.key }, settingInner(sw));
   }
   function placeOff(k, kinds) {
-    return card('Set here once it is on', frag(
+    return card(t('admin.set_here_once_it_is_on'), frag(
       h('p.about', String(k.off)),
       kinds.map(function (x) { return asList(x.rows).length || asList(x.defaults).length ? placeDefaults(x) : null; }),
       switchRow(k.switch)), '.is-warn.place-off');
@@ -9831,12 +10111,12 @@
     var defaults = asList(k.defaults);
     var rows = asList(k.rows);
     return frag(
-      k.using ? h('p.sub', k.label + ': ' + (k.using === 'panel' ? 'standing at the places set here.'
-        : 'using its config ' + (k.key ? '(' + k.key + ')' : 'default') + '.')) : null,
-      k.defaults ? h('p.sub', 'Defaults (config): ' + (defaults.length ? defaults.map(function (p) {
+      k.using ? h('p.sub', k.label + ': ' + (k.using === 'panel' ? t('admin.standing_at_the_places_set_here')
+        : t('admin.using_its_config') + (k.key ? '(' + k.key + ')' : 'default') + '.')) : null,
+      k.defaults ? h('p.sub', t('admin.defaults_config') + (defaults.length ? defaults.map(function (p) {
         return fmt(p.x) + ', ' + fmt(p.y) + ', ' + fmt(p.z);
       }).join(' · ') : 'none')) : null,
-      k.off && rows.length ? h('p.sub', num(rows.length) + ' set here, kept while it is off.') : null);
+      k.off && rows.length ? h('p.sub', num(rows.length) + t('admin.set_here_kept_while_it_is')) : null);
   }
 
   /** One kind: its rows, and the form that adds one or edits the one picked. */
@@ -9857,8 +10137,8 @@
       kind.off ? switchRow(kind.switch) : null,
       kind.note ? h('p.sub', String(kind.note)) : null,
       rows.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Name'), h('th', 'x, y, z, heading'), f.radius ? h('th.num', 'Radius') : null,
-          f.blip ? h('th', 'Blip') : null, f.enabled ? h('th', 'On') : null, h('th', ''))),
+        h('thead', h('tr', h('th', t('admin.name')), h('th', 'x, y, z, heading'), f.radius ? h('th.num', t('admin.radius')) : null,
+          f.blip ? h('th', t('admin.blip')) : null, f.enabled ? h('th', t('admin.on')) : null, h('th', ''))),
         h('tbody', rows.map(function (r) {
           return h('tr' + (r.id === edit && !kind.single ? '.is-open' : ''), h('td.name', String(r.label || '—')),
             h('td.mono', fmt(r.x) + ', ' + fmt(r.y) + ', ' + fmt(r.z) + ', ' + fmt(r.heading, 0)),
@@ -9866,54 +10146,54 @@
             f.enabled ? h('td', r.enabled === false ? 'off' : 'on') : null,
             h('td', h('div.inline-form',
               !kind.single && open ? btn('.is-small.ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k },
-                'Edit', 'pen') : null,
+                t('admin.edit'), 'pen') : null,
               open ? writeBtn('.is-small.danger', 'loc-remove', { 'data-id': String(r.id), 'data-value': k },
-                kind.single ? 'Clear' : 'Remove', 'Click again: remove ' + String(r.label || 'it'), 'trash-can') : null)));
-        })))) : empty(kind.single ? 'Not set.' : 'None set here.'),
+                kind.single ? t('admin.clear') : t('admin.remove'), t('admin.click_again_remove') + String(r.label || 'it'), 'trash-can') : null)));
+        })))) : empty(kind.single ? t('admin.not_set_2') : t('admin.none_set_here')),
       kind.using || kind.defaults ? placeDefaults(kind) : null,
       open ? h('div.loc-form',
-        h('p.sub', editing ? 'Editing ' + String(editing.label || kind.one || k) : 'Add ' + String(kind.one || 'a place')),
+        h('p.sub', editing ? 'Editing ' + String(editing.label || kind.one || k) : 'Add ' + String(kind.one || t('admin.a_place'))),
         h('div.toolbar',
-          f.label ? input('label', { class: 'is-mid', maxlength: String(kind.labelMax || 64), placeholder: 'Name',
-            value: editing ? String(editing.label || '') : '', 'aria-label': 'Name' }) : null,
+          f.label ? input('label', { class: 'is-mid', maxlength: String(kind.labelMax || 64), placeholder: t('admin.name'),
+            value: editing ? String(editing.label || '') : '', 'aria-label': t('admin.name') }) : null,
           ['x', 'y', 'z'].map(function (a) {
             return input(a, { class: 'is-short', inputmode: 'decimal', placeholder: a, value: editing ? fmt(editing[a]) : '',
               'aria-label': a });
           }),
           input('h', { class: 'is-short', inputmode: 'decimal', placeholder: 'heading',
-            value: editing ? fmt(editing.heading, 0) : '', 'aria-label': 'Heading' }),
-          f.radius ? input('r', { class: 'is-short', inputmode: 'decimal', placeholder: 'radius m',
-            value: editing && editing.radius != null ? fmt(editing.radius) : '', 'aria-label': 'Radius (m)' }) : null),
+            value: editing ? fmt(editing.heading, 0) : '', 'aria-label': t('admin.heading') }),
+          f.radius ? input('r', { class: 'is-short', inputmode: 'decimal', placeholder: t('admin.radius_m'),
+            value: editing && editing.radius != null ? fmt(editing.radius) : '', 'aria-label': t('admin.radius_m_2') }) : null),
         h('div.toolbar',
-          f.blip ? segmented('loc-blip', [{ value: 'no', label: 'No blip' }, { value: 'yes', label: 'Map blip' }],
+          f.blip ? segmented('loc-blip', [{ value: 'no', label: t('admin.no_blip') }, { value: 'yes', label: t('admin.map_blip') }],
             blip ? 'yes' : 'no', { 'data-id': k }) : null,
-          f.enabled ? segmented('loc-enabled', [{ value: 'yes', label: 'On' }, { value: 'no', label: 'Off' }],
+          f.enabled ? segmented('loc-enabled', [{ value: 'yes', label: t('admin.on') }, { value: 'no', label: t('admin.off') }],
             enabled ? 'yes' : 'no', { 'data-id': k }) : null,
-          btn('.is-small', 'loc-mypos', { 'data-value': k }, 'Use my position', 'location-crosshairs'),
-          writeBtn('.primary.is-small', 'loc-save', { 'data-value': k, 'data-id': edit }, 'Save', 'Click again to save',
+          btn('.is-small', 'loc-mypos', { 'data-value': k }, t('admin.use_my_position'), 'location-crosshairs'),
+          writeBtn('.primary.is-small', 'loc-save', { 'data-value': k, 'data-id': edit }, t('admin.save'), t('admin.click_again_to_save'),
             'check'),
-          writeBtn('.is-small', 'loc-here', { 'data-value': k, 'data-id': edit }, 'Save where I stand',
-            'Click again: save where you stand', 'street-view'),
-          editing && !kind.single ? btn('.is-small.ghost', 'loc-new', { 'data-value': k }, 'New instead', 'plus') : null,
-          kind.reset && rows.length ? writeBtn('.is-small.ghost', 'loc-reset', { 'data-value': k }, 'Reset to config',
-            'Click again: remove every place set here', 'rotate-left') : null),
+          writeBtn('.is-small', 'loc-here', { 'data-value': k, 'data-id': edit }, t('admin.save_where_i_stand'),
+            t('admin.click_again_save_where_you_stand'), 'street-view'),
+          editing && !kind.single ? btn('.is-small.ghost', 'loc-new', { 'data-value': k }, t('admin.new_instead'), 'plus') : null,
+          kind.reset && rows.length ? writeBtn('.is-small.ghost', 'loc-reset', { 'data-value': k }, t('admin.reset_to_config'),
+            t('admin.click_again_remove_every_place_set'), 'rotate-left') : null),
         placeAnswer('loc:' + k)) : placeAnswer('loc:' + k)), '.loc-kind');
   }
 
   /** The settings that are places, with Use my position filling a line. */
   function placeSettings() {
     var entries = allSettings().filter(function (e) { return !!placeOf(e); });
-    if (!entries.length) return empty('No place settings on this server.');
+    if (!entries.length) return empty(t('admin.no_place_settings_on_this_server'));
     var jail = entries.filter(function (e) { return placeOf(e) === 'jail'; });
     return frag(entries.filter(function (e) { return placeOf(e) !== 'jail'; }).map(function (e) {
       return h('div.loc-setting',
         settingRow(e),
         placeOf(e) !== 'name' && settingOpen(e) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': e.key },
-          'Use my position for a new line', 'location-crosshairs')) : null);
-    }), jail.length ? h('div.loc-setting', h('h3.st-group-title', 'Prison zone'),
+          t('admin.use_my_position_for_a_new'), 'location-crosshairs')) : null);
+    }), jail.length ? h('div.loc-setting', h('h3.st-group-title', t('admin.prison_zone')),
       jail.map(function (e) { return settingRow(e); }),
       settingOpen(jail[0]) ? h('div.btn-row', btn('.is-small', 'loc-fill', { 'data-key': jail[0].key },
-        'Use my position for the centre', 'location-crosshairs')) : null) : null);
+        t('admin.use_my_position_for_the_centre'), 'location-crosshairs')) : null) : null);
   }
 
   /** Use my position: read by the server, from where the character stands. */
@@ -9952,9 +10232,9 @@
         return;
       }
       var line = kind === 'point' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', ' + fmt(pos.z) + ', ' + fmt(pos.heading, 0)
-        : kind === 'zone' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', 50, New zone'
-          : kind === 'district' ? fmt(pos.x) + ', ' + fmt(pos.y) + ', New district'
-            : 'New area@' + fmt(pos.x) + ',' + fmt(pos.y);
+        : kind === 'zone' ? fmt(pos.x) + ', ' + fmt(pos.y) + t('admin.50_new_zone')
+          : kind === 'district' ? fmt(pos.x) + ', ' + fmt(pos.y) + t('admin.new_district')
+            : t('admin.new_area') + fmt(pos.x) + ',' + fmt(pos.y);
       S.forms['stl.' + key] = line;
       drawPlaces();
     });
@@ -9991,12 +10271,12 @@
     var editing = kind.single ? asList(kind.rows)[0] || null
       : id ? asList(kind.rows).filter(function (s) { return s.id === id; })[0] : null;
     var pre = 'loc.' + k + '.';
-    function val(name, from) { var t = S.forms[pre + name]; return trim(t === undefined ? (from == null ? '' : from) : t); }
+    function val(name, from) { var tv = S.forms[pre + name]; return trim(tv === undefined ? (from == null ? '' : from) : tv); }
     var spec = { kind: k };
     if (id) spec.id = id;
     if (f.label) {
       var label = val('label', editing && editing.label);
-      if (!label && !kind.labelOptional) return { error: 'Give the place a name.' };
+      if (!label && !kind.labelOptional) return { error: t('admin.give_the_place_a_name') };
       if (label) spec.label = label.slice(0, kind.labelMax || 64);
     }
     if (f.radius) {
@@ -10005,7 +10285,7 @@
         spec.radius = Number(r);
         var lim = kind.radius || { min: 0.5, max: 50 };
         if (!isFinite(spec.radius) || spec.radius < lim.min || spec.radius > lim.max) {
-          return { error: 'The radius is ' + lim.min + ' to ' + lim.max + ' m.' };
+          return { error: t('admin.the_radius_is') + lim.min + ' to ' + lim.max + ' m.' };
         }
       }
     }
@@ -10016,13 +10296,13 @@
     var nums = ['x', 'y', 'z', 'h'].map(function (a) {
       return val(a, editing && (a === 'h' ? fmt(editing.heading, 0) : fmt(editing[a])));
     });
-    if (nums.slice(0, 3).some(function (t) { return t === '' || !isFinite(Number(t)); })) {
-      return { error: 'Give x, y and z as numbers, or press Use my position.' };
+    if (nums.slice(0, 3).some(function (tv) { return tv === '' || !isFinite(Number(tv)); })) {
+      return { error: t('admin.give_x_y_and_z_as') };
     }
     spec.x = Number(nums[0]); spec.y = Number(nums[1]); spec.z = Number(nums[2]);
     spec.heading = nums[3] === '' ? 0 : Number(nums[3]);
     if (!isFinite(spec.heading) || spec.heading < 0 || spec.heading > 360) {
-      return { error: 'The heading is a number from 0 to 360.' };
+      return { error: t('admin.the_heading_is_a_number_from') };
     }
     return spec;
   }
@@ -10032,9 +10312,9 @@
     var spec = spotSpec(k, here);
     if (spec.error) { placeRefuse('loc:' + k, spec.error); return; }
     var pre = 'loc.' + k + '.';
-    var what = spec.label || kind.one || 'the place';
-    var label = here ? 'Click again: save ' + what + ' where you stand'
-      : 'Click again: save ' + what + ' at ' + fmt(spec.x) + ', ' + fmt(spec.y);
+    var what = spec.label || kind.one || t('admin.the_place');
+    var label = here ? t('admin.click_again_save') + what + t('admin.where_you_stand')
+      : t('admin.click_again_save') + what + ' at ' + fmt(spec.x) + ', ' + fmt(spec.y);
     if (!armed(node, label, ['label', 'x', 'y', 'z', 'h', 'r'].map(function (f) { return pre + f; }))) return;
     placeWrite('placeSet', spec, 'loc:' + k, node, function () {
       clearForm(k);
@@ -10109,11 +10389,11 @@
   ACTIONS['org-create'] = function (node) {
     var job = trim(S.forms['org.new.job']).toLowerCase(), label = trim(S.forms['org.new.label']);
     if (!/^[a-z][a-z0-9_]{1,31}$/.test(job)) {
-      orgRefuse('orgcreate', 'A job name: 2-32 lower-case letters, digits or _, starting with a letter.');
+      orgRefuse('orgcreate', t('admin.a_job_name_2_32_lower'));
       return;
     }
-    if (!label) { orgRefuse('orgcreate', 'Give the label players see.'); return; }
-    if (!armed(node, 'Click again: add ' + label + ' (' + job + ')', ['org.new.job', 'org.new.label'])) return;
+    if (!label) { orgRefuse('orgcreate', t('admin.give_the_label_players_see')); return; }
+    if (!armed(node, t('admin.click_again_add') + label + ' (' + job + ')', ['org.new.job', 'org.new.label'])) return;
     orgWrite('orgCreate', { job: job, label: label.slice(0, 64) }, 'orgcreate', node, function () {
       delete S.forms['org.new.job'];
       delete S.forms['org.new.label'];
@@ -10130,8 +10410,8 @@
   };
   ACTIONS['org-rename'] = function (node) {
     var label = trim(S.forms['org.label']);
-    if (!label) { orgRefuse('rename', 'Give the label.'); return; }
-    if (!armed(node, 'Click again: rename to ' + label, ['org.label'])) return;
+    if (!label) { orgRefuse('rename', t('admin.give_the_label')); return; }
+    if (!armed(node, t('admin.click_again_rename_to') + label, ['org.label'])) return;
     orgWrite('orgRename', { label: label.slice(0, 64) }, 'rename', node, function () { delete S.forms['org.label']; });
   };
   ACTIONS['org-tab-hide'] = function (node) {
@@ -10155,14 +10435,14 @@
       var typed = S.forms['org.tab.' + tab];
       var text = trim(typed === undefined ? ((saved.labels || {})[tab] || '') : typed);
       if (text) {
-        if (text.length > 24) bad = 'A tab label is at most 24 characters.';
+        if (text.length > 24) bad = t('admin.a_tab_label_is_at_most');
         labels[tab] = text;
       }
       var list = (S.org.layout && S.org.layout.hidden[tab]) || asList((saved.hidden || {})[tab]).map(String);
       if (list.length) hidden[tab] = list.map(Number);
     });
     if (bad) { orgRefuse('layout', bad); return; }
-    if (!armed(node, 'Click again: save the boss menu')) return;
+    if (!armed(node, t('admin.click_again_save_the_boss_menu'))) return;
     orgWrite('orgLayout', { layout: { labels: labels, hidden: hidden } }, 'layout', node, function () { S.org.layout = null; });
   };
 
@@ -10184,20 +10464,20 @@
     drawOrg();
   };
   function wholeOrNull(text, lo, hi) {
-    var t = trim(text);
-    if (t === '') return null;
-    if (!/^-?\d+$/.test(t)) return false;
-    var n = Number(t);
+    var tv = trim(text);
+    if (tv === '') return null;
+    if (!/^-?\d+$/.test(tv)) return false;
+    var n = Number(tv);
     return n >= lo && n <= hi ? n : false;
   }
   ACTIONS['org-role-add'] = function (node) {
     var grade = wholeOrNull(S.forms['org.new.grade'], 0, 100);
     var pay = wholeOrNull(S.forms['org.new.pay'], 0, 100000000);
     var label = trim(S.forms['org.new.label']), name = trim(S.forms['org.new.name']);
-    if (grade === null || grade === false) { orgRefuse('role-add', 'Give the role a whole grade from 0 to 100.'); return; }
-    if (!label || !name) { orgRefuse('role-add', 'Give the role a name and a label.'); return; }
-    if (pay === false) { orgRefuse('role-add', 'Pay is a whole number of dollars.'); return; }
-    if (!armed(node, 'Click again: add ' + label + ' at grade ' + grade,
+    if (grade === null || grade === false) { orgRefuse('role-add', t('admin.give_the_role_a_whole_grade')); return; }
+    if (!label || !name) { orgRefuse('role-add', t('admin.give_the_role_a_name_and')); return; }
+    if (pay === false) { orgRefuse('role-add', t('admin.pay_is_a_whole_number_of')); return; }
+    if (!armed(node, t('admin.click_again_add') + label + t('admin.at_grade') + grade,
       ['org.new.grade', 'org.new.pay', 'org.new.label', 'org.new.name'])) return;
     var data = { grade: grade, name: name.slice(0, 64), label: label.slice(0, 64), isBoss: !!S.org.newBoss };
     if (pay !== null) data.pay = pay;
@@ -10215,10 +10495,10 @@
     var name = trim(typedOr(pre + 'name', role.name)), label = trim(typedOr(pre + 'label', role.label));
     var pay = wholeOrNull(typedOr(pre + 'pay', role.pay == null ? '' : role.pay), 0, 100000000);
     var newGrade = wholeOrNull(typedOr(pre + 'grade', g), 0, 100);
-    if (!name || !label) { orgRefuse('role:' + g, 'A role needs a name and a label.'); return; }
-    if (pay === false) { orgRefuse('role:' + g, 'Pay is a whole number of dollars.'); return; }
-    if (newGrade === false || newGrade === null) { orgRefuse('role:' + g, 'The grade is a whole number from 0 to 100.'); return; }
-    if (!armed(node, 'Click again: save ' + label, [pre + 'name', pre + 'label', pre + 'pay', pre + 'grade'])) return;
+    if (!name || !label) { orgRefuse('role:' + g, t('admin.a_role_needs_a_name_and')); return; }
+    if (pay === false) { orgRefuse('role:' + g, t('admin.pay_is_a_whole_number_of')); return; }
+    if (newGrade === false || newGrade === null) { orgRefuse('role:' + g, t('admin.the_grade_is_a_whole_number')); return; }
+    if (!armed(node, t('admin.click_again_save') + label, [pre + 'name', pre + 'label', pre + 'pay', pre + 'grade'])) return;
     var data = { grade: Number(g), name: name.slice(0, 64), label: label.slice(0, 64) };
     if (pay !== null) data.pay = pay;
     if (newGrade !== Number(g)) data.newGrade = newGrade;
@@ -10248,7 +10528,7 @@
     var d = S.org.data || {};
     var roles = asList(d.roles);
     var grade = S.org.hire != null ? S.org.hire : (roles.length ? String(roles[roles.length - 1].grade) : null);
-    if (grade == null) { orgRefuse('hire', 'Add a role first, in Roles & pay.'); return; }
+    if (grade == null) { orgRefuse('hire', t('admin.add_a_role_first_in_roles')); return; }
     var data = { grade: Number(grade) };
     var who;
     if (hasPlayer()) {
@@ -10256,11 +10536,11 @@
       who = String((S.players.data.player || {}).name || 'them');
     } else {
       var cid = trim(S.forms['org.hire.cid']);
-      if (!cid) { orgRefuse('hire', 'Look a player up in Players first, or give their exact citizen id.'); return; }
+      if (!cid) { orgRefuse('hire', t('admin.look_a_player_up_in_players_2')); return; }
       data.subject = cid.slice(0, 64);
       who = cid;
     }
-    if (!armed(node, 'Click again: hire ' + who + ' as ' + roleName(d, grade), ['org.hire.cid'])) return;
+    if (!armed(node, t('admin.click_again_hire') + who + ' as ' + roleName(d, grade), ['org.hire.cid'])) return;
     orgWrite('orgMemberHire', data, 'hire', node, function () { delete S.forms['org.hire.cid']; });
   };
   ACTIONS['org-member-open'] = function (node) {
@@ -10286,8 +10566,8 @@
     var m = memberOf(d, ref);
     var grade = S.org.staged['role:' + ref] != null ? S.org.staged['role:' + ref] : (m && String(m.grade));
     if (grade == null) return;
-    if (m && String(m.grade) === String(grade)) { orgRefuse('role-of:' + ref, 'They hold that role already: pick another.'); return; }
-    if (!armed(node, 'Click again: make ' + memberName(ref) + ' ' + roleName(d, grade))) return;
+    if (m && String(m.grade) === String(grade)) { orgRefuse('role-of:' + ref, t('admin.they_hold_that_role_already_pick')); return; }
+    if (!armed(node, t('admin.click_again_make') + memberName(ref) + ' ' + roleName(d, grade))) return;
     orgWrite('orgMemberRole', { member: ref, grade: Number(grade) }, 'role-of:' + ref, node, function () {
       delete S.org.staged['role:' + ref];
     });
@@ -10296,9 +10576,9 @@
     var ref = node.getAttribute('data-id');
     var pre = 'org.m.' + ref + '.';
     var hours = wholeOrNull(S.forms[pre + 'hours'], 0, 720);
-    if (hours === null || hours === false) { orgRefuse('suspend:' + ref, 'Hours are a whole number from 0 (lifts it) to 720.'); return; }
-    if (!armed(node, hours === 0 ? 'Click again: lift ' + memberName(ref) + '\'s suspension'
-      : 'Click again: suspend ' + memberName(ref) + ' for ' + hours + ' h', [pre + 'hours', pre + 'sreason'])) return;
+    if (hours === null || hours === false) { orgRefuse('suspend:' + ref, t('admin.hours_are_a_whole_number_from')); return; }
+    if (!armed(node, hours === 0 ? t('admin.click_again_lift') + memberName(ref) + t('admin.suspension_2')
+      : t('admin.click_again_suspend') + memberName(ref) + ' for ' + hours + ' h', [pre + 'hours', pre + 'sreason'])) return;
     orgWrite('orgMemberSuspend', { member: ref, hours: hours, reason: trim(S.forms[pre + 'sreason']).slice(0, 200) },
       'suspend:' + ref, node, function () { delete S.forms[pre + 'hours']; delete S.forms[pre + 'sreason']; });
   };
@@ -10309,8 +10589,8 @@
     var lim = m.limits || {};
     var at = wholeOrNull(typedOr(pre + 'at', lim.maxAtOnce == null ? '' : lim.maxAtOnce), 1, 50);
     var cd = wholeOrNull(typedOr(pre + 'cd', lim.cooldownMinutes == null ? '' : lim.cooldownMinutes), 0, 10080);
-    if (at === false || cd === false) { orgRefuse('limits:' + ref, 'At once is 1 to 50, the cooldown 0 to 10080 minutes; empty is the server\'s.'); return; }
-    if (!armed(node, 'Click again: ' + (at == null ? 'server\'s' : at) + ' at once, '
+    if (at === false || cd === false) { orgRefuse('limits:' + ref, t('admin.at_once_is_1_to_50')); return; }
+    if (!armed(node, t('admin.click_again') + (at == null ? 'server\'s' : at) + t('admin.at_once_3')
       + (cd == null ? 'server\'s' : cd + ' min') + ' cooldown', [pre + 'at', pre + 'cd'])) return;
     var data = { member: ref };
     if (at != null) data.maxAtOnce = at;
@@ -10323,7 +10603,7 @@
     var power = S.org.staged['power:' + ref] || (asList(d.powers)[0] || {}).code;
     var state = S.org.staged['state:' + ref] || 'grant';
     if (!power) return;
-    if (!armed(node, 'Click again: ' + (state === 'clear' ? 'clear ' + powerName(d, power) + ' for '
+    if (!armed(node, t('admin.click_again') + (state === 'clear' ? 'clear ' + powerName(d, power) + ' for '
       : state + ' ' + powerName(d, power) + ' to ') + memberName(ref))) return;
     orgWrite('orgMemberOverride', { member: ref, power: power, state: state }, 'grant:' + ref, node);
   };
@@ -10331,8 +10611,8 @@
     var ref = node.getAttribute('data-id');
     var bind = 'org.m.' + ref + '.codename';
     var text = trim(S.forms[bind]);
-    if (text.length > 32) { orgRefuse('staff:' + ref, 'A codename is at most 32 characters.'); return; }
-    if (!armed(node, text ? 'Click again: codename ' + text : 'Click again: clear the codename', [bind])) return;
+    if (text.length > 32) { orgRefuse('staff:' + ref, t('admin.a_codename_is_at_most_32')); return; }
+    if (!armed(node, text ? t('admin.click_again_codename') + text : t('admin.click_again_clear_the_codename'), [bind])) return;
     orgWrite('orgMemberOverride', { member: ref, codename: text ? text : false }, 'staff:' + ref, node, function () {
       delete S.forms[bind];
     });
@@ -10346,7 +10626,7 @@
     var ref = node.getAttribute('data-id');
     var bind = 'org.m.' + ref + '.freason';
     var reason = trim(S.forms[bind]);
-    if (!reason) { orgRefuse('fire:' + ref, 'Give a reason: it goes on the record.'); return; }
+    if (!reason) { orgRefuse('fire:' + ref, t('admin.give_a_reason_it_goes_on')); return; }
     if (!armed(node, null, [bind])) return;
     orgWrite('orgMemberFire', { member: ref, reason: reason.slice(0, 200) }, 'fire:' + ref, node, function () {
       delete S.forms[bind];
@@ -10364,7 +10644,7 @@
   ACTIONS['org-arm-remove'] = function (node) {
     var slot = node.getAttribute('data-id');
     var raw = trim(S.forms['org.arm.out.' + slot] == null ? '1' : S.forms['org.arm.out.' + slot]);
-    if (!/^\d+$/.test(raw) || raw === '0') { orgRefuse('arm:' + slot, 'How many: a whole number from 1.'); return; }
+    if (!/^\d+$/.test(raw) || raw === '0') { orgRefuse('arm:' + slot, t('admin.how_many_a_whole_number_from')); return; }
     if (!armed(node, null, ['org.arm.out.' + slot])) return;
     orgWrite('orgArmoryStock', { remove: true, slot: parseInt(slot, 10), count: parseInt(raw, 10) }, 'arm:' + slot,
       node);
@@ -10372,24 +10652,24 @@
   ACTIONS['org-arm-stock'] = function (node) {
     var item = trim(S.forms['org.arm.item']);
     var raw = trim(S.forms['org.arm.count'] == null ? '1' : S.forms['org.arm.count']);
-    if (!item) { orgRefuse('arm:stock', 'Write the item name.'); return; }
-    if (!/^\d+$/.test(raw) || raw === '0') { orgRefuse('arm:stock', 'How many: a whole number from 1.'); return; }
+    if (!item) { orgRefuse('arm:stock', t('admin.write_the_item_name')); return; }
+    if (!/^\d+$/.test(raw) || raw === '0') { orgRefuse('arm:stock', t('admin.how_many_a_whole_number_from')); return; }
     if (!armed(node, null, ['org.arm.item', 'org.arm.count'])) return;
     orgWrite('orgArmoryStock', { item: item, count: parseInt(raw, 10) }, 'arm:stock', node);
   };
   ACTIONS['org-arm-limit'] = function (node) {
     var g = node.getAttribute('data-id');
     var raw = trim(S.forms['org.arm.lim.' + g] == null ? '' : S.forms['org.arm.lim.' + g]);
-    if (!/^\d+$/.test(raw)) { orgRefuse('arm:lim:' + g, 'A whole number, 0 for none.'); return; }
+    if (!/^\d+$/.test(raw)) { orgRefuse('arm:lim:' + g, t('admin.a_whole_number_0_for_none')); return; }
     if (!armed(node, null, ['org.arm.lim.' + g])) return;
     orgWrite('orgArmoryLimit', { grade: parseInt(g, 10), count: parseInt(raw, 10) }, 'arm:lim:' + g, node);
   };
   ACTIONS['org-rep-adjust'] = function (node) {
     var points = Number(trim(S.forms['org.rep.points']));
     var reason = trim(S.forms['org.rep.reason']);
-    if (!points || Math.floor(points) !== points) { orgRefuse('rep', 'A whole number of points, either way.'); return; }
-    if (!reason) { orgRefuse('rep', 'Give a reason.'); return; }
-    if (!armed(node, 'Click again: ' + (points > 0 ? 'add ' : 'take off ') + Math.abs(points) + ' points',
+    if (!points || Math.floor(points) !== points) { orgRefuse('rep', t('admin.a_whole_number_of_points_either')); return; }
+    if (!reason) { orgRefuse('rep', t('admin.give_a_reason')); return; }
+    if (!armed(node, t('admin.click_again') + (points > 0 ? 'add ' : t('admin.take_off_2')) + Math.abs(points) + ' points',
       ['org.rep.points', 'org.rep.reason'])) return;
     orgWrite('orgRepAdjust', { points: points, reason: reason.slice(0, 200) }, 'rep', node, function () {
       delete S.forms['org.rep.points'];
@@ -10420,7 +10700,7 @@
     var models = asList(g.all).filter(function (a) {
       return S.org.garage && S.org.garage[a.model] !== undefined ? S.org.garage[a.model] : a.offered === true;
     }).map(function (a) { return a.model; });
-    if (!armed(node, 'Click again: offer ' + models.length + ' vehicle(s)')) return;
+    if (!armed(node, t('admin.click_again_offer') + models.length + ' vehicle(s)')) return;
     orgWrite('orgGarageOffer', { models: models }, 'garage', node, function () { S.org.garage = null; });
   };
   ACTIONS['org-garage-remove'] = function (node) {
@@ -10445,8 +10725,8 @@
   };
   ACTIONS['org-disc-give'] = function (node) {
     var reason = trim(S.forms['org.disc.reason']);
-    if (!S.org.x2.member) { orgRefuse('disc', 'Pick the member first.'); return; }
-    if (!reason) { orgRefuse('disc', 'Give a reason.'); return; }
+    if (!S.org.x2.member) { orgRefuse('disc', t('admin.pick_the_member_first')); return; }
+    if (!reason) { orgRefuse('disc', t('admin.give_a_reason')); return; }
     if (!armed(node, null, ['org.disc.reason'])) return;
     orgWrite('orgStrike', { member: S.org.x2.member, kind: S.org.x2.kind || 'strike', reason: reason }, 'disc', node,
       function () { delete S.forms['org.disc.reason']; });
@@ -10454,7 +10734,7 @@
   ACTIONS['org-disc-over'] = function (node) {
     var id = node.getAttribute('data-id');
     var reason = trim(S.forms['org.over.' + id]);
-    if (!reason) { orgRefuse('over:' + id, 'Say why it is overturned.'); return; }
+    if (!reason) { orgRefuse('over:' + id, t('admin.say_why_it_is_overturned')); return; }
     if (!armed(node, null, ['org.over.' + id])) return;
     orgWrite('orgOverturn', { member: node.getAttribute('data-ref'), id: id, reason: reason }, 'over:' + id, node);
   };
@@ -10476,7 +10756,7 @@
   ACTIONS['org-note-save'] = function (node) {
     var id = node.getAttribute('data-id');
     var text = trim(S.forms['org.note.' + id]);
-    if (!text) { orgRefuse('app:' + id, 'Write the note.'); return; }
+    if (!text) { orgRefuse('app:' + id, t('admin.write_the_note')); return; }
     if (!armed(node, null, ['org.note.' + id])) return;
     orgWrite('orgInterviewNote', { id: id, text: text }, 'app:' + id, node, function () {
       delete S.forms['org.note.' + id];
@@ -10492,7 +10772,7 @@
   ACTIONS['org-work-assign'] = function (node) {
     var id = node.getAttribute('data-id');
     var member = S.org.work.member[id];
-    if (!member) { orgRefuse('work:' + id, 'Pick the member first.'); return; }
+    if (!member) { orgRefuse('work:' + id, t('admin.pick_the_member_first')); return; }
     if (!armed(node)) return;
     orgWrite('orgContractAssign', { id: id, member: member }, 'work:' + id, node);
   };
@@ -10518,7 +10798,7 @@
     if (notes) data.notes = notes;
     if (S.org.work.spot[id]) data.spot = S.org.work.spot[id];
     if (S.org.work.rules[id]) data.rules = S.org.work.rules[id];
-    if (!data.notes && !data.spot && !data.rules) { orgRefuse('work:' + id, 'Write notes, or pick a spot or the rules.'); return; }
+    if (!data.notes && !data.spot && !data.rules) { orgRefuse('work:' + id, t('admin.write_notes_or_pick_a_spot')); return; }
     if (!armed(node, null, ['org.dossier.' + id])) return;
     orgWrite('orgDossier', data, 'work:' + id, node, function () { delete S.forms['org.dossier.' + id]; });
   };
@@ -10544,13 +10824,13 @@
   };
   ACTIONS['org-chan-mute'] = function (node) {
     var raw = trim(S.forms['org.mute.hours'] == null ? '24' : S.forms['org.mute.hours']);
-    if (!/^\d+$/.test(raw)) { orgRefuse('chan', 'Hours: a whole number, 0 lifts a mute.'); return; }
+    if (!/^\d+$/.test(raw)) { orgRefuse('chan', t('admin.hours_a_whole_number_0_lifts')); return; }
     if (!armed(node, null, ['org.mute.hours'])) return;
     orgWrite('orgChannelMute', { member: node.getAttribute('data-ref'), hours: parseInt(raw, 10) }, 'chan', node);
   };
   ACTIONS['org-chan-post'] = function (node) {
     var text = trim(S.forms['org.channel']);
-    if (!text) { orgRefuse('chan', 'Write the message.'); return; }
+    if (!text) { orgRefuse('chan', t('admin.write_the_message')); return; }
     if (!armed(node, null, ['org.channel'])) return;
     orgWrite('orgChannelPost', { text: text }, 'chan', node, function () { delete S.forms['org.channel']; });
   };
@@ -10560,12 +10840,12 @@
     var dir = S.org.dir;
     var amount = wholeOrNull(S.forms['org.funds.amount'], 1, 100000000);
     var reason = trim(S.forms['org.funds.reason']);
-    if (amount === null || amount === false) { orgRefuse('funds', 'Give a whole number of dollars, 1 or more.'); return; }
-    if (!reason) { orgRefuse('funds', 'Give a reason: it goes on the record.'); return; }
-    if (dir === 'bonus' && !S.org.bonusTo) { orgRefuse('funds', 'Pick the member the bonus goes to.'); return; }
-    var label = dir === 'deposit' ? 'Click again: deposit ' + money(amount)
-      : dir === 'withdraw' ? 'Click again: withdraw ' + money(amount)
-        : 'Click again: pay ' + memberName(S.org.bonusTo) + ' ' + money(amount);
+    if (amount === null || amount === false) { orgRefuse('funds', t('admin.give_a_whole_number_of_dollars')); return; }
+    if (!reason) { orgRefuse('funds', t('admin.give_a_reason_it_goes_on')); return; }
+    if (dir === 'bonus' && !S.org.bonusTo) { orgRefuse('funds', t('admin.pick_the_member_the_bonus_goes')); return; }
+    var label = dir === 'deposit' ? t('admin.click_again_deposit') + money(amount)
+      : dir === 'withdraw' ? t('admin.click_again_withdraw') + money(amount)
+        : t('admin.click_again_pay') + memberName(S.org.bonusTo) + ' ' + money(amount);
     if (!armed(node, label, ['org.funds.amount', 'org.funds.reason'])) return;
     var data = { direction: dir, amount: amount, reason: reason.slice(0, 200), nonce: orgNonce() };
     if (dir === 'bonus') data.member = S.org.bonusTo;
@@ -10597,11 +10877,11 @@
     var bind = kind === 'role' ? 'org.cut.role.' + grade : 'org.cut.' + kind;
     var cap = Number((d.limits || {}).TotalCutCapPercent) || 0;
     var pct = wholeOrNull(S.forms[bind], 0, 100);
-    if (pct === null || pct === false) { orgRefuse('cut', 'A cut is a whole percent from 0 to ' + cap + '.'); return; }
-    if (pct > cap) { orgRefuse('cut', 'At most ' + cap + '%: the cap on all cuts of one payout (Boss permissions, Limits).'); return; }
-    var what = kind === 'role' ? 'the cut for ' + roleName(d, grade) : kind === 'payout' ? 'the payout cut'
-      : 'the cut on ' + kind + 's';
-    if (!armed(node, 'Click again: set ' + what + ' to ' + pct + '%', [bind])) return;
+    if (pct === null || pct === false) { orgRefuse('cut', t('admin.a_cut_is_a_whole_percent') + cap + '.'); return; }
+    if (pct > cap) { orgRefuse('cut', t('admin.at_most') + cap + t('admin.the_cap_on_all_cuts_of')); return; }
+    var what = kind === 'role' ? t('admin.the_cut_for') + roleName(d, grade) : kind === 'payout' ? t('admin.the_payout_cut')
+      : t('admin.the_cut_on') + kind + 's';
+    if (!armed(node, t('admin.click_again_set') + what + ' to ' + pct + '%', [bind])) return;
     var data = { kind: kind, percent: pct };
     if (kind === 'role') data.grade = Number(grade);
     orgWrite('orgCuts', data, 'cut', node, function () { delete S.forms[bind]; });
@@ -10623,7 +10903,7 @@
     var at = wholeOrNull(typedOr(pre + 'at', a.maxAtOnce == null ? '' : a.maxAtOnce), 1, 50);
     var cd = wholeOrNull(typedOr(pre + 'cd', a.cooldownMinutes == null ? '' : a.cooldownMinutes), 0, 10080);
     if (max === false || at === false || cd === false) {
-      orgRefuse('access', 'Most reward is whole dollars, at once 1 to 50, the cooldown 0 to 10080 minutes; empty is no rule.');
+      orgRefuse('access', t('admin.most_reward_is_whole_dollars_at'));
       return;
     }
     var rule = S.org.staged['rule:' + g] != null ? S.org.staged['rule:' + g] : (a.rule || '');
@@ -10639,9 +10919,9 @@
   };
   ACTIONS['org-pick'] = function (node) {
     var id = trim(S.forms['org.pick.id']);
-    if (!id) { orgRefuse('pick', 'Give the contract id.'); return; }
+    if (!id) { orgRefuse('pick', t('admin.give_the_contract_id')); return; }
     var to = S.org.staged.pick || '';
-    if (!armed(node, to ? 'Click again: pin ' + id + ' to ' + memberName(to) : 'Click again: clear the pick on ' + id,
+    if (!armed(node, to ? t('admin.click_again_pin') + id + ' to ' + memberName(to) : t('admin.click_again_clear_the_pick_on') + id,
       ['org.pick.id'])) return;
     var data = { id: id.slice(0, 64) };
     if (to) data.member = to;
@@ -10651,8 +10931,8 @@
   ACTIONS['org-broadcast'] = function (node) { disarm(); S.org.staged.broadcast = node.getAttribute('data-value') === 'yes'; drawOrg(); };
   ACTIONS['org-notice'] = function (node) {
     var text = trim(S.forms['org.notice']);
-    if (!text) { orgRefuse('notice', 'Write the notice first.'); return; }
-    if (!armed(node, S.org.staged.broadcast ? 'Click again: post it and message every member' : 'Click again: post it',
+    if (!text) { orgRefuse('notice', t('admin.write_the_notice_first')); return; }
+    if (!armed(node, S.org.staged.broadcast ? t('admin.click_again_post_it_and_message') : t('admin.click_again_post_it'),
       ['org.notice'])) return;
     orgWrite('orgNotice', { text: text, broadcast: !!S.org.staged.broadcast }, 'notice', node, function () {
       delete S.forms['org.notice'];
@@ -10712,14 +10992,14 @@
     var bind = 'bp.lim.' + k;
     var raw = trim(S.forms[bind]);
     var n = Number(raw);
-    if (raw === '' || !isFinite(n) || n < 0) { orgRefuse('limits', 'Give a number for ' + k + '.'); return; }
+    if (raw === '' || !isFinite(n) || n < 0) { orgRefuse('limits', t('admin.give_a_number_for') + k + '.'); return; }
     var e = settingEntry('Organisation.Limits.' + k);
     if (e && ((e.min != null && n < e.min) || (e.max != null && n > e.max))) {
-      orgRefuse('limits', k + ' is from ' + e.min + ' to ' + e.max + '.');
+      orgRefuse('limits', k + t('admin.is_from') + e.min + ' to ' + e.max + '.');
       return;
     }
-    if (e && e.integer && Math.floor(n) !== n) { orgRefuse('limits', k + ' is a whole number.'); return; }
-    if (!armed(node, 'Click again: ' + k + ' to ' + num(n) + ' (now ' + num((d.limits || {})[k]) + ')', [bind])) return;
+    if (e && e.integer && Math.floor(n) !== n) { orgRefuse('limits', k + t('admin.is_a_whole_number')); return; }
+    if (!armed(node, t('admin.click_again') + k + ' to ' + num(n) + ' (now ' + num((d.limits || {})[k]) + ')', [bind])) return;
     var limits = {};
     limits[k] = n;
     orgWrite('bossLimits', { limits: limits }, 'limits', node, function () { delete S.forms[bind]; });
@@ -10746,26 +11026,30 @@
     });
   };
 
-  HELP.push(
-    { title: 'The hitman organisation', icon: 'people-group',
-      text: 'Off as shipped. On, the hitmen are one qbx_core job with roles (its grades), members, funds, a boss menu '
-        + 'on the phone and its own places. Every boss power is off until staff allow it in Boss permissions, for a '
-        + 'boss role or one boss, within the limits staff set; staff may do everything from the panel. Cuts are '
-        + 'frozen onto a contract when a member accepts it.',
-      links: [{ key: 'Organisation.Enabled', label: 'The switch' },
-        { key: 'Organisation.RequireJobToAccept', label: 'Only members may accept' }] });
-  STAFF_ACTIONS.push(
-    { title: 'Run the hitman organisation', icon: 'people-group', view: 'orgsetup', go: 'Hitman organisation',
-      text: 'Turn it on, sync the job, edit roles and pay, hire, fire, suspend and set members\' limits, move money '
-        + 'with a reason, set cuts, contract access, the board notice and applications.',
-      also: { view: 'orgmembers', go: 'Members' } },
-    { title: 'Give bosses powers', icon: 'key', view: 'bpmatrix', go: 'Boss permissions',
-      text: 'The grid of powers by boss role and by one boss: Allow, Deny or Inherit, every change listed before one '
-        + 'Save. Limits sets the bounds; Delegation & office which powers need the boss office.',
-      also: { view: 'bplimits', go: 'Limits' } },
-    { title: 'Set a place on the map', icon: 'location-dot', view: 'locations', go: 'Locations',
-      text: 'The boss office, sign-up and meeting spots, the broker and informant NPC places, tip safe zones, rumour '
-        + 'districts and the prison zone: stand there in game and press Use my position.' });
+  Text.later(function () {
+    HELP.push(
+    { title: t('admin.the_hitman_organisation'), icon: 'people-group',
+      text: t('admin.off_as_shipped_on_the_hitmen')
+        + t('admin.on_the_phone_and_its_own')
+        + t('admin.boss_role_or_one_boss_within')
+        + t('admin.frozen_onto_a_contract_when_a'),
+      links: [{ key: 'Organisation.Enabled', label: t('admin.the_switch') },
+        { key: 'Organisation.RequireJobToAccept', label: t('admin.only_members_may_accept') }] });
+  });
+  Text.later(function () {
+    STAFF_ACTIONS.push(
+    { title: t('admin.run_the_hitman_organisation'), icon: 'people-group', view: 'orgsetup', go: t('admin.hitman_organisation'),
+      text: t('admin.turn_it_on_sync_the_job')
+        + t('admin.with_a_reason_set_cuts_contract'),
+      also: { view: 'orgmembers', go: t('admin.members') } },
+    { title: t('admin.give_bosses_powers'), icon: 'key', view: 'bpmatrix', go: t('admin.boss_permissions'),
+      text: t('admin.the_grid_of_powers_by_boss')
+        + t('admin.save_limits_sets_the_bounds_delegation'),
+      also: { view: 'bplimits', go: t('admin.limits') } },
+    { title: t('admin.set_a_place_on_the_map'), icon: 'location-dot', view: 'locations', go: t('admin.locations'),
+      text: t('admin.the_boss_office_sign_up_and')
+        + t('admin.districts_and_the_prison_zone_stand') });
+  });
 
   /* Loaded to the end: admin.html's fallback, which gives the focus back
      when this file fails to load or throws while loading, stands down. */

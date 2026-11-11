@@ -135,7 +135,7 @@ local function pageKey(words, key)
 end
 
 --- The pages whose words are all in locales/en.json.
-local MOVED_PAGES = { 'ui/app.js' }
+local MOVED_PAGES = { 'ui/app.js', 'ui/admin.js' }
 
 --- What the page scan reads as words and is not, by page: each with why.
 local PAGE_ALLOW = {
@@ -147,6 +147,16 @@ local PAGE_ALLOW = {
         ['diag-row is-'] = true,
         -- The code of an answer that never came, looked up in errors.
         ['no reply'] = true,
+    },
+    ['ui/admin.js'] = {
+        -- A class name with its last part added.
+        ['toast is-'] = true,
+        -- The section heads' ids (nh-daily ...); their words are admin.html's.
+        ['Daily'] = true, ['Setup'] = true, ['Records'] = true,
+        -- The server's group ids and key prefixes, matched (Settings.groupLabel
+        -- gives the words).
+        ['Boss limits'] = true, ['Intel.'] = true, ['Record.'] = true, ['Roleplay.'] = true,
+        ['Cooldowns.'] = true, ['st-save-Cooldowns.'] = true, ['rate limits'] = true,
     },
 }
 
@@ -230,7 +240,7 @@ describe('Translations: the language files', function()
 
     it('the pages\' own HTML reads its words by key too', function()
         local words = englishPages()
-        for _, html in ipairs({ 'ui/index.html' }) do
+        for _, html in ipairs({ 'ui/index.html', 'ui/admin.html' }) do
             local text = src(html)
             local n = 0
             for key in text:gmatch('data%-t[%w%-]*="([%w_]+%.[%w_]+)"') do

@@ -5681,6 +5681,37 @@ async function main() {
     clean(app, 'the dashboard');
   })();
 
+  /* Translations 5: every word the panel shows is read by key from
+     locales/<lang>.json, in the language its open message names. The panel
+     loads before that message, so what it built from its words as it
+     loaded (the sections, the screens' names and help, its own HTML) is
+     built again in that language (Text.later). */
+  await (async function panelInAnotherLanguage() {
+    const fsx = require('fs');
+    const en = JSON.parse(fsx.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'locales', 'en.json'), 'utf8'));
+    const qq = JSON.parse(JSON.stringify(en));
+    Object.keys(qq.admin).forEach(function (k) { qq.admin[k] = '\u00ab' + qq.admin[k]; });
+    localeXhr.extra['qq.json'] = qq;
+    const app = boot(standardServer());
+    app.message({ type: 'open', access: FULL, locale: 'qq' });
+    await settled();
+    delete localeXhr.extra['qq.json'];
+    it('Translations: the panel reads its words in the language its open message names', function () {
+      const nav = app.byId('nav').textContent;
+      has(nav, '\u00abHome', 'its own HTML');
+      has(app.byId('panel').textContent, '\u00ab', 'what it draws');
+      const missing = [];
+      (PAGE_JS.match(/\bt\('[\w]+\.[\w]+'\)/g) || []).forEach(function (call) {
+        const key = call.slice(3, -2), at = key.indexOf('.');
+        if (key === 'section.key') return;  // the comment that says how
+        const sec = en[key.slice(0, at)];
+        if (!sec || typeof sec[key.slice(at + 1)] !== 'string') missing.push(key);
+      });
+      eq(missing.join(', '), '', 'every key the panel asks for is in en.json');
+    });
+    clean(app, 'the panel in another language');
+  })();
+
   /* Step 4b: a gear on each screen opens that screen's settings in place;
      Game rules stays the view of all of them. */
   await (async function settingsGear() {

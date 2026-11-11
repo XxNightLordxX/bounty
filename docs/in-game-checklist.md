@@ -759,6 +759,8 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 
 - [ ] (part 4, the phone) With `Config.Locale = 'en'` every screen of the phone app reads as before (Board, Mine, Place, On Me, Ledger, a contract card, the place form, a buyout, messages, the organisation tab). In a copy `xx.json` change one `app.*` text on each screen (a tab name included): each reads your words after a restart
 
+- [ ] (part 5, the panel) With `Config.Locale = 'en'` every panel section reads as before (Home, Players, Contracts, Target limits, Game rules and its group headings, the organisation, Boss permissions, Locations, Logs, Developer, Help). In a copy `xx.json` change one `admin.*` text in each (a section name in the menu, a button, a help line): each reads your words from the first open after a restart
+
 ## Version check (X4, off as shipped)
 
 - [ ] As shipped (`Config.VersionCheck.Enabled = false`, `Url = ''`) the start asks nothing: no outbound request in the server's network log

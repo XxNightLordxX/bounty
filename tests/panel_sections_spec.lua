@@ -415,11 +415,10 @@ end)
 -- How it works card linked to its switch, plain labels, one shared helper
 --------------------------------------------------------------------------
 
+--- The panel's source with its words put back (t('admin.key') as the
+--- English it reads), as the page wrote them before they moved to en.json.
 local function adminSource()
-    local handle = assert(io.open('crimson-hitman/ui/admin.js', 'r'))
-    local text = handle:read('a')
-    handle:close()
-    return text
+    return require('tests.harness.pagewords').source('ui/admin.js')
 end
 
 describe('the panel, as an owner reads it', function()
@@ -428,7 +427,7 @@ describe('the panel, as an owner reads it', function()
         local src = adminSource()
         local intro = {}
         for name in src:gmatch("GROUP_INTRO%['([^']+)'%]") do intro[name] = true end
-        local block = src:match('var GROUP_INTRO = (%b{})') or ''
+        local block = src:match('GROUP_INTRO = (%b{})') or ''
         for name in block:gmatch("\n%s+'([^'\n]+)':") do intro[name] = true end
         local v = s.settings.view()
         local missing, seen = {}, {}

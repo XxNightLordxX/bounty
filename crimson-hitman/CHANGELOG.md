@@ -50,7 +50,9 @@ are named by their place in `config/config.lua`; the README has the details.
   command, every feature's refusals and notices, the organisation's, and the
   panel's setting labels, help and group names. The phone app's every
   label, help line, button and dialog (its tabs included) is in
-  `locales/en.json` (`app`). The admin panel's follow in the next step (README, Escrow, and where the words live, which
+  `locales/en.json` (`app`), and so is the admin panel's (`admin`, its
+  sections, header and help included): every word players and staff read
+  is now in the language files (README, Escrow, and where the words live, which
   says step by step how to add a language).
 
 **Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)

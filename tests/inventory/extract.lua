@@ -313,9 +313,11 @@ local function screens(add)
     for name in app:gmatch('state%.boardTab = \'([%w_]+)\'') do add('phone.boardtab:' .. name) end
     for name in app:gmatch('state%.boardTab === \'([%w_]+)\'') do add('phone.boardtab:' .. name) end
     local admin = stripJs(read(ROOT .. 'ui/admin.js') or '')
-    for name in block(admin, 'var GROUPS = [', '  ];'):gmatch('{ id: \'([%w_]+)\'') do add('admin.group:' .. name) end
-    for name in block(admin, 'var VIEW_LABEL = {', '  };'):gmatch('([%w_]+):%s*%[') do add('admin.view:' .. name) end
-    for name in block(admin, 'var DRAWER_TABS = [', '  ];'):gmatch('{ id: \'([%w_]+)\'') do add('admin.drawer:' .. name) end
+    -- Built in Text.later (the panel's words follow the language its first
+    -- open names): `var GROUPS;` then `    GROUPS = [` inside it.
+    for name in block(admin, '\n    GROUPS = [', '  ];'):gmatch('{ id: \'([%w_]+)\'') do add('admin.group:' .. name) end
+    for name in block(admin, '\n    VIEW_LABEL = {', '  };'):gmatch('([%w_]+):%s*%[') do add('admin.view:' .. name) end
+    for name in block(admin, '\n    DRAWER_TABS = [', '  ];'):gmatch('{ id: \'([%w_]+)\'') do add('admin.drawer:' .. name) end
     for name in admin:gmatch('S%.inbox === \'([%w_]+)\'') do add('admin.inbox:' .. name) end
 end
 

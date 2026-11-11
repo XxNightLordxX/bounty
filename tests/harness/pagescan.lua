@@ -138,7 +138,8 @@ function PageScan.hardCoded(src, classes, allow)
     local found = {}
     for _, lit in ipairs(PageScan.literals(src)) do
         local text = lit.text
-        local shown = not lit.inCall and TextScan.reads(text)
+        -- 'Roles & pay' is words too.
+        local shown = not lit.inCall and (TextScan.reads(text) or TextScan.reads((text:gsub('&', 'and'))))
             and lit.after ~= ':' and lit.after ~= '==' and lit.after ~= '===' and lit.after ~= '!=' and lit.after ~= '!=='
             and lit.after ~= ']' and lit.before ~= '==' and lit.before ~= '===' and lit.before ~= '!=' and lit.before ~= '!=='
             and lit.before ~= 'case' and text ~= 'use strict'

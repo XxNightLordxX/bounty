@@ -10225,7 +10225,7 @@
     var wrap = el('div', 'goods-box');
     var wallet = state.wallet;
 
-    wrap.appendChild(el('h5', 'goods-title', 'Items & weapons'));
+    wrap.appendChild(el('h5', 'goods-title', t('app.items_weapons')));
 
     if (!wallet) {
       wrap.appendChild(el('div', 'hint', t('app.reading_your_pockets')));

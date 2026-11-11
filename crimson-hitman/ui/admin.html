@@ -29,11 +29,11 @@
 <!-- The staff panel. Hidden, and taking no input, until the client says it
      is open (client/admin.lua); every section is drawn by admin.js from what
      the server answers. Buttons only: nothing on it is a command. -->
-<div id="panel" class="panel" role="dialog" aria-label="Crimson Hitman staff panel" hidden>
+<div id="panel" class="panel" role="dialog" aria-label="Crimson Hitman staff panel" data-t-aria-label="admin.crimson_hitman_staff_panel" hidden>
   <header class="bar">
     <div class="brand">
       <span class="mark" aria-hidden="true"></span>
-      <h1>Crimson Hitman <span class="muted">staff panel</span></h1>
+      <h1>Crimson Hitman <span class="muted" data-t="admin.staff_panel">staff panel</span></h1>
       <span id="version" class="version"></span>
     </div>
     <!-- One search for settings, actions, sections, players and contracts
@@ -41,23 +41,23 @@
     <div class="gs" role="search">
       <label class="search gs-box"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
         <input id="gs-q" class="input" type="text" data-bind="gs.q" data-live="gs-input" data-enter="gs-go"
-          autocomplete="off" spellcheck="false" placeholder="Search settings, actions, players (/ or Ctrl+K)"
-          aria-label="Search settings, actions, players and contracts">
+          autocomplete="off" spellcheck="false" placeholder="Search settings, actions, players (/ or Ctrl+K)" data-t-placeholder="admin.search_settings_actions_players_or_ctrl"
+          aria-label="Search settings, actions, players and contracts" data-t-aria-label="admin.search_settings_actions_players_and_contracts">
       </label>
       <div id="gs-results" class="gs-results" role="listbox" hidden></div>
     </div>
     <div id="ctx" class="ctx" hidden></div>
     <div id="badges" class="badges"></div>
-    <button id="refresh-btn" class="icon-btn" type="button" data-act="refresh-view" title="Read this section again"
-      aria-label="Refresh">
-      <i class="fa-solid fa-rotate" aria-hidden="true"></i><span class="lbl">Reload</span>
+    <button id="refresh-btn" class="icon-btn" type="button" data-act="refresh-view" title="Read this section again" data-t-title="admin.read_this_section_again"
+      aria-label="Refresh" data-t-aria-label="admin.refresh">
+      <i class="fa-solid fa-rotate" aria-hidden="true"></i><span class="lbl" data-t="admin.reload">Reload</span>
     </button>
-    <button id="help-btn" class="icon-btn" type="button" data-act="help-btn" title="Help: how it works, how do I, who can do what"
-      aria-label="Help">
-      <i class="fa-solid fa-circle-question" aria-hidden="true"></i><span class="lbl">Help</span>
+    <button id="help-btn" class="icon-btn" type="button" data-act="help-btn" title="Help: how it works, how do I, who can do what" data-t-title="admin.help_how_it_works_how_do"
+      aria-label="Help" data-t-aria-label="admin.help">
+      <i class="fa-solid fa-circle-question" aria-hidden="true"></i><span class="lbl" data-t="admin.help">Help</span>
     </button>
-    <button id="close" class="icon-btn" type="button" data-act="close" title="Close (Esc)" aria-label="Close (Esc)">
-      <i class="fa-solid fa-xmark" aria-hidden="true"></i><span class="lbl">Close</span>
+    <button id="close" class="icon-btn" type="button" data-act="close" title="Close (Esc)" data-t-title="admin.close_esc" aria-label="Close (Esc)" data-t-aria-label="admin.close_esc">
+      <i class="fa-solid fa-xmark" aria-hidden="true"></i><span class="lbl" data-t="admin.close">Close</span>
     </button>
   </header>
   <div id="banner" class="banner" role="status" hidden></div>
@@ -66,53 +66,53 @@
        view this staff member may open is not drawn. Under 700 px wide the
        list folds into one menu button. -->
   <button id="nav-menu" class="nav-menu" type="button" data-act="nav-menu" aria-controls="nav" aria-expanded="false">
-    <i class="fa-solid fa-bars" aria-hidden="true"></i><span class="lbl">Sections</span>
+    <i class="fa-solid fa-bars" aria-hidden="true"></i><span class="lbl" data-t="admin.sections">Sections</span>
   </button>
-  <nav id="nav" class="nav" aria-label="Sections">
-    <p id="nh-daily" class="nav-head">Daily</p>
+  <nav id="nav" class="nav" aria-label="Sections" data-t-aria-label="admin.sections">
+    <p id="nh-daily" class="nav-head" data-t="admin.daily">Daily</p>
     <button id="grp-home" class="nav-btn" type="button" data-act="group" data-group="home">
-      <i class="fa-solid fa-house" aria-hidden="true"></i><span class="lbl">Home</span>
+      <i class="fa-solid fa-house" aria-hidden="true"></i><span class="lbl" data-t="admin.home">Home</span>
       <span id="count-home" class="nav-count is-warn" hidden></span>
     </button>
     <button id="grp-players" class="nav-btn" type="button" data-act="group" data-group="players">
-      <i class="fa-solid fa-user" aria-hidden="true"></i><span class="lbl">Players</span>
+      <i class="fa-solid fa-user" aria-hidden="true"></i><span class="lbl" data-t="admin.players">Players</span>
     </button>
     <button id="grp-contracts" class="nav-btn" type="button" data-act="group" data-group="contracts">
-      <i class="fa-solid fa-file-contract" aria-hidden="true"></i><span class="lbl">Contracts</span>
+      <i class="fa-solid fa-file-contract" aria-hidden="true"></i><span class="lbl" data-t="admin.contracts">Contracts</span>
     </button>
     <button id="grp-targets" class="nav-btn" type="button" data-act="group" data-group="targets">
-      <i class="fa-solid fa-user-clock" aria-hidden="true"></i><span class="lbl">Target limits</span>
+      <i class="fa-solid fa-user-clock" aria-hidden="true"></i><span class="lbl" data-t="admin.target_limits">Target limits</span>
     </button>
-    <p id="nh-setup" class="nav-head">Setup</p>
+    <p id="nh-setup" class="nav-head" data-t="admin.setup">Setup</p>
     <button id="grp-rules" class="nav-btn" type="button" data-act="group" data-group="rules">
-      <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl">Game rules</span>
+      <i class="fa-solid fa-scale-balanced" aria-hidden="true"></i><span class="lbl" data-t="admin.game_rules">Game rules</span>
       <span id="count-rules" class="nav-count" hidden></span>
     </button>
     <button id="grp-org" class="nav-btn" type="button" data-act="group" data-group="org">
-      <i class="fa-solid fa-people-group" aria-hidden="true"></i><span class="lbl">Hitman organisation</span>
+      <i class="fa-solid fa-people-group" aria-hidden="true"></i><span class="lbl" data-t="admin.hitman_organisation">Hitman organisation</span>
     </button>
     <button id="grp-bossperms" class="nav-btn" type="button" data-act="group" data-group="bossperms">
-      <i class="fa-solid fa-key" aria-hidden="true"></i><span class="lbl">Boss permissions</span>
+      <i class="fa-solid fa-key" aria-hidden="true"></i><span class="lbl" data-t="admin.boss_permissions">Boss permissions</span>
     </button>
     <button id="grp-locations" class="nav-btn" type="button" data-act="group" data-group="locations">
-      <i class="fa-solid fa-location-dot" aria-hidden="true"></i><span class="lbl">Locations</span>
+      <i class="fa-solid fa-location-dot" aria-hidden="true"></i><span class="lbl" data-t="admin.locations">Locations</span>
     </button>
-    <p id="nh-records" class="nav-head">Records</p>
+    <p id="nh-records" class="nav-head" data-t="admin.records">Records</p>
     <button id="grp-logs" class="nav-btn" type="button" data-act="group" data-group="logs">
-      <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl">Logs</span>
+      <i class="fa-solid fa-list-ul" aria-hidden="true"></i><span class="lbl" data-t="admin.logs">Logs</span>
       <span id="count-logs" class="nav-count is-warn" hidden></span>
     </button>
-    <p id="nh-developer" class="nav-head">Developer</p>
+    <p id="nh-developer" class="nav-head" data-t="admin.developer">Developer</p>
     <button id="grp-developer" class="nav-btn" type="button" data-act="group" data-group="developer">
-      <i class="fa-solid fa-code" aria-hidden="true"></i><span class="lbl">Developer</span>
+      <i class="fa-solid fa-code" aria-hidden="true"></i><span class="lbl" data-t="admin.developer">Developer</span>
     </button>
   </nav>
   <!-- The section's views, as tabs (drawn by admin.js), and where you are. -->
-  <nav id="subnav" class="subnav" aria-label="In this section" hidden></nav>
-  <div id="crumbs" class="crumbs" aria-label="You are here"></div>
+  <nav id="subnav" class="subnav" aria-label="In this section" data-t-aria-label="admin.in_this_section" hidden></nav>
+  <div id="crumbs" class="crumbs" aria-label="You are here" data-t-aria-label="admin.you_are_here"></div>
   <main id="main" class="main"></main>
   <div id="scrim" class="scrim" data-act="drawer-close" hidden></div>
-  <aside id="drawer" class="drawer" aria-label="Contract" hidden></aside>
+  <aside id="drawer" class="drawer" aria-label="Contract" data-t-aria-label="admin.contract" hidden></aside>
 </div>
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <!-- The fallback for a page that never came up: admin.js failing to load,
