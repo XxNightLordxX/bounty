@@ -759,7 +759,102 @@ function F.joinOrg()
     end
 end
 
-F.ORDER = { 'contract', 'kill', 'buyout', 'intel', 'payroll', 'disposal', 'staff' }
+--------------------------------------------------------------------------
+-- 8. organisation money (step 8d): a boss's deposit, a staff bonus to a
+-- member, a boss's withdrawal, and staff moving the funds to the other
+-- backend; every give decided by what arrived, every crash window kept
+--------------------------------------------------------------------------
+
+local function orgFunds() return package.loaded['server.org.funds'] or require('server.org.funds') end
+local function bossActor() return { cid = cid('boss'), source = src('boss'), name = 'Bea Holt' } end
+local function staffActor() return { staff = true, cid = cid('staff'), source = src('staff') } end
+local function moneyOf(role, account)
+    local p = W.everyone[cid(role)]
+    return p and p.PlayerData.money[account] or 0
+end
+
+F.orgmoney = {
+    name = 'orgmoney',
+    setup = function(ctx)
+        local staff = src('staff')
+        if not Config.Organisation.Enabled then
+            W.opOk(staff, 'setSetting', { key = 'Organisation.Enabled', value = true }, 'org on')
+        end
+        W.opOk(staff, 'orgSetup', {}, 'org setup')
+        W.opOk(staff, 'orgMemberHire', { subject = cid('boss'), grade = 3 }, 'hire the boss')
+        if not (W.s.org.current().members or {})[cid('hitman2')] then
+            W.opOk(staff, 'orgMemberHire', { subject = cid('hitman2'), grade = 0 }, 'hire a recruit')
+        end
+        W.opOk(staff, 'bossPermsSet', { cells = {
+            { subject = 'role', id = 3, power = 'C6', state = 'allow' },
+            { subject = 'role', id = 3, power = 'C7', state = 'allow' },
+        } }, 'the boss may deposit and withdraw')
+        -- The office where the boss stands (a withdrawal needs it).
+        W.at(src('boss'), 640.0, 640.0, 30.0)
+        W.at(staff, 640.0, 640.0, 30.0)
+        local placed, perr, pdata = W.s.org.placeSpot(staffActor(), { kind = 'office', here = true })
+        assert(placed, 'the office: ' .. tostring(perr) .. ' ' .. tostring(pdata and pdata.message))
+        W.opOk(staff, 'orgFundsMove', { direction = 'deposit', amount = 10000, reason = 'seed money',
+            nonce = 'om-seed' }, 'staff deposit')
+        ctx.bonus, ctx.withdrawal, ctx.deposit = 1500, 800, 2500
+    end,
+    steps = {
+        {
+            name = 'deposit',
+            run = function(ctx)
+                local ok, err = W.s.org.deposit(bossActor(), ctx.deposit, 'bank', 'om-dep')
+                truthy(ok, 'the boss\'s deposit: ' .. tostring(err))
+            end,
+            done = function() return orgFunds().byRef('dep:' .. cid('boss') .. ':om-dep') ~= nil end,
+        },
+        {
+            name = 'bonus',
+            run = function(ctx)
+                ctx.recruitBefore = ctx.recruitBefore or moneyOf('hitman2', 'bank')
+                local ok, err = W.s.org.bonus(staffActor(), cid('hitman2'), ctx.bonus, 'well done', 'om-bonus')
+                truthy(ok, 'the bonus: ' .. tostring(err))
+            end,
+            done = function(ctx)
+                return ctx.recruitBefore ~= nil and moneyOf('hitman2', 'bank') - ctx.recruitBefore >= ctx.bonus
+            end,
+        },
+        {
+            name = 'withdraw',
+            run = function(ctx)
+                ctx.bossBefore = ctx.bossBefore or moneyOf('boss', 'cash')
+                local ok, err = W.s.org.withdraw(bossActor(), ctx.withdrawal, 'rent', 'om-wd')
+                truthy(ok, 'the withdrawal: ' .. tostring(err))
+            end,
+            done = function(ctx)
+                return ctx.bossBefore ~= nil and moneyOf('boss', 'cash') - ctx.bossBefore >= ctx.withdrawal
+            end,
+        },
+        {
+            name = 'switch',
+            run = function(ctx)
+                local org = W.s.org.current()
+                ctx.to = ctx.to or (orgFunds().backend(org) == 'bank' and 'internal' or 'bank')
+                W.opOk(src('staff'), 'orgFundsBackend', { backend = ctx.to }, 'staff move the funds')
+            end,
+            done = function(ctx)
+                return ctx.to ~= nil and orgFunds().backend(W.s.org.current()) == ctx.to
+            end,
+        },
+    },
+    final = function(ctx)
+        W.tick(1, 15)
+        eq(moneyOf('hitman2', 'bank') - ctx.recruitBefore, ctx.bonus, 'the recruit was paid the bonus once')
+        eq(moneyOf('boss', 'cash') - ctx.bossBefore, ctx.withdrawal, 'the boss was paid the withdrawal once')
+        local org = W.s.org.current()
+        eq(orgFunds().backend(org), ctx.to, 'kept where staff moved them')
+        eq(orgFunds().balance(org), 10000 + ctx.deposit - ctx.bonus - ctx.withdrawal, 'the funds, to the dollar')
+        F.audited(ctx, 'org_bonus')
+        F.audited(ctx, 'org_funds_withdraw')
+        F.audited(ctx, 'org_funds_backend')
+    end,
+}
+
+F.ORDER = { 'contract', 'kill', 'buyout', 'intel', 'payroll', 'disposal', 'staff', 'orgmoney' }
 
 --------------------------------------------------------------------------
 -- Running a flow

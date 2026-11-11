@@ -2717,6 +2717,8 @@ CrimsonLocales.en = {
     ['org_extras2.you_cannot_carry_that'] = 'You cannot carry that.',
     ['org_extras2.the_armory_would_not_give_it'] = 'The armory would not give it; nothing moved.',
     ['org_extras2.you_could_not_take_it_it'] = 'You could not take it; it is back in the armory.',
+    ['org_extras2.the_armory_raised_taking_it_it'] = 'The armory raised taking it, and what arrived could not be told: it is left as it is for staff to check.',
+    ['org_extras2.your_inventory_raised_taking_it_it'] = 'Your inventory raised taking it, and what arrived could not be told: it is left as it is for staff to check.',
     ['org_extras2.only_an_item_in_the_armorys'] = 'Only an item in the armory\'s allow-list (Config.Organisation.ArmoryItems).',
     ['org_extras2.the_armory_has_no_room_for_2'] = 'The armory has no room for that (or no such item).',
     ['org_extras2.the_inventory_would_not_add_it'] = 'The inventory would not add it.',
@@ -2823,6 +2825,11 @@ CrimsonLocales.en = {
     ['org_funds.organisation'] = 'Organisation',
     ['org_funds.moved_from_the_ledger'] = 'Moved from the ledger',
     ['org_funds.moved_to_the_ledger'] = 'Moved to the ledger',
+    ['org_funds.the_switch_moved_its_money_so'] = 'the switch had moved its money, so its rows and marker were written',
+    ['org_funds.the_give_was_marked_so_it'] = 'the give was marked as handed over, so it stands',
+    ['org_funds.left_for_staff_the_server_stopped'] = 'left for staff: the server stopped while it was handed over',
+    ['org_funds.the_server_stopped_while_it_was'] = 'the server stopped while it was being handed over: check whether the member got it',
+    ['org_funds.cut_given_back'] = 'Cut given back',
 
     -- =========================================================================
     --                       WORDS FROM server/org/init.lua
@@ -2857,6 +2864,9 @@ CrimsonLocales.en = {
     ['org.they_are_a_member_of_another'] = 'They are a member of another organisation already.',
     ['org.the_organisations_reputation_does_not_unlock'] = 'The organisation\'s reputation does not unlock contracts worth that much yet.',
     ['org.check_what_was_entered'] = 'Check what was entered.',
+    ['org.renewed_banking_refused_it_nothing_was'] = 'Renewed-Banking refused it; nothing was changed.',
+    ['org.renewed_banking_has_no_account_for'] = 'Renewed-Banking has no account for this job and would not make one (its CreateJobAccount); nothing was changed.',
+    ['org.handing_it_over_raised_and_what'] = 'Handing it over raised and what arrived could not be told: it is left for staff to check, and nothing more is paid meanwhile.',
     ['org.not_done'] = 'Not done.',
     ['org.no_such_organisation_refresh_the_page'] = 'No such organisation: refresh the page.',
     ['org.organisation_using'] = 'Organisation.%s %s; using %s',
@@ -2889,6 +2899,7 @@ CrimsonLocales.en = {
     ['org.salary_returned'] = 'Salary returned',
     ['org.paid_to_bank'] = 'paid to bank',
     ['org.left_for_staff_not_known_whether'] = 'left for staff: not known whether the bank took it',
+    ['org.left_for_staff_handing_it_over'] = 'left for staff: handing it over raised',
     ['org.salary'] = 'Salary',
     ['org.pay_day_your_salary_of_was'] = 'Pay day: your salary of $%d was not paid while you are suspended.',
     ['org.pay_day_your_salary_of_was_2'] = 'Pay day: your salary of $%d was not paid; this pay day\'s salaries reached the limit staff set.',
@@ -2928,6 +2939,9 @@ CrimsonLocales.en = {
     ['org.the_first_organisation_config_lua_stays'] = 'The first organisation (config.lua) stays.',
     ['org.it_still_has_members_fire_them'] = 'It still has members: fire them first.',
     ['org.its_funds_are_not_empty_withdraw'] = 'Its funds are not empty: withdraw them first.',
+    ['org.a_payout_still_waits_at_its'] = 'A payout still waits at its dead drop: let it be collected or run out first.',
+    ['review.money_left_the_organisations_funds_for'] = 'money left the organisation\'s funds for a member (a bonus, a withdrawal or a salary) and the server stopped while it was being handed over, or could not say whether it arrived: check the member\'s money; pay them if it never arrived, else dismiss',
+    ['review.handing_a_member_money_from_the'] = 'handing a member money from the organisation\'s funds raised, and only part of it, or no telling, arrived (the item says what they held before and what arrived): check the member\'s money; Pay gives only what did not arrive, else dismiss',
     ['org.a_contract_is_still_held_for'] = 'A contract is still held for it: release it first.',
 
     -- =========================================================================

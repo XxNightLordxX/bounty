@@ -750,9 +750,12 @@ character that loaded before the job was registered (a late start).
   (changing `Banking` later does not move them). While the bank is chosen and
   Renewed-Banking is not started, every deposit, withdrawal, bonus and cut is
   refused and the balance shows as unknown: nothing is paid from, or into, a
-  ledger the bank does not see. Staff move the funds to the other side with
-  `orgFundsBackend`, which carries the balance across in two ledger rows (with
-  `abandon`, leaving a bank that is down, nothing is carried). Every movement
+  ledger the bank does not see. Staff move one organisation's funds to the
+  other side with `orgFundsBackend` (each organisation keeps its own side; the
+  others stay where they are), which makes the job's Renewed-Banking account
+  first where it has none and carries the balance across in two ledger rows
+  (with `abandon`, leaving a bank that is down, nothing is carried); a crash
+  part-way is finished at the next start. Every movement
   is one ledger row written once, marked with the side it moved, so a retry
   never pays twice and the ledger's balance is only its own rows; money is
   reserved before anything is awaited, so two withdrawals at once never

@@ -97,10 +97,25 @@ from `GetEntityCoords(GetPlayerPed(src))`), then the rank rules
 asks whether that granter still holds the power and still outranks the holder,
 so revoking cascades without touching a row.
 
-Money: `funds.lua` picks its backend once (`Funds.pick`, kept as staff meta
-`org_funds_backend`: 1 the ledger, 2 Renewed-Banking) and only the staff op
-`orgFundsBackend` (`Funds.switch`) changes it, carrying the balance across in
-two `switch` rows. Every movement is one `crimson_org_funds` row under a
+Money: `funds.lua` picks the first backend once (`Funds.pick`, kept as staff
+meta `org_funds_backend`: 1 the ledger, 2 Renewed-Banking), every
+organisation's until staff move it: each organisation then keeps its own, in
+a marker row of its ledger (`backend:<id>`, kind `backend`, amount 0;
+`Funds.backend(org)`). Only the staff op `orgFundsBackend` (`Funds.switch`)
+changes one organisation's, making the job's Renewed-Banking account first
+(`CreateJobAccount`), carrying its balance across in two `switch` rows; the
+money moves with nothing awaited and is kept on this machine (review item
+`org_funds_interrupted`, how `switch`) until the rows and the marker are
+written, so a crash in between is finished at the next start. Removing an
+organisation checks its money under both backends (`Funds.emptyEverywhere`).
+Money paid out to a member (bonus, withdrawal, salary) is decided by what
+arrived (`handOver`: `Util.credit`), marked `:paid` (kept before it is awaited),
+given back `:back` only when nothing arrived, left for staff
+(`org_funds_give_raised`) when part of it, or no telling, did; a crash inside the
+give is left for staff (`org_funds_give_unconfirmed`), and a debit row with neither
+never reached the member, so the retry pays it (mysql). A cut taken on a give
+that never arrived is given back (`cut:<line>:back`) when the line goes to
+anyone else. Every movement is one `crimson_org_funds` row under a
 reference written once (`insertOrgRowOnce`), marked with its `backend`; the
 ledger's balance is the sum of its own (`internal`) rows only. Credit: row
 first, then the account, the row taken back if the account refuses. Debit: the

@@ -2038,7 +2038,7 @@ function StartCrimsonHitman()
     -- (Escrow.orgCut), the accept (Contracts.acceptGate) and its switch.
     org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
                contracts = contracts, settings = settings, review = review, projection = projection,
-               record = record })
+               record = record, bailout = bailout })
     -- After death, kidnap and the bodyguards, whose steps it draws, and after
     -- the EMS rule, which disposal chains ahead of (Contracts.relistHold).
     -- Its hold is a payout check (server/payout.lua), asked ahead of proof

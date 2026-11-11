@@ -5,9 +5,12 @@
     ╚═══════════════════════════════════════════════════════════════════════════╝
 ]]
 
---- Where the funds are kept is chosen once, the first time the
+--- Where the funds are kept is chosen once, the first time any
 --- organisation is read, and kept by the store (staff meta
---- 'org_funds_backend': 1 this resource's ledger, 2 Renewed-Banking): with
+--- 'org_funds_backend': 1 this resource's ledger, 2 Renewed-Banking), as
+--- every organisation's backend until staff move one: each organisation
+--- keeps its own from then on, in a marker row of its ledger
+--- ('backend:<id>', kind 'backend', moving nothing). With
 --- Config.Integrations.Banking = 'auto' and Renewed-Banking installed, its
 --- society account for the job (createJobAccount once, then getAccountMoney
 --- / addAccountMoney / removeAccountMoney, and handleTransaction for its
@@ -15,8 +18,11 @@
 --- this resource's own ledger
 --- (crimson_org_funds), whose balance is the sum of the rows written under
 --- it. Nothing moves the funds from one to the other but staff
---- (orgFundsBackend, Funds.switch), which carries the balance across in two
---- rows. While the bank is chosen and Renewed-Banking is not started, every
+--- (orgFundsBackend, Funds.switch), one organisation at a time, which
+--- carries its balance across in two rows, kept on this machine from the
+--- moment the money moves until the rows and the marker are written, so a
+--- crash in between is finished at the next start (Funds.decideInterrupted).
+--- While the bank is chosen and Renewed-Banking is not started, every
 --- movement is refused ('bank_down') and the balance is unknown: nothing is
 --- paid out of, or into, a ledger the bank does not see.
 ---
@@ -70,15 +76,19 @@ local pending = {}
 --- again is not read again: [ref] = true. Only this process writes them.
 local absent = {}
 
---- The backend chosen ('internal' | 'bank'), nil until the first read.
-local backend = nil
+--- The backend chosen at the first read ('internal' | 'bank'), nil until
+--- then: every organisation's until staff move one.
+local defaultBackend = nil
 
---- Whether Renewed-Banking was asked to make the job's account, this
---- process, once it was started.
-local accountMade = false
+--- Each organisation's own backend, by id, from its marker row (Funds.load).
+local backends = {}
 
---- A backend switch running: every movement waits ('busy').
-local switching = false
+--- Whether Renewed-Banking was asked to make each job's account, this
+--- process, once it was started: [org id] = true.
+local accountMade = {}
+
+--- A backend switch running, by organisation id: its movements wait ('busy').
+local switching = {}
 
 local META = 'org_funds_backend'
 local CODE = { internal = 1, bank = 2 }
@@ -89,9 +99,10 @@ function Funds.init(deps)
     Storage, Audit, Review = deps.storage, deps.audit, deps.review
     markWaiting = {}
     balances, known, inFlight, pending, absent, loaded = {}, {}, {}, {}, {}, false
-    backend, accountMade, switching = nil, false, false
+    defaultBackend, backends, accountMade, switching = nil, {}, {}, {}
     if Review and Review.DECIDERS then
         Review.DECIDERS.org_funds_interrupted = function(item) return Funds.decideInterrupted(item) end
+        Review.DECIDERS.org_funds_give_unconfirmed = function(item) return Funds.decideGive(item) end
     end
 end
 
@@ -150,9 +161,10 @@ local function keptBackend()
     return code == CODE.bank and 'bank' or code == CODE.internal and 'internal' or nil
 end
 
---- Choose the backend once: the one the store keeps, or (the first time)
---- the bank when Config.Integrations.Banking has one installed (the
---- ledger on 'none'), kept from then on.
+--- Choose the first backend once: the one the store keeps, or (the first
+--- time) the bank when Config.Integrations.Banking has one installed (the
+--- ledger on 'none'), kept from then on. Every organisation's until staff
+--- move it (its marker row, Funds.load).
 ---@return string 'internal' | 'bank'
 function Funds.pick()
     local kept = keptBackend()
@@ -162,7 +174,7 @@ function Funds.pick()
         if Storage and Storage.claimStaffMeta then ok, code = pcall(Storage.claimStaffMeta, META, CODE[want]) end
         kept = ok and (tonumber(code) == CODE.bank and 'bank' or tonumber(code) == CODE.internal and 'internal') or want
     end
-    backend = kept
+    defaultBackend = kept
     if kept == 'bank' and Integrations.choice('banking') == 'none' then
         Log.problem('note: Config.Integrations.Banking is none, but the organisation\'s funds are kept in '
             .. 'the bank: staff move them with the panel\'s funds backend switch (orgFundsBackend)')
@@ -170,25 +182,34 @@ function Funds.pick()
     return kept
 end
 
---- The backend in force: 'internal' or 'bank'.
+--- The backend in force for one organisation: 'internal' or 'bank' (with
+--- no organisation, the first choice).
+---@param org table|nil
 ---@return string
-function Funds.backend()
-    return backend or Funds.pick()
+function Funds.backend(org)
+    local id = type(org) == 'table' and org.id or nil
+    if id and backends[id] then return backends[id] end
+    return defaultBackend or Funds.pick()
 end
 
---- Whether Renewed-Banking holds the funds (chosen at the first read).
+--- Whether Renewed-Banking holds this organisation's funds.
+---@param org table|nil
 ---@return boolean
-function Funds.usesBank()
-    return Funds.backend() == 'bank'
+function Funds.usesBank(org)
+    return Funds.backend(org) == 'bank'
 end
 
 --- Whether the funds can move now: always on the ledger; with the bank,
 --- only while Renewed-Banking is started.
+---@param org table|nil
 ---@return boolean
-function Funds.ready()
-    if not Funds.usesBank() then return true end
+function Funds.ready(org)
+    if not Funds.usesBank(org) then return true end
     return bankStarted()
 end
+
+--- The reference of an organisation's backend marker row.
+local function markerRef(org) return ('backend:' .. tostring(org.id)):sub(1, 96) end
 
 --- A whole number of dollars above zero, or nil.
 ---@param value any
@@ -208,19 +229,22 @@ end
 ---@param org table
 ---@return table[] rows newest first
 function Funds.load(org)
-    if not backend then Funds.pick() end
+    if not defaultBackend then Funds.pick() end
     local rows = Storage.readOrgRows('funds', org.id) or {}
     local total = 0
+    local own = nil
     for i = 1, #rows do
         local row = rows[i]
         if row.backend ~= 'internal' and row.backend ~= 'bank' then
-            row.backend = backend
+            row.backend = defaultBackend
             pcall(Storage.writeOrgRow, 'funds', row)
         end
+        if row.kind == 'backend' and row.id == markerRef(org) then own = row.backend end
         if row.backend == 'internal' then total = total + (math.floor(tonumber(row.amount) or 0)) end
         known[row.id] = row
     end
     balances[org.id] = total
+    backends[org.id] = own or defaultBackend
     loaded = true
     table.sort(rows, function(a, b)
         if (a.created_at or 0) ~= (b.created_at or 0) then return (a.created_at or 0) > (b.created_at or 0) end
@@ -229,18 +253,32 @@ function Funds.load(org)
     return rows
 end
 
---- Make sure Renewed-Banking has the job's account, once it is started.
---- Idempotent there.
-function Funds.ensureAccount(org)
-    if not Funds.usesBank() or not bankStarted() then return true end
+--- Ask Renewed-Banking for the job's account (its CreateJobAccount, which
+--- answers the account it has or makes one at 0): true once the account
+--- can be read. Idempotent there.
+---@return boolean made
+---@return string|nil err
+local function makeAccount(org)
+    local bank = Bank()
+    if not bank then return false, 'bank_down' end
+    if type(bank.CreateJobAccount) ~= 'function' then return false, 'no_account' end
     local ok, err = pcall(function()
-        return Bank().CreateJobAccount({ name = org.job, label = org.label or org.job }, 0)
+        return bank.CreateJobAccount({ name = org.job, label = org.label or org.job }, 0)
     end)
     if not ok then
-        Log.problem(('warning: Renewed-Banking would not make the %s account: %s; the funds are '
-            .. 'read from it all the same'):format(org.job, tostring(err)))
+        Log.problem(('warning: Renewed-Banking would not make the %s account: %s')
+            :format(tostring(org.job), tostring(err)))
     end
-    accountMade = true
+    local read, money = pcall(function() return Bank().getAccountMoney(org.job) end)
+    return read and type(money) == 'number', 'no_account'
+end
+
+--- Make sure Renewed-Banking has the job's account, once it is started,
+--- where this organisation's funds are kept there. Idempotent there.
+function Funds.ensureAccount(org)
+    if not Funds.usesBank(org) or not bankStarted() then return true end
+    local ok = makeAccount(org)
+    accountMade[org.id] = true
     return ok
 end
 
@@ -255,7 +293,7 @@ end
 ---@param org table
 ---@return integer|nil
 function Funds.balance(org)
-    if Funds.usesBank() then
+    if Funds.usesBank(org) then
         if not bankStarted() then return nil end
         return bankBalance(org)
     end
@@ -268,9 +306,8 @@ end
 --- never paid to the member as well.
 ---@param lineId string|nil
 ---@return integer
-function Funds.taken(lineId)
-    if type(lineId) ~= 'string' then return 0 end
-    local ref = ('cut:' .. lineId):sub(1, 96)
+--- A cut's row (or its give-back's), from memory or read once.
+local function cutRow(ref)
     local row = known[ref]
     if not row and not loaded and not absent[ref] and Storage and Storage.readOrgRow then
         local ok, found = pcall(Storage.readOrgRow, 'funds', ref)
@@ -280,7 +317,45 @@ function Funds.taken(lineId)
             absent[ref] = true
         end
     end
-    return row and math.max(0, math.floor(tonumber(row.amount) or 0)) or 0
+    return row
+end
+
+--- The references of a line's cut and of its give-back (Funds.cutBack).
+function Funds.cutRefs(lineId)
+    return ('cut:' .. lineId):sub(1, 96), ('cut:' .. lineId .. ':back'):sub(1, 96)
+end
+
+--- Whether nothing is left in this organisation's funds under either
+--- backend: the ledger's own rows sum to nothing, and Renewed-Banking's
+--- account (where it is started and has one) holds nothing. With the bank
+--- chosen and not started, not known: false.
+---@param org table
+---@return boolean
+function Funds.emptyEverywhere(org)
+    if (balances[org.id] or 0) ~= 0 then return false end
+    local bank = Funds.usesBank(org)
+    if not bankStarted() then return not bank end
+    local held = bankBalance(org)
+    if held == nil then return not bank end
+    return held == 0
+end
+
+--- What the funds already took of one escrow line (its cut): 0 once that
+--- cut was given back (Funds.cutBack). From memory where the
+--- ledger was read; otherwise (the organisation off since the start) read
+--- once from the store, so a cut taken before a restart is never paid to
+--- the member as well.
+---@param lineId string|nil
+---@return integer taken
+---@return string|nil cid whom it was taken from (the member)
+---@return table|nil row the cut's row
+function Funds.taken(lineId)
+    if type(lineId) ~= 'string' then return 0 end
+    local ref, backRef = Funds.cutRefs(lineId)
+    local row = cutRow(ref)
+    if not row then return 0 end
+    if cutRow(backRef) then return 0 end
+    return math.max(0, math.floor(tonumber(row.amount) or 0)), row.actor, row
 end
 
 --- The row written under a reference, if any.
@@ -297,7 +372,7 @@ end
 --- The kinds of row that move nothing: markers written beside a movement
 --- to say what became of it (a salary paid on to the member's bank, or left
 --- for staff), amount 0, so no balance or sum counts them.
-Funds.MARKS = { salary_paid = true, salary_review = true }
+Funds.MARKS = { salary_paid = true, salary_review = true, give_paid = true, give_review = true, backend = true }
 
 --- Write a marker once per reference (Funds.MARKS): true when it is
 --- written, or was already.
@@ -310,7 +385,7 @@ function Funds.mark(org, ref, spec)
     ref = ref:sub(1, 96)
     if known[ref] then return true end
     local row = { id = ref, org_id = org.id, kind = spec.kind, amount = 0, actor = spec.actor,
-        reason = spec.reason, created_at = os.time(), backend = Funds.backend() }
+        reason = spec.reason, created_at = os.time(), backend = Funds.backend(org) }
     local wrote = pcall(Storage.insertOrgRowOnce, 'funds', row)
     if not wrote then return false end
     -- Inserted now, or there already: either way it is written.
@@ -319,8 +394,8 @@ function Funds.mark(org, ref, spec)
     return true
 end
 
-local function history(org, title, amount, actor, kind)
-    if not Funds.usesBank() then return end
+local function history(org, title, amount, actor, kind, always)
+    if not always and not Funds.usesBank(org) then return end
     pcall(function()
         return Bank().handleTransaction(org.job, title, amount, tostring(kind),
             tostring(actor or 'crimson-hitman'), org.job, amount > 0 and 'deposit' or 'withdraw')
@@ -329,10 +404,10 @@ end
 
 --- Why the funds cannot move now: 'busy' (a switch), 'bank_down', or nil.
 local function blocked(org)
-    if switching then return 'busy' end
-    if Funds.usesBank() then
+    if switching[org.id] then return 'busy' end
+    if Funds.usesBank(org) then
         if not bankStarted() then return 'bank_down' end
-        if not accountMade then Funds.ensureAccount(org) end
+        if not accountMade[org.id] then Funds.ensureAccount(org) end
     end
     return nil
 end
@@ -368,6 +443,26 @@ local function orgRef(org)
     return { id = org.id, job = org.job, label = org.label }
 end
 
+local switchRows
+
+--- A backend switch a crash stopped after its money moved: its rows and
+--- marker written now (each once), the organisation's balance read again
+--- where this process has it loaded.
+local function decideSwitch(org, s)
+    if type(s) ~= 'table' or type(s.stamp) ~= 'string' or not CODE[s.from] or not CODE[s.to]
+        or type(s.carried) ~= 'number' or s.carried < 0 or s.carried ~= math.floor(s.carried) then
+        return 'staff', L('org_funds.it_does_not_carry_the_movements')
+    end
+    s.at = tonumber(s.at) or os.time()
+    switchRows(org, s)
+    if backends[org.id] then Funds.load(org) end
+    if s.carried > 0 then
+        Audit.financial('org_funds_switch_recorded', s.actor, nil, { org = org.id, from = s.from, to = s.to,
+            carried = s.carried })
+    end
+    return 'done', L('org_funds.the_switch_moved_its_money_so')
+end
+
 --- org_funds_interrupted, settled by the server at the next start:
 ---   debit   the money left the account: the row is there (the debit
 ---           stands), or the money is put back, so the caller's next try
@@ -385,6 +480,7 @@ function Funds.decideInterrupted(item)
     local known_ = type(item.known) == 'table' and item.known or {}
     local ref, amount = known_.ref, Funds.amount(known_.amount)
     local org = type(known_.org) == 'table' and known_.org.id and known_.org.job and known_.org or nil
+    if known_.how == 'switch' and org then return decideSwitch(org, known_.switch) end
     if type(ref) ~= 'string' or not org or (not amount and known_.how ~= 'mark') then
         return 'staff', L('org_funds.it_does_not_carry_the_movements')
     end
@@ -435,6 +531,56 @@ end
 ---@param item table|nil from Funds.charged
 function Funds.settled(item) letGo(item) end
 
+--- Money the funds paid out (a bonus, a withdrawal, a salary: its debit
+--- row written) is being handed to a member now: kept on this machine
+--- before the give, let go (Funds.settled) the moment its marker is kept
+--- instead (Funds.willMark), with nothing awaited between. A crash inside
+--- the give leaves it, and the next start cannot tell whether the member
+--- got it: left for staff (Funds.decideGive), never paid again on a guess.
+--- A debit row found with neither this nor a marker never reached the
+--- give, and is paid by the caller's retry.
+---@param spec table { ref, cid, amount, account, kind }
+---@return table|nil item
+function Funds.giving(org, spec)
+    if not (Review and Review.prepare) then return nil end
+    return Review.prepare({
+        kind = 'org_funds_give_unconfirmed', cids = { member = spec.cid }, amount = spec.amount,
+        account = spec.account == 'cash' and 'cash' or 'bank',
+        known = { decide = true, ref = spec.ref:sub(1, 96), org = orgRef(org), give = spec.kind },
+    })
+end
+
+--- org_funds_give_unconfirmed, at the next start: the give marked paid (or given
+--- back) after all stands; otherwise it is marked as left for staff, so
+--- the member's retry pays nothing, and staff check the member's money.
+---@return string verdict 'done' | 'staff'
+---@return string note
+function Funds.decideGive(item)
+    local known_ = type(item.known) == 'table' and item.known or {}
+    local ref = known_.ref
+    local org = type(known_.org) == 'table' and known_.org.id and known_.org.job and known_.org or nil
+    if type(ref) ~= 'string' or not org then return 'staff', L('org_funds.it_does_not_carry_the_movements') end
+    if Storage.readOrgRow('funds', (ref .. ':paid'):sub(1, 96)) or Storage.readOrgRow('funds', (ref .. ':back'):sub(1, 96)) then
+        return 'done', L('org_funds.the_give_was_marked_so_it')
+    end
+    Funds.mark(org, (ref .. ':review'):sub(1, 96), { kind = 'give_review', actor = item.cids and item.cids.member,
+        reason = L('org_funds.left_for_staff_the_server_stopped') })
+    return 'staff', L('org_funds.the_server_stopped_while_it_was')
+end
+
+--- Give a line's cut back out of the funds: the line went to somebody other
+--- than the member it was cut from (handed back to its placer), so the
+--- funds keep nothing of a payout nobody was paid. Once, by its own
+--- reference; Funds.taken answers 0 from then on.
+---@return boolean ok
+---@return string|nil err as Funds.debit
+---@return boolean|nil repeated
+function Funds.cutBack(org, lineId, amount, recipient, contract)
+    local _, backRef = Funds.cutRefs(lineId)
+    return Funds.debit(org, amount, { ref = backRef, kind = 'cut_back', actor = recipient, contract = contract,
+        reason = L('org_funds.cut_given_back'), title = L('org_funds.cut_given_back') })
+end
+
 --- What a marker (Funds.MARKS) will say has happened, kept the moment it
 --- happens and before the marker is awaited: a salary handed to the
 --- member's bank is marked at the next start if a crash stops the write
@@ -478,7 +624,7 @@ function Funds.credit(org, amount, spec)
     local why = blocked(org)
     if why then return false, why end
     inFlight[ref] = true
-    local bank = Funds.usesBank()
+    local bank = Funds.usesBank(org)
     local row = { id = ref, org_id = org.id, kind = spec.kind or 'credit', amount = amount,
         actor = spec.actor, reason = spec.reason, contract_id = spec.contract, created_at = os.time(),
         backend = bank and 'bank' or 'internal' }
@@ -558,7 +704,7 @@ function Funds.debit(org, amount, spec)
         tonumber(spec.cap.since) or 0) + amount > (tonumber(spec.cap.limit) or 0) then
         return false, 'limit'
     end
-    local bank = Funds.usesBank()
+    local bank = Funds.usesBank(org)
     if not bank and (balances[org.id] or 0) < amount then return false, 'short' end
     inFlight[ref] = true
     local now = os.time()
@@ -603,81 +749,113 @@ function Funds.debit(org, amount, spec)
     return done(true)
 end
 
---- Staff only (orgFundsBackend): move the funds to the other backend, the
---- balance carried across in two rows (out of the one, into the other).
---- Both sides need Renewed-Banking started; leaving the bank while it is
---- not, `abandon` switches with nothing carried (its account keeps what it
---- holds, said on the record). Nothing else moves the funds meanwhile.
+--- The rows a backend switch writes: the balance out of the one backend
+--- and into the other (each once, by the switch's stamp), and the
+--- organisation's marker row naming the backend it keeps from now on.
+--- Raises where the store does; written again from the start, each lands
+--- once.
+---@param s table { stamp, from, to, carried, actor, at }
+switchRows = function(org, s)
+    local function row(id, b, amount)
+        return { id = ('switch:%s:%s'):format(s.stamp, id):sub(1, 96), org_id = org.id, kind = 'switch',
+            amount = amount, actor = s.actor, reason = s.from .. '>' .. s.to, created_at = s.at, backend = b }
+    end
+    if (s.carried or 0) > 0 then
+        local out, into = row('out', s.from, -s.carried), row('in', s.to, s.carried)
+        Storage.insertOrgRowOnce('funds', out)
+        known[out.id], absent[out.id] = out, nil
+        Storage.insertOrgRowOnce('funds', into)
+        known[into.id], absent[into.id] = into, nil
+    end
+    local marker = { id = markerRef(org), org_id = org.id, kind = 'backend', amount = 0, actor = s.actor,
+        reason = s.from .. '>' .. s.to, created_at = s.at, backend = s.to }
+    Storage.writeOrgRow('funds', marker)
+    known[marker.id], absent[marker.id] = marker, nil
+end
+
+--- Staff only (orgFundsBackend): move one organisation's funds to the other
+--- backend, its balance carried across in two rows (out of the one, into
+--- the other), and its marker row saying where they are kept now; every
+--- other organisation's stay where they are. Both sides need
+--- Renewed-Banking started, and the job's account made there first (its
+--- CreateJobAccount: a job registered after Renewed-Banking started has
+--- none); leaving the bank while it is not started, `abandon` switches with
+--- nothing carried (its account keeps what it holds, said on the record).
+--- Nothing else moves this organisation's funds meanwhile. The money moves
+--- first with nothing awaited, and is kept on this machine at once (intent)
+--- until the rows are written: a crash in between has them written at the
+--- next start (Funds.decideInterrupted), so the balance is never in both
+--- backends or in neither.
 ---@param org table
 ---@param to string 'internal' | 'bank'
 ---@param spec table { actor, abandon }
 ---@return boolean ok
----@return string|nil err 'invalid' | 'already' | 'busy' | 'bank_down' | 'refused'
+---@return string|nil err 'invalid' | 'already' | 'busy' | 'bank_down' | 'refused' | 'no_account'
 ---@return table|nil done { from, to, carried, abandoned }
 function Funds.switch(org, to, spec)
     spec = type(spec) == 'table' and spec or {}
     if to ~= 'internal' and to ~= 'bank' then return false, 'invalid' end
-    local from = Funds.backend()
+    local from = Funds.backend(org)
     if from == to then return false, 'already' end
-    if switching or next(inFlight) then return false, 'busy' end
+    if switching[org.id] or next(inFlight) then return false, 'busy' end
     local abandoned = false
     if not bankStarted() then
         if to == 'bank' or not spec.abandon then return false, 'bank_down' end
         abandoned = true
     end
-    switching = true
+    switching[org.id] = true
     local function finish(ok, err, extra)
-        switching = false
+        switching[org.id] = nil
         return ok, err, extra
     end
-    local stamp = ('%d:%d'):format(os.time(), math.random(1000, 9999))
-    local carried = 0
-    local function write(id, b, amount)
-        return pcall(Storage.insertOrgRowOnce, 'funds', { id = ('switch:%s:%s'):format(stamp, id):sub(1, 96),
-            org_id = org.id, kind = 'switch', amount = amount, actor = spec.actor, reason = from .. '>' .. to,
-            created_at = os.time(), backend = b })
+    -- The account first (it awaits its own insert), then nothing awaited
+    -- until the money moved is kept on this machine.
+    if not abandoned then
+        local made, why = makeAccount(org)
+        if not made then return finish(false, why) end
     end
+    if next(inFlight) then return finish(false, 'busy') end
+    local s = { stamp = ('%d:%d'):format(os.time(), math.random(1000, 9999)), from = from, to = to,
+        carried = 0, actor = spec.actor, at = os.time() }
     if to == 'bank' then
-        Funds.ensureAccount(org)
-        carried = math.max(0, balances[org.id] or 0)
-        if carried > 0 then
-            local wrote, inserted = write('out', 'internal', -carried)
-            if not wrote or not inserted then return finish(false, 'refused') end
-            local ok, added = pcall(function() return Bank().addAccountMoney(org.job, carried) end)
-            if not ok or not added then
-                pcall(Storage.deleteOrgRow, 'funds', ('switch:%s:out'):format(stamp))
-                return finish(false, 'refused')
-            end
-            balances[org.id] = (balances[org.id] or 0) - carried
-            write('in', 'bank', carried)
-            history(org, L('org_funds.moved_from_the_ledger'), carried, spec.actor, 'switch')
+        s.carried = math.max(0, balances[org.id] or 0)
+        if s.carried > 0 then
+            local ok, added = pcall(function() return Bank().addAccountMoney(org.job, s.carried) end)
+            if not ok or not added then return finish(false, 'refused') end
+            balances[org.id] = (balances[org.id] or 0) - s.carried
         end
     elseif not abandoned then
-        carried = math.max(0, bankBalance(org) or 0)
-        if carried > 0 then
-            local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, carried) end)
+        local held = bankBalance(org)
+        if held == nil then return finish(false, 'refused') end
+        s.carried = math.max(0, held)
+        if s.carried > 0 then
+            local ok, removed = pcall(function() return Bank().removeAccountMoney(org.job, s.carried) end)
             if not ok or not removed then return finish(false, 'refused') end
-            history(org, L('org_funds.moved_to_the_ledger'), -carried, spec.actor, 'switch')
-            write('out', 'bank', -carried)
-            local wrote, inserted = write('in', 'internal', carried)
-            if not wrote or not inserted then
-                pcall(function() return Bank().addAccountMoney(org.job, carried) end)
-                return finish(false, 'refused')
-            end
-            balances[org.id] = (balances[org.id] or 0) + carried
+            balances[org.id] = (balances[org.id] or 0) + s.carried
         end
     end
-    local wrote = Storage.writeStaffMeta and pcall(Storage.writeStaffMeta, META, CODE[to])
-    if not wrote then
-        Log.problem('warning: the funds backend switch was not kept by the store; it holds until the next start')
+    local item = intent({ how = 'switch', ref = markerRef(org), org = orgRef(org), switch = s })
+    backends[org.id] = to
+    accountMade[org.id] = nil
+    if s.carried > 0 then
+        history(org, to == 'bank' and L('org_funds.moved_from_the_ledger') or L('org_funds.moved_to_the_ledger'),
+            to == 'bank' and s.carried or -s.carried, spec.actor, 'switch', true)
     end
-    backend = to
-    accountMade = false
-    -- Every row read again from the store, the balance with them.
-    loaded = false
-    known, absent = {}, {}
-    Funds.load(org)
-    return finish(true, nil, { from = from, to = to, carried = carried, abandoned = abandoned or nil })
+    local wrote, err = pcall(switchRows, org, s)
+    if not wrote then
+        -- The money has moved: the rows are written by the server once the
+        -- store answers (the item, now open), and this process already
+        -- keeps the funds where they went.
+        Log.problem(('warning: the funds backend switch of %s moved %d but its rows were not written (%s); '
+            .. 'they are written once the database answers'):format(tostring(org.id), s.carried, tostring(err)))
+        if item and Review and Review.open then
+            item.known.error = tostring(err)
+            pcall(Review.open, item)
+        end
+    else
+        letGo(item)
+    end
+    return finish(true, nil, { from = from, to = to, carried = s.carried, abandoned = abandoned or nil })
 end
 
 --- The ledger, newest first, a page at a time.

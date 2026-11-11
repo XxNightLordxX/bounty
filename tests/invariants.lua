@@ -228,6 +228,37 @@ local function auditAtRest(store)
             for org, total in pairs(totals) do
                 if total < 0 then note('organisation funds below zero', tostring(org)) end
             end
+            -- Step 8d: what the money sweep fixed stays fixed. A give the
+            -- funds paid out is either handed over (':paid') or given back
+            -- (':back'), never both; a cut given back is its own cut, once;
+            -- a switch writes its 'out' row before its 'in' row; a backend
+            -- marker moves nothing and names a backend.
+            local byId = {}
+            for _, row in ipairs(funds) do byId[tostring(row.id)] = row end
+            for id, row in pairs(byId) do
+                local base = id:match('^(.+):paid$')
+                if base and byId[base .. ':back'] and (row.kind == 'give_paid' or row.kind == 'salary_paid') then
+                    note('an organisation give both handed over and given back', base)
+                end
+                local line = id:match('^cut:(.+):back$')
+                if line and row.kind == 'cut_back' then
+                    local cut = byId['cut:' .. line]
+                    if not cut then
+                        note('an organisation cut given back that was never taken', id)
+                    elseif -(tonumber(row.amount) or 0) ~= (tonumber(cut.amount) or 0) or cut.org_id ~= row.org_id then
+                        note('an organisation cut given back other than it was taken', id)
+                    end
+                end
+                local stamp = id:match('^switch:(.+):in$')
+                if stamp and not byId['switch:' .. stamp .. ':out'] then
+                    note('a funds switch into a backend with nothing out of the other', id)
+                end
+                if row.kind == 'backend' and ((tonumber(row.amount) or 0) ~= 0
+                    or (row.backend ~= 'internal' and row.backend ~= 'bank')
+                    or id ~= ('backend:' .. tostring(row.org_id)):sub(1, 96)) then
+                    note('an organisation backend marker that moves money or names no backend', id)
+                end
+            end
         end
     end
 end

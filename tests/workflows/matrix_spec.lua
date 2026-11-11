@@ -469,4 +469,116 @@ describe('workflow matrix: the crash-matrix fixes (step 8b)', function()
     end)
 end)
 
+--------------------------------------------------------------------------
+-- Step 8d: the money sweep's crash windows (sweep 8, M1, M5, M9, M11),
+-- each pinned at the statement it is cut at
+--------------------------------------------------------------------------
+
+local FUNDS_ROW = 'INSERT INTO crimson_org_funds'
+
+describe('workflow matrix: the money sweep fixes (step 8d)', function()
+    W.it('M11: a crash after a bonus\'s funds row, before the member is paid: the retry pays it once', function()
+        -- The retry was answered "repeated" and paid nothing: 1,500 gone.
+        local i, k = awaitOf(F.orgmoney, 'shipped', 'bonus', FUNDS_ROW, 1)
+        F.run(F.orgmoney, 'mysql', 'shipped', 'crash', nil, nil, { await = { step = i, k = k, phase = 'post' } })
+        eq(#W.audit('org_bonus'), 1, 'paid and audited once (F.run counts the money)')
+    end)
+
+    W.it('M11: a crash after a withdrawal\'s funds row, before the boss is paid: the retry pays it once', function()
+        local i, k = awaitOf(F.orgmoney, 'shipped', 'withdraw', FUNDS_ROW, 1)
+        F.run(F.orgmoney, 'mysql', 'shipped', 'crash', nil, nil, { await = { step = i, k = k, phase = 'post' } })
+        eq(#W.audit('org_funds_withdraw'), 1, 'paid and audited once')
+    end)
+
+    W.it('M11: a crash after the bonus was handed over, before its marker: never paid twice', function()
+        local i, k = awaitOf(F.orgmoney, 'shipped', 'bonus', FUNDS_ROW, 2)
+        local ctx = F.run(F.orgmoney, 'mysql', 'shipped', 'crash', nil, nil, { await = { step = i, k = k, phase = 'pre' } })
+        eq(W.everyone[W.CAST.hitman2.cid].PlayerData.money.bank - ctx.recruitBefore, ctx.bonus, 'paid once')
+        truthy(require('server.org.funds').byRef('bonus:' .. W.CAST.staff.cid .. ':om-bonus:paid'),
+            'its marker written at the next start')
+    end)
+
+    W.it('M5: a crash inside the backend switch, at its first row, is finished at the next start', function()
+        -- The money had left Renewed-Banking and no row named it: the whole
+        -- balance was gone.
+        for _, phase in ipairs({ 'pre', 'post' }) do
+            local i, k = awaitOf(F.orgmoney, 'shipped', 'switch', FUNDS_ROW, 1)
+            local ctx = F.run(F.orgmoney, 'mysql', 'shipped', 'crash', nil, nil,
+                { await = { step = i, k = k, phase = phase } })
+            eq(require('server.org.funds').backend(W.s.org.current()), ctx.to, phase .. ': switched')
+            eq(#keptKeys('reviewKept:'), 0, phase .. ': nothing left kept for the next start')
+        end
+    end)
+
+    W.it('M1/M5: one organisation\'s switch cut at its rows is finished; the other\'s funds stay where they are', function()
+        local staff = W.CAST.staff.source
+        local ctx, start = crashIn(function()
+            W.opOk(staff, 'setSetting', { key = 'Organisation.Enabled', value = true }, 'org on')
+            W.opOk(staff, 'setSetting', { key = 'Organisation.SeveralOrganisations', value = true }, 'several')
+            W.opOk(staff, 'orgSetup', {}, 'org setup')
+            W.opOk(staff, 'orgCreate', { job = 'syndicate', label = 'Syn' }, 'a second organisation')
+            W.opOk(staff, 'orgFundsMove', { direction = 'deposit', amount = 4000, reason = 'a', nonce = 'a1' }, 'a')
+            W.opOk(staff, 'orgFundsMove', { org = 'syndicate', direction = 'deposit', amount = 6000, reason = 'b',
+                nonce = 'b1' }, 'b')
+            W.tick(1)
+            local Funds = require('server.org.funds')
+            return { from = Funds.backend(W.s.org.current()) }
+        end, function(c)
+            c.to = c.from == 'bank' and 'internal' or 'bank'
+            W.opOk(staff, 'orgFundsBackend', { backend = c.to }, 'staff move the first')
+        end, FUNDS_ROW, 'post')
+        local Funds = require('server.org.funds')
+        local a, b = W.s.org.current(), W.s.org.byId('syndicate')
+        truthy(b, 'the second is kept')
+        eq(Funds.backend(a), ctx.to or (ctx.from == 'bank' and 'internal' or 'bank'), 'the first switched')
+        eq(Funds.balance(a), 4000, 'its balance carried once')
+        eq(Funds.backend(b), ctx.from, 'the second where it was')
+        eq(Funds.balance(b), 6000, 'its balance untouched')
+        local _ = start
+    end)
+
+    W.it('M9: an armory take whose AddItem raised after placing stands, once, across a restart', function()
+        W.boot('mysql', 'shipped', function()
+            Config.Organisation.Enabled = true
+            Config.Organisation.Armory = true
+            Config.Organisation.ArmoryItems = { 'lockpick' }
+            Config.Organisation.ArmoryAtOffice = false
+        end)
+        W.cast(W.s)
+        local staff = W.CAST.staff.source
+        W.opOk(staff, 'orgSetup', {}, 'org setup')
+        W.opOk(staff, 'orgMemberHire', { subject = W.CAST.hitman2.cid, grade = 0 }, 'hire a recruit')
+        local member = W.CAST.hitman2
+        local p = Env.players[member.source]
+        p._inventory[#p._inventory + 1] = { name = 'lockpick', count = 4, slot = 40 }
+        local who = { cid = member.cid, source = member.source }
+        truthy(W.s.org.armoryDeposit(who, 40, 4), 'put in')
+        truthy(W.s.org.armoryLimit({ staff = true, cid = W.CAST.staff.cid }, 0, 5), 'a limit')
+        local org = W.s.org.current()
+        local stash = Env.stashes['crimson_armory_' .. org.id]
+        local function count(list)
+            local n = 0
+            for _, sl in ipairs(list or {}) do if sl.name == 'lockpick' then n = n + sl.count end end
+            return n
+        end
+        local total = count(p._inventory) + count(stash._inventory)
+        local held = count(p._inventory)
+        local inv = Natives.exportTables['ox_inventory']
+        local real = inv.AddItem
+        inv.AddItem = function(self, dst, name, n, metadata)
+            local r = real(self, dst, name, n, metadata)
+            if type(dst) == 'number' then error('ox_inventory: the sync raised after placing', 0) end
+            return r
+        end
+        local ok = W.s.org.armoryWithdraw(who, stash._inventory[1].slot, 3)
+        inv.AddItem = real
+        truthy(ok, 'the take stands')
+        eq(count(p._inventory) - held, 3, 'the member has the three')
+        eq(count(p._inventory) + count(stash._inventory), total, 'none copied back into the stash')
+        W.restart(W.s, false)
+        W.tick(2, 30)
+        eq(count(Env.players[member.source]._inventory) + count(stash._inventory), total, 'and none after a crash')
+    end)
+end)
+
 return W

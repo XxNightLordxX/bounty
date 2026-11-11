@@ -130,7 +130,7 @@ describe('organisation review: the funds', function()
         Natives.resourceStates['Renewed-Banking'] = 'missing'
         s.org.Funds.init({ storage = s.storage, audit = s.audit })
         s.org.Funds.load(org)
-        eq(s.org.Funds.backend(), 'bank', 'still the bank')
+        eq(s.org.Funds.backend(org), 'bank', 'still the bank')
         falsy(s.org.withdraw(BOSS, 100, 'x', 'w'), 'and refused while it is missing')
     end)
 
@@ -142,12 +142,12 @@ describe('organisation review: the funds', function()
         local reply = W.ask(6, 'orgFundsBackend', { backend = 'internal' })
         eq(reply.ok, true, tostring(reply.message))
         eq(QbxJobs.bank.hitman, 0, 'the bank account emptied')
-        eq(s.org.Funds.backend(), 'internal')
+        eq(s.org.Funds.backend(org), 'internal')
         eq(s.org.Funds.balance(org), 2500, 'the ledger holds what the bank did, once')
         -- A restart reads the same: the bank's own rows are not summed.
         s.org.Funds.init({ storage = s.storage, audit = s.audit })
         s.org.Funds.load(org)
-        eq(s.org.Funds.backend(), 'internal')
+        eq(s.org.Funds.backend(org), 'internal')
         eq(s.org.Funds.balance(org), 2500)
         -- And back again.
         eq(W.ask(6, 'orgFundsBackend', { backend = 'bank' }).ok, true)

@@ -120,6 +120,7 @@ Org.ERR = {
     NAME_TAKEN = 'org_name_taken', NAME_BLOCKED = 'org_name_blocked', FEATURE_OFF = 'org_feature_off',
     RESERVED = 'org_reserved', APPROVAL = 'org_approval', PROBATION = 'org_probation',
     OTHER_ORG = 'org_other_org', TIER = 'org_tier',
+    BANK_REFUSED = 'org_bank_refused', NO_ACCOUNT = 'org_no_account', LEFT_FOR_STAFF = 'org_left_for_staff',
 }
 local ERR = Org.ERR
 
@@ -154,6 +155,9 @@ local MESSAGES = {
     org_other_org = L('org.they_are_a_member_of_another'),
     org_tier = L('org.the_organisations_reputation_does_not_unlock'),
     invalid_input = L('org.check_what_was_entered'),
+    org_bank_refused = L('org.renewed_banking_refused_it_nothing_was'),
+    org_no_account = L('org.renewed_banking_has_no_account_for'),
+    org_left_for_staff = L('org.handing_it_over_raised_and_what'),
 }
 
 ---@param err string
@@ -469,6 +473,9 @@ function Org.boot(live)
         if live and Order[1] then
             Orgs, Order = {}, {}
             Extras.rebuild()
+            -- No dead drop waits for an organisation switched off: their
+            -- payouts go at once (Extras3's hold reads none).
+            Extras3.loaded()
             Org.pushSpotsAll()
         end
         return false
@@ -743,12 +750,16 @@ function Org.authorize(org, who, code)
     return nil
 end
 
-local function record(action, who, detail, contract)
+--- `money`: money or goods moved, so it is a financial row, written
+--- whatever Config.Audit.LogAllActions says (Audit.financial).
+local function record(action, who, detail, contract, money)
     detail = detail or {}
     local cur = Cur()
     detail.org = cur and cur.id or nil
     detail.by = who.staff and 'staff' or 'boss'
-    if who.staff then
+    if money then
+        deps.audit.financial(action, who.cid, contract, detail)
+    elseif who.staff then
         deps.audit.staff(action, who.cid, contract, detail)
     else
         deps.audit.action(action, who.cid, contract, detail)
@@ -1803,7 +1814,24 @@ end
 ---@return integer
 function Org.cutFor(recipientCid, line)
     if type(line) ~= 'table' or type(line.id) ~= 'string' then return 0 end
-    local taken = Funds.taken(line.id)
+    local taken, from, row = Funds.taken(line.id)
+    if taken > 0 and from ~= nil and from ~= recipientCid then
+        -- Taken on a give to the member that never arrived, and the line
+        -- goes to somebody else now (back to its placer): the cut is given
+        -- back out of the funds and the line goes whole. Where the funds
+        -- cannot give it back now, it stays taken (the line goes less it),
+        -- on the record.
+        local org = Orgs[row.org_id or '']
+        local ok = org and Funds.cutBack(org, line.id, taken, recipientCid, line.contract_id)
+        if ok then
+            deps.audit.financial('org_cut_given_back', recipientCid, line.contract_id, { org = org.id,
+                line = line.id, amount = taken, member = from })
+            return 0
+        end
+        deps.audit.financial('org_cut_kept', recipientCid, line.contract_id, { org = row.org_id,
+            line = line.id, amount = taken, member = from })
+        return taken
+    end
     if taken > 0 or not Feature.on('Organisation') then return taken end
     if not Cur() then return 0 end
     if (tonumber(line.deliver_arrived) or 0) > 0 then return 0 end
@@ -1818,7 +1846,9 @@ function Org.cutFor(recipientCid, line)
     local pct, kind = 0, nil
     if line.id:sub(1, 5) == 'prem:' then
         pct, kind = tonumber(split.buyout_pct) or 0, 'buyout'
-    elseif line.portion == CH.PORTION.BASELINE or line.portion == CH.PORTION.BONUS then
+    elseif Util.payoutPortion(line) then
+        -- The baseline or the bonus, or the part of either handed over
+        -- early (body disposal's PayNowPercent: an owed split of it).
         pct, kind = tonumber(split.payout_pct) or 0, 'payout'
     elseif line.portion == CH.PORTION.STAKE and line.staker ~= recipientCid then
         pct, kind = tonumber(split.stake_pct) or 0, 'stake'
@@ -2035,8 +2065,141 @@ function Org.fundsView(who, limit)
     if not who.staff then
         for _, r in ipairs(rows) do r.actor = nil end
     end
-    return true, nil, { balance = Funds.balance(org), bank = Funds.usesBank(), backend = Funds.backend(),
-        ready = Funds.ready(), rows = rows }
+    return true, nil, { balance = Funds.balance(org), bank = Funds.usesBank(org), backend = Funds.backend(org),
+        ready = Funds.ready(org), rows = rows }
+end
+
+-- Money the funds pay out to a member (a bonus, a withdrawal, a salary):
+-- the debit row first (Funds.debit), then the give, decided as every other
+-- give is (Util.credit): by the balance read either side where AddMoney
+-- raised, since qbx_core adds first and its save, log and inventory hooks
+-- can raise after the money moved. Arrived: a marker row says so (kept on
+-- this machine before it is awaited, Funds.willMark). Refused, or raised
+-- with nothing arrived: given back to the funds (':back'), and a give-back
+-- the funds refuse is kept and tried again every tick
+-- (settings.payroll.refunds). Raised with part, or no telling, arrived:
+-- left for staff (review org_funds_give_raised), never given back blind. A
+-- crash inside the give is left for staff at the next start
+-- (Funds.giving); a debit row with neither a marker nor that never
+-- reached the give, and the retry pays it (Funds.marksKept).
+
+--- Hand `amount` to a member's `account`: in the city through Util.credit,
+--- away by their citizen id (no balance to read: a raise is not known).
+---@return string how 'paid' | 'refused' | 'unknown'
+---@return table|nil raise { error, arrived, before }
+local function giveMember(cid, account, amount, label)
+    local actor = deps.identity.byCitizenId(cid)
+    if actor and actor.player then
+        local credited, raised, arrived, before = Util.credit(actor.player, account, amount, label)
+        if credited then return 'paid' end
+        if raised == nil or arrived == 0 then return 'refused' end
+        return 'unknown', { error = raised, arrived = arrived, before = before }
+    end
+    if account == 'cash' then return 'refused' end
+    local ok, paid = pcall(function() return Framework().AddMoney(cid, account, amount, label) end)
+    if ok then return paid and 'paid' or 'refused' end
+    return 'unknown', { error = tostring(paid) }
+end
+
+--- The funds given back what a give did not hand over: once (':back'); a
+--- give-back they refuse is kept and tried again every tick (Org.payrollTick).
+local function giveBack(org, g)
+    local back, berr = Funds.credit(org, g.amount, { ref = g.ref .. ':back', kind = 'refund', actor = g.cid,
+        reason = g.backReason, title = g.backTitle })
+    if back then return true end
+    org.settings.payroll.refunds[g.ref] = { cid = g.cid, amount = g.amount, period = g.period,
+        reason = g.backReason, title = g.backTitle }
+    saveOrgRow(org)
+    deps.audit.financial(g.failAction or 'org_funds_giveback_failed', g.cid, nil, { org = org.id, amount = g.amount,
+        period = g.period, ref = g.ref, give = g.kind, why = berr or 'refused' })
+    return false
+end
+
+--- Hand over what the funds paid out (its debit row written), and decide
+--- by what arrived. The give is kept on this machine around it
+--- (Funds.giving) and its marker before that is let go (Funds.willMark).
+---@param g table { kind, ref, cid, account, amount, label, paidKind, paidReason, reviewKind,
+---   backReason, backTitle, failAction, unmarkedAction, period }
+---@return string how 'paid' | 'refused' | 'unknown'
+---@return table|nil raise
+local function handOver(org, g)
+    local unsure = Funds.giving(org, g)
+    local how, raise = giveMember(g.cid, g.account, g.amount, g.label)
+    if how == 'paid' then
+        local mark = { kind = g.paidKind or 'give_paid', actor = g.cid, reason = g.paidReason or g.kind }
+        local kept = Funds.willMark(org, g.ref .. ':paid', mark)
+        Funds.settled(unsure)
+        if Funds.mark(org, g.ref .. ':paid', mark) then
+            Funds.settled(kept)
+        else
+            PaidHere[g.ref] = true
+            deps.audit.financial(g.unmarkedAction or 'org_funds_give_unmarked', g.cid, nil, { org = org.id,
+                amount = g.amount, period = g.period, ref = g.ref, give = g.kind })
+        end
+        return 'paid'
+    end
+    if how == 'refused' then
+        Funds.settled(unsure)
+        giveBack(org, g)
+        return 'refused'
+    end
+    -- Part of it, or no telling, arrived: left for staff, with what the
+    -- member held before and what arrived, so a staff Pay gives the rest.
+    raise = raise or {}
+    deps.audit.financial('org_funds_give_raised', g.cid, nil, { org = org.id, amount = g.amount, ref = g.ref,
+        give = g.kind, period = g.period, error = raise.error, arrived = raise.arrived, before = raise.before })
+    if not Funds.mark(org, g.ref .. ':review', { kind = g.reviewKind or 'give_review', actor = g.cid,
+        reason = L('org.left_for_staff_handing_it_over') }) then
+        PaidHere[g.ref] = true
+    end
+    local item = unsure or { cids = { member = g.cid }, amount = g.amount,
+        account = g.account == 'cash' and 'cash' or 'bank' }
+    item.kind = 'org_funds_give_raised'
+    item.known = { org = org.id, ref = g.ref, give = g.kind, period = g.period, error = raise.error,
+        arrived = raise.arrived, before = raise.before }
+    if deps.review and deps.review.open then pcall(deps.review.open, item) end
+    return 'unknown', raise
+end
+
+--- A bonus's or a withdrawal's debit row found already written (the same
+--- request again): what became of its give. Paid, given back, kept to give
+--- back, or left for staff: answered as the first was. Otherwise the
+--- server stopped between the debit and the give: where every give is kept
+--- before its marker (Funds.marksKept, mysql) it never reached the member,
+--- and is handed over now; elsewhere whether it did is not known, so it is
+--- left for staff once, never paid again on a guess.
+local function settleGive(org, g)
+    local ref = g.ref
+    if Paying[ref] then return fail(ERR.BUSY) end
+    if PaidHere[ref] or Funds.byRef(ref .. ':paid') or Funds.byRef(ref .. ':back')
+        or org.settings.payroll.refunds[ref] or Funds.byRef(ref .. ':review')
+        or Funds.markWaiting(ref .. ':paid') then
+        return true, nil, { repeated = true }
+    end
+    local row = Funds.byRef(ref)
+    local debited = row and -math.floor(tonumber(row.amount) or 0) or 0
+    if debited <= 0 or not g.cid then return true, nil, { repeated = true } end
+    g.amount = debited
+    if Funds.marksKept() then
+        Paying[ref] = true
+        local ok, how = pcall(handOver, org, g)
+        Paying[ref] = nil
+        if not ok then error(how, 0) end
+        if how == 'paid' then
+            record(g.action, g.who, g.detail, nil, true)
+            return true, nil, { amount = debited, repeated = true }
+        end
+        return fail(how == 'refused' and ERR.REFUSED or ERR.LEFT_FOR_STAFF)
+    end
+    deps.audit.financial('org_funds_give_unconfirmed', g.cid, nil, { org = org.id, amount = debited, ref = ref,
+        give = g.kind })
+    if deps.review and deps.review.open then
+        pcall(deps.review.open, { kind = 'org_funds_give_unconfirmed', cids = { member = g.cid }, amount = debited,
+            account = g.account == 'cash' and 'cash' or 'bank', known = { org = org.id, ref = ref, give = g.kind } })
+    end
+    Funds.mark(org, ref .. ':review', { kind = 'give_review', actor = g.cid,
+        reason = L('org.left_for_staff_not_known_whether') })
+    return fail(ERR.LEFT_FOR_STAFF)
 end
 
 --- A member's own money into the funds (C6): taken from them first, given
@@ -2051,7 +2214,7 @@ function Org.deposit(who, amount, account, nonce)
     local ref = nonceRef('dep', who, nonce)
     if not amount or not account or not ref then return fail(ERR.INVALID) end
     if Funds.byRef(ref) then return true, nil, { repeated = true } end
-    if not Funds.ready() then return fail(ERR.BANK_DOWN) end
+    if not Funds.ready(org) then return fail(ERR.BANK_DOWN) end
     local actor = deps.identity.resolve(who.source)
     if not actor or actor.cid ~= who.cid then return fail(ERR.NOT_MEMBER) end
     if not Util.charge(actor.player, account, amount) then return fail(CH.ERR.INSUFFICIENT) end
@@ -2061,12 +2224,27 @@ function Org.deposit(who, amount, account, nonce)
     local ok, ferr = Funds.credit(org, amount, { ref = ref, kind = 'deposit', actor = who.cid,
         reason = account, title = L('org.member_deposit'), charged = charged })
     if not ok then
-        Util.credit(actor.player, account, amount)
+        local back, raised, arrived, before = Util.credit(actor.player, account, amount)
         Funds.settled(charged)
-        return fail(ferr == 'busy' and ERR.BUSY or ferr == 'bank_down' and ERR.BANK_DOWN or ERR.REFUSED)
+        if not back then
+            -- The member was charged and the give-back did not land: owed
+            -- to them (paid at the next retry or login), or left for staff
+            -- where part of it, or no telling, arrived; on the record.
+            local raise = raised and { error = raised, arrived = arrived, before = before } or nil
+            local owner = Util.mintId(deps.storage.nextId, 'odep', function(candidate)
+                return #(deps.storage.readEscrow(candidate) or {}) > 0
+            end)
+            local okOwe, line = false, nil
+            if owner and deps.bailout and deps.bailout.owe then
+                okOwe, line = pcall(deps.bailout.owe, who.cid, owner, amount, account, 'org_funds_deposit_refund', raise)
+            end
+            deps.audit.financial('org_funds_deposit_refund_failed', who.cid, nil, { org = org.id, amount = amount,
+                account = account, ref = ref, owed = okOwe and line or nil, error = raised, arrived = arrived })
+        end
+        return fail(ferr == 'busy' and ERR.BUSY or ferr == 'bank_down' and ERR.BANK_DOWN or ERR.BANK_REFUSED)
     end
     Funds.settled(charged)
-    record('org_funds_deposit', who, { amount = amount, account = account })
+    record('org_funds_deposit', who, { amount = amount, account = account }, nil, true)
     return true, nil, { amount = amount }
 end
 
@@ -2082,7 +2260,12 @@ function Org.withdraw(who, amount, reason, nonce)
     reason = cleanName(reason, 160)
     local ref = nonceRef('wd', who, nonce)
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
-    if Funds.byRef(ref) then return true, nil, { repeated = true } end
+    local detail = { amount = amount, reason = reason, staff = who.staff or nil }
+    local g = { kind = 'withdraw', action = 'org_funds_withdraw', who = who, detail = detail, ref = ref,
+        cid = not who.staff and who.cid or nil, account = 'cash', amount = amount,
+        label = L('org.organisation_withdrawal'), backReason = L('org.withdrawal_not_paid'),
+        backTitle = L('org.withdrawal_returned') }
+    if Funds.byRef(ref) or Paying[ref] then return settleGive(org, g) end
     -- The day's cap is checked by Funds.debit as it reserves the money, so
     -- two withdrawals at once both count (their rows are not written yet).
     local cap
@@ -2092,18 +2275,21 @@ function Org.withdraw(who, amount, reason, nonce)
     end
     local actor = not who.staff and deps.identity.resolve(who.source) or nil
     if not who.staff and (not actor or actor.cid ~= who.cid) then return fail(ERR.NOT_MEMBER) end
+    Paying[ref] = true
     local ok, ferr = Funds.debit(org, amount, { ref = ref, kind = 'withdraw', actor = who.cid, reason = reason,
         title = L('org.organisation_withdrawal'), cap = cap })
-    if not ok then return fail(fundsErr(ferr)) end
-    if actor then
-        local paid = Util.credit(actor.player, 'cash', amount)
-        if not paid then
-            Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = who.cid,
-                reason = L('org.withdrawal_not_paid'), title = L('org.withdrawal_returned') })
-            return fail(ERR.REFUSED)
-        end
+    if not ok then
+        Paying[ref] = nil
+        return fail(fundsErr(ferr))
     end
-    record('org_funds_withdraw', who, { amount = amount, reason = reason, staff = who.staff or nil })
+    if actor then
+        local ran, how = pcall(handOver, org, g)
+        Paying[ref] = nil
+        if not ran then error(how, 0) end
+        if how ~= 'paid' then return fail(how == 'refused' and ERR.REFUSED or ERR.LEFT_FOR_STAFF) end
+    end
+    Paying[ref] = nil
+    record('org_funds_withdraw', who, detail, nil, true)
     return true, nil, { amount = amount }
 end
 
@@ -2136,25 +2322,29 @@ function Org.bonus(who, cid, amount, reason, nonce)
     local ref = nonceRef('bonus', who, nonce)
     if not member then return fail(ERR.NOT_FOUND) end
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
-    if Funds.byRef(ref) then return true, nil, { repeated = true } end
+    local detail = { member = cid, amount = amount, reason = reason }
+    local g = { kind = 'bonus', action = 'org_bonus', who = who, detail = detail, ref = ref, cid = cid,
+        account = 'bank', amount = amount, label = L('org.crimson_hitman_organisation_bonus'),
+        backReason = L('org.bonus_not_paid'), backTitle = L('org.bonus_returned') }
+    if Funds.byRef(ref) or Paying[ref] then return settleGive(org, g) end
     local cap
     if not who.staff then
         if cid == who.cid then return fail(ERR.SELF) end
         if amount > Powers.limit(org, 'BonusMax') then return fail(ERR.BOUNDS) end
         cap = { limit = Powers.limit(org, 'BonusPerDay'), since = now() - 86400 }
     end
+    Paying[ref] = true
     local ok, ferr = Funds.debit(org, amount, { ref = ref, kind = 'bonus', actor = who.cid, reason = reason,
         title = L('org.bonus'), cap = cap })
-    if not ok then return fail(fundsErr(ferr)) end
-    local paidOk, paid = pcall(function()
-        return Framework().AddMoney(cid, 'bank', amount, L('org.crimson_hitman_organisation_bonus'))
-    end)
-    if not paidOk or not paid then
-        Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = who.cid,
-            reason = L('org.bonus_not_paid'), title = L('org.bonus_returned') })
-        return fail(ERR.REFUSED)
+    if not ok then
+        Paying[ref] = nil
+        return fail(fundsErr(ferr))
     end
-    record('org_bonus', who, { member = cid, amount = amount, reason = reason })
+    local ran, how = pcall(handOver, org, g)
+    Paying[ref] = nil
+    if not ran then error(how, 0) end
+    if how ~= 'paid' then return fail(how == 'refused' and ERR.REFUSED or ERR.LEFT_FOR_STAFF) end
+    record('org_bonus', who, detail, nil, true)
     return true, nil, { amount = amount }
 end
 
@@ -2167,10 +2357,11 @@ function Org.fundsBackend(who, to, abandon)
     if not who.staff then return fail(ERR.NO_POWER) end
     local ok, ferr, done = Funds.switch(org, to, { actor = who.cid, abandon = abandon == true })
     if not ok then
-        return fail(ferr == 'already' and ERR.ALREADY or ferr == 'invalid' and ERR.INVALID or fundsErr(ferr))
+        return fail(ferr == 'already' and ERR.ALREADY or ferr == 'invalid' and ERR.INVALID
+            or ferr == 'no_account' and ERR.NO_ACCOUNT or ferr == 'refused' and ERR.BANK_REFUSED or fundsErr(ferr))
     end
     record('org_funds_backend', who, { from = done.from, to = done.to, carried = done.carried,
-        abandoned = done.abandoned })
+        abandoned = done.abandoned }, nil, true)
     return true, nil, done
 end
 
@@ -2307,32 +2498,18 @@ end
 --- marked paid; given back to the funds if the bank refuses it. The give
 --- is kept before the marker is awaited (Funds.willMark), so a crash in
 --- between is marked at the next start rather than left for staff.
+---
+--- Decided by what arrived, as a bonus is (handOver): a raise after the
+--- salary reached the bank is paid, never given back to the funds as well.
 local function payMember(org, member, amount, period, ref)
-    local paidOk, paid = pcall(function()
-        return Framework().AddMoney(member.cid, 'bank', amount, L('org.crimson_hitman_organisation_salary'))
-    end)
-    if not paidOk or not paid then
-        local back, berr = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund', actor = member.cid,
-            reason = L('org.salary_not_paid'), title = L('org.salary_returned') })
-        if not back then
-            -- Kept with the settings and tried again every tick (Org.payrollTick).
-            org.settings.payroll.refunds[ref] = { cid = member.cid, amount = amount, period = period }
-            saveOrgRow()
-            deps.audit.financial('org_payroll_refund_failed', member.cid, nil, { org = org.id, amount = amount,
-                period = period, ref = ref, why = berr or 'refused' })
-        end
-        return 'failed', 'bank'
-    end
-    local mark = { kind = 'salary_paid', actor = member.cid, reason = L('org.paid_to_bank') }
-    local kept = Funds.willMark(org, ref .. ':paid', mark)
-    if not Funds.mark(org, ref .. ':paid', mark) then
-        PaidHere[ref] = true
-        deps.audit.financial('org_payroll_unmarked', member.cid, nil, { org = org.id, amount = amount,
-            period = period, ref = ref })
-    else
-        Funds.settled(kept)
-    end
-    return 'paid'
+    local how = handOver(org, { kind = 'salary', ref = ref, cid = member.cid, account = 'bank', amount = amount,
+        label = L('org.crimson_hitman_organisation_salary'), paidKind = 'salary_paid',
+        paidReason = L('org.paid_to_bank'), reviewKind = 'salary_review', backReason = L('org.salary_not_paid'),
+        backTitle = L('org.salary_returned'), failAction = 'org_payroll_refund_failed',
+        unmarkedAction = 'org_payroll_unmarked', period = period })
+    if how == 'paid' then return 'paid' end
+    if how == 'refused' then return 'failed', 'bank' end
+    return 'unconfirmed', nil, amount
 end
 
 --- A salary's funds row found already written (Funds.debit 'repeat'): what
@@ -2385,16 +2562,16 @@ local function payOne(org, member, amount, period)
         Paying[ref] = nil
         return ferr == 'short' and 'skipped' or 'failed', ferr
     end
-    local how, why = payMember(org, member, amount, period, ref)
+    local how, why, debited = payMember(org, member, amount, period, ref)
     Paying[ref] = nil
-    return how, why
+    return how, why, debited
 end
 
 --- Give back the salaries a bank refused whose give-back failed, where the
 --- funds can move: each once (its ':back' reference), audited.
 local function retryRefunds(org)
     local pay = org.settings.payroll
-    if not next(pay.refunds) or not Funds.ready() then return end
+    if not next(pay.refunds) or not Funds.ready(org) then return end
     local changed = false
     for ref, r in pairs(pay.refunds) do
         local amount = type(r) == 'table' and Funds.amount(r.amount)
@@ -2402,7 +2579,8 @@ local function retryRefunds(org)
             pay.refunds[ref], changed = nil, true
         else
             local ok, _, repeated = Funds.credit(org, amount, { ref = ref .. ':back', kind = 'refund',
-                actor = r.cid, reason = L('org.salary_not_paid'), title = L('org.salary_returned') })
+                actor = r.cid, reason = type(r.reason) == 'string' and r.reason or L('org.salary_not_paid'),
+                title = type(r.title) == 'string' and r.title or L('org.salary_returned') })
             if ok or repeated then
                 pay.refunds[ref], changed = nil, true
                 deps.audit.financial('org_payroll_refunded', r.cid, nil, { org = org.id, amount = amount,
@@ -2436,12 +2614,15 @@ end
 ---@param at integer|nil os.time() (the tests)
 ---@return table|nil what happened { paid, skipped, failed, unconfirmed, total } when it ran
 function Org.payrollTick(at)
-    if not Org.payrollOn() then return nil end
+    if not Feature.on('Organisation') then return nil end
     local org = Cur()
     if not org then return nil end
-    local ts = at or now()
     local pay = org.settings.payroll
+    -- A give-back the funds refused (a salary's, a bonus's, a withdrawal's)
+    -- is tried again whether payroll is on or not.
     if next(pay.refunds) then retryRefunds(org) end
+    if not Org.payrollOn() then return nil end
+    local ts = at or now()
     local due = tonumber(pay.nextAt)
     if not due then
         -- The first pay day: a whole period from when it was turned on.
@@ -2450,7 +2631,7 @@ function Org.payrollTick(at)
         return nil
     end
     if ts < due then return nil end
-    if not Funds.ready() then return nil end
+    if not Funds.ready(org) then return nil end
     applyPending(org, due)
     local list = {}
     for _, m in pairs(org.members) do list[#list + 1] = m end
@@ -3150,8 +3331,8 @@ function Org.staffView(viewer, canIdentify)
         cuts = Util.copy(org.settings.cuts), limits = limits, officeStaff = officeStaff,
         officeBoss = org.settings.officeBoss, notice = org.settings.notice, access = org.settings.access,
         layout = org.settings.layout,
-        balance = Funds.balance(org), bank = Funds.usesBank(), fundsBackend = Funds.backend(),
-        fundsReady = Funds.ready(), applications = apps and apps.rows or {},
+        balance = Funds.balance(org), bank = Funds.usesBank(org), fundsBackend = Funds.backend(org),
+        fundsReady = Funds.ready(org), applications = apps and apps.rows or {},
         powers = Powers.LIST, warnings = Jobs.checkConvars(),
         codenames = Org.codenamesOn() or nil,
         payroll = Org.payrollOn() and { nextAt = org.settings.payroll.nextAt, lastAt = org.settings.payroll.lastAt,
@@ -3285,7 +3466,15 @@ function Org.removeOrg(who, id)
     if not org then return fail(ERR.NOT_FOUND) end
     if org.id == Order[1] then return fail(ERR.RULE, { message = L('org.the_first_organisation_config_lua_stays') }) end
     if next(org.members) then return fail(ERR.RULE, { message = L('org.it_still_has_members_fire_them') }) end
-    if Funds.balance(org) ~= 0 then return fail(ERR.RULE, { message = L('org.its_funds_are_not_empty_withdraw') }) end
+    -- Empty under either backend: the one it keeps, and what the other
+    -- still holds (the ledger's own rows, the bank's account where it can
+    -- be read), so no money is left where nothing reads it.
+    if not Funds.emptyEverywhere(org) then
+        return fail(ERR.RULE, { message = L('org.its_funds_are_not_empty_withdraw') })
+    end
+    if next(org.settings.drops) then
+        return fail(ERR.RULE, { message = L('org.a_payout_still_waits_at_its') })
+    end
     if next(org.settings.orgContracts) then
         return fail(ERR.RULE, { message = L('org.a_contract_is_still_held_for') })
     end

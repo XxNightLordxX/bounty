@@ -161,7 +161,10 @@
     "org_approval": "Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.",
     "org_probation": "On probation you may not take that contract yet.",
     "org_other_org": "They are a member of another organisation already.",
-    "org_tier": "The organisation's reputation does not unlock contracts worth that much yet."
+    "org_tier": "The organisation's reputation does not unlock contracts worth that much yet.",
+    "org_bank_refused": "Renewed-Banking refused it; nothing was changed.",
+    "org_no_account": "Renewed-Banking has no account for this job and would not make one; nothing was changed.",
+    "org_left_for_staff": "Handing it over raised and what arrived could not be told: it is left for staff to check, and nothing more is paid meanwhile."
   },
   "panel_errors": {
     "no_answer": "The game did not answer that. Try again.",

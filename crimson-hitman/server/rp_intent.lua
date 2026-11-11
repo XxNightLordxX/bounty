@@ -257,7 +257,7 @@ end
 ---@return boolean wait
 function Intent.holds(recipientCid, line)
     if type(line) ~= 'table' then return false end
-    if line.portion ~= CH.PORTION.BASELINE and line.portion ~= CH.PORTION.BONUS then return false end
+    if not Util.payoutPortion(line) then return false end
     if not loaded then load() end
     -- The store could not be read: whether a hold stands is unknown, so
     -- the payout waits until a read succeeds. Answered 'not held', a hold

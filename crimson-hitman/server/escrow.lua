@@ -2585,7 +2585,11 @@ function Escrow.reduceStake(contractId, line, amount, reason)
         source = line.source == 'cash' and 'cash' or 'bank',
         amount = returned,
         state = CH.ESCROW_STATE.HELD,
-        metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount },
+        metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount,
+            -- A split of a payout (body disposal's part paid at once) is
+            -- still that payout (Util.payoutPortion).
+            payoutOf = (line.portion == CH.PORTION.BASELINE or line.portion == CH.PORTION.BONUS)
+                and line.portion or nil },
     }
     Storage.writeEscrow(contractId, { owed })
 

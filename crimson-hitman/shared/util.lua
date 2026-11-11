@@ -856,13 +856,14 @@ end
 ---@return integer|nil arrived after a raise, how much reached the balance: 0
 --- for none, nil when that could not be read
 ---@return integer|nil before the balance before the credit, after a raise
-function Util.credit(player, account, amount)
+---@param reason string|nil what the bank's history says (Util.MONEY_REASON)
+function Util.credit(player, account, amount, reason)
     local src = liveSource(player)
     if not src then return false end
     local before = balance(src, account)
     if not before then return false end
     local ok, gave = pcall(function()
-        return Framework().AddMoney(src, account, amount, Util.MONEY_REASON)
+        return Framework().AddMoney(src, account, amount, reason or Util.MONEY_REASON)
     end)
     if ok then
         if not gave then return false end
@@ -874,6 +875,22 @@ function Util.credit(player, account, amount)
     local credited = arrived ~= nil and arrived >= (tonumber(amount) or 0)
     if credited then persist(player) end
     return credited, tostring(gave), arrived, before
+end
+
+--- The payout portion an escrow line carries: 'baseline' or 'bonus' for
+--- those lines, and for an owed split of one (body disposal's part paid at
+--- once, Escrow.reduceStake marks it `metadata.payoutOf`); nil for anything
+--- else. The organisation's cut, the dead drop and proof of intent treat a
+--- split of a payout as the payout it came from.
+---@param line table
+---@return string|nil portion
+function Util.payoutPortion(line)
+    if type(line) ~= 'table' then return nil end
+    if line.portion == 'baseline' or line.portion == 'bonus' then return line.portion end
+    local meta = line.portion == 'owed' and type(line.metadata) == 'table' and line.metadata or nil
+    local of = meta and meta.payoutOf
+    if of == 'baseline' or of == 'bonus' then return of end
+    return nil
 end
 
 --- The client has no module loader — server/boot.lua's

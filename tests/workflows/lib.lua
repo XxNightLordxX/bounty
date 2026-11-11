@@ -720,7 +720,7 @@ function W.world(s)
     -- bank, counted whole), or the internal ledger.
     local Funds = package.loaded['server.org.funds']
     local org = s.org and s.org.current and s.org.current()
-    if Funds and org and not Funds.usesBank() then
+    if Funds and org and not Funds.usesBank(org) then
         total = total + (tonumber(Funds.balance(org)) or 0)
     end
     for _, amount in pairs(QbxJobs.bank or {}) do total = total + (tonumber(amount) or 0) end

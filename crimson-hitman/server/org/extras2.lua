@@ -52,6 +52,7 @@ local Util = CrimsonBoot.requireShared('util')
 local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local Log = CrimsonBoot.requireShared('log')
 local L = CrimsonBoot.requireShared('locale').t
 
 local Extras2 = {}
@@ -190,6 +191,47 @@ local function slotAt(list, slot)
     return nil
 end
 
+--- How many of an item an inventory (a player's, or the stash) holds, by
+--- name; nil when it cannot be read.
+local function heldCount(inv, name)
+    local ok, items = Integrations.call('inventory', 'GetInventoryItems', inv)
+    if not ok or type(items) ~= 'table' then return nil end
+    local n = 0
+    for _, s in pairs(items) do
+        if type(s) == 'table' and s.name == name then n = n + math.floor(tonumber(s.count) or 0) end
+    end
+    return n
+end
+
+--- Put `n` of an item into an inventory, and say what became of it.
+--- ox_inventory places the item and only then syncs, and the sync can
+--- raise (Escrow.deliver reads the same): a raise is decided by the count
+--- read either side of it. 'placed' (all of it there), 'refused' (none of
+--- it), or 'unknown' (part of it, or a count that cannot be read).
+---@return string how
+local function placeInto(inv, name, n, metadata)
+    local before = heldCount(inv, name)
+    local ok, added = Integrations.call('inventory', 'AddItem', inv, name, n, metadata)
+    if ok and added then return 'placed' end
+    if ok then return 'refused' end
+    local after = heldCount(inv, name)
+    if before and after then
+        if after - before >= n then return 'placed' end
+        if after == before then return 'refused' end
+    end
+    return 'unknown'
+end
+
+--- A move whose put-in raised with part of it, or no telling, there: the
+--- stash and the member's inventory are left as they are, for staff, on
+--- the record (never put back blind: that copied the items).
+local function moveUnknown(org, cid, name, n, dir)
+    deps().audit.financial('org_armory_move_unknown', cid, nil, { org = org.id, item = name, count = n, dir = dir })
+    Log.always(('organisation %s armory: putting %d %s %s raised and what arrived could not be told; '
+        .. 'left as it is, check the stash and the member (/%s)'):format(tostring(org.id), n, tostring(name),
+        dir == 'in' and 'into the stash' or 'into the member\'s inventory', tostring(Config.Admin.Commands.stuck)))
+end
+
 --- A role's limit a day (A2 sets it): items each member of it takes out.
 local function roleLimit(org, grade)
     return math.max(0, math.floor(tonumber(org.settings.armory.limits[tostring(grade)]) or 0))
@@ -318,12 +360,19 @@ function Org.armoryDeposit(actor, slot, n)
         Busy = false
         return fail(ERR.REFUSED, { message = L('org_extras2.the_inventory_would_not_take_it') })
     end
-    local okIn, added = Integrations.call('inventory', 'AddItem', stash, s.name, n, s.metadata)
-    if not (okIn and added) then
-        -- Back to whoever put it in: nothing lost.
-        local back, given = Integrations.call('inventory', 'AddItem', actor.source, s.name, n, s.metadata)
+    local into = placeInto(stash, s.name, n, s.metadata)
+    if into == 'unknown' then
         Busy = false
-        if not (back and given) then
+        moveUnknown(org, actor.cid, s.name, n, 'in')
+        return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_raised_taking_it_it') })
+    end
+    if into == 'refused' then
+        -- Back to whoever put it in: nothing lost.
+        local back = placeInto(actor.source, s.name, n, s.metadata)
+        Busy = false
+        if back == 'unknown' then
+            moveUnknown(org, actor.cid, s.name, n, 'back')
+        elseif back ~= 'placed' then
             deps().audit.financial('org_armory_refund_failed', actor.cid, nil, { org = org.id, item = s.name,
                 count = n, dir = 'in' })
         end
@@ -332,7 +381,7 @@ function Org.armoryDeposit(actor, slot, n)
     Busy = false
     logMove(org, { at = now(), dir = 'in', item = s.name, count = n, cid = actor.cid })
     kit.save()
-    kit.record('org_armory_deposit', { cid = actor.cid }, { item = s.name, count = n })
+    kit.record('org_armory_deposit', { cid = actor.cid }, { item = s.name, count = n }, nil, true)
     return true, nil, { item = s.name, count = n }
 end
 
@@ -378,11 +427,22 @@ function Org.armoryWithdraw(who, slot, n)
         Busy = false
         return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_would_not_give_it') })
     end
-    local okIn, added = Integrations.call('inventory', 'AddItem', who.source, s.name, n, s.metadata)
-    if not (okIn and added) then
-        local back, kept = Integrations.call('inventory', 'AddItem', stash, s.name, n, s.metadata)
+    local into = placeInto(who.source, s.name, n, s.metadata)
+    if into == 'unknown' then
         Busy = false
-        if not (back and kept) then
+        moveUnknown(org, who.cid, s.name, n, 'out')
+        -- It may be theirs now: counted against today's limit.
+        local t = now()
+        for _ = 1, n - beyond do Taken.add(who.cid, t) end
+        for _ = 1, beyond do Managed.add(who.cid, t) end
+        return fail(ERR.REFUSED, { message = L('org_extras2.your_inventory_raised_taking_it_it') })
+    end
+    if into == 'refused' then
+        local back = placeInto(stash, s.name, n, s.metadata)
+        Busy = false
+        if back == 'unknown' then
+            moveUnknown(org, who.cid, s.name, n, 'back')
+        elseif back ~= 'placed' then
             deps().audit.financial('org_armory_refund_failed', who.cid, nil, { org = org.id, item = s.name,
                 count = n, dir = 'out' })
         end
@@ -395,7 +455,7 @@ function Org.armoryWithdraw(who, slot, n)
     logMove(org, { at = t, dir = 'out', item = s.name, count = n, cid = who.cid })
     kit.save()
     kit.record('org_armory_withdraw', who, { item = s.name, count = n, beyond = beyond > 0 and beyond or nil,
-        grade = member.grade })
+        grade = member.grade }, nil, true)
     return true, nil, { item = s.name, count = n }
 end
 
@@ -448,7 +508,7 @@ function Org.armoryStaff(who, dir, spec)
         if not (ok and added) then return fail(ERR.REFUSED, { message = L('org_extras2.the_inventory_would_not_add_it') }) end
         logMove(org, { at = now(), dir = 'in', item = name, count = n, cid = 'staff' })
         kit.save()
-        kit.record('org_armory_stocked', who, { item = name, count = n })
+        kit.record('org_armory_stocked', who, { item = name, count = n }, nil, true)
         return true, nil, { item = name, count = n }
     elseif dir == 'out' then
         local slot = tonumber(spec.slot)
@@ -459,7 +519,7 @@ function Org.armoryStaff(who, dir, spec)
         if not (ok and removed) then return fail(ERR.REFUSED, { message = L('org_extras2.the_inventory_would_not_remove_it') }) end
         logMove(org, { at = now(), dir = 'out', item = s.name, count = n, cid = 'staff' })
         kit.save()
-        kit.record('org_armory_removed', who, { item = s.name, count = n })
+        kit.record('org_armory_removed', who, { item = s.name, count = n }, nil, true)
         return true, nil, { item = s.name, count = n }
     end
     return fail(ERR.INVALID)

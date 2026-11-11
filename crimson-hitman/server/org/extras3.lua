@@ -394,10 +394,13 @@ end
 --- The escrow's gate (Escrow.holdBack): the payout of a drop not yet
 --- collected waits. One next() while none waits.
 ---@return boolean
+--- Only while dead drops are on and the drop's organisation is kept: the
+--- Organisation switched off, or the organisation gone, nothing holds.
 local function holds(recipientCid, line)
     if next(Drops) == nil or type(line) ~= 'table' then return false end
-    if line.portion ~= CH.PORTION.BASELINE and line.portion ~= CH.PORTION.BONUS then return false end
-    return Drops[dropKey(line.contract_id, recipientCid)] ~= nil
+    if not Util.payoutPortion(line) then return false end
+    local id = Drops[dropKey(line.contract_id, recipientCid)]
+    return id ~= nil and on('DeadDrops') and O.byId(id) ~= nil
 end
 
 local function releasesAt(recipientCid, line)
@@ -414,7 +417,7 @@ local function refund(drop)
     local back = 0
     local ok, lines = pcall(d.storage.readEscrow, drop.contract)
     for _, line in ipairs(ok and lines or {}) do
-        if (line.portion == CH.PORTION.BASELINE or line.portion == CH.PORTION.BONUS) and line.owed_to == drop.cid
+        if Util.payoutPortion(line) and line.owed_to == drop.cid
             and line.state == CH.ESCROW_STATE.HELD and not (d.escrow.parked and d.escrow.parked(line)) then
             local okR, _, result = pcall(d.escrow.release, drop.contract, drop.creator, { line = line.id },
                 'deaddrop_refund', function(claimed) return claimed.owed_to == drop.cid end)
@@ -481,7 +484,7 @@ function Org.dropSettle(who, handle, how)
     if how ~= 'release' and how ~= 'refund' then return fail(ERR.INVALID) end
     local drop = org.settings.drops[key]
     finish(org, key, how == 'refund' and 'refund' or 'staff')
-    kit.record('org_drop_settled', who, { how = how }, drop.contract)
+    kit.record('org_drop_settled', who, { how = how }, drop.contract, true)
     return true
 end
 
