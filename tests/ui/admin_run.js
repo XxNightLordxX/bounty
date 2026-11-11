@@ -2577,7 +2577,7 @@ async function main() {
       tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player',
       rules: 'Areas', presets: 'Presets', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
-      orgaccess: 'Contract access', orgnotices: 'Notices', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
+      orgaccess: 'Contract access', orgnotices: 'Notices', orgwork: 'Work & channel', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
       bplimits: 'Limits', bpoffice: 'Delegation & office', 'logs:grants': 'Grant history', locations: 'Map points',
       'logs:targets': 'Audit log', logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
       tools: 'Test tools', help: 'How it works', howto: 'How do I…', permissions: 'Who can do what' };
@@ -3188,7 +3188,7 @@ async function main() {
         await settled();
         sweep(app, 'the tools, run');
         // The new sections too: the organisation, Boss permissions and Locations.
-        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
+        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'logs:org',
           'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'howto']) {
           app.nav(view);
           await settled();
@@ -6070,7 +6070,9 @@ async function main() {
     ['orgSetup', 'orgRename', 'orgLayout', 'orgNotice', 'orgRoleSet', 'orgRoleRemove', 'orgRolePowers',
       'orgMemberHire', 'orgMemberRole', 'orgMemberFire', 'orgMemberSuspend', 'orgMemberLimits', 'orgMemberOverride',
       'bossPermsSet', 'bossPermsRevokeAll', 'bossLimits', 'bossOfficeRule', 'orgCuts', 'orgFundsMove', 'orgAccess',
-      'orgPick', 'placeSet', 'placeRemove', 'orgApplication', 'orgFundsBackend'].forEach(function (op) {
+      'orgPick', 'placeSet', 'placeRemove', 'orgApplication', 'orgFundsBackend', 'orgContractAssign',
+      'orgAcceptDecide', 'orgProbation', 'orgDutyOff', 'orgChannelPost', 'orgChannelRemove', 'orgChannelMute',
+      'orgDossier'].forEach(function (op) {
       if (server[op] === undefined) server[op] = { ok: true, message: op + ' done.' };
     });
     return server;
@@ -6878,6 +6880,117 @@ async function main() {
     clean(app, 'locations kinds');
   })();
 
+  /* ---- Work & channel: the organisation extras ---- */
+  await (async function () {
+    const extras = { OrgContracts: true, AcceptApproval: true, Probation: true, Duty: true, Channel: true,
+      Dossiers: true,
+      work: {
+        contracts: [{ id: 'ct00000031', state: 'waiting', targetName: 'Dana ' + XSS, worth: 5000, expiresIn: 600 },
+          { id: 'ct00000032', state: 'assigned', targetName: 'Sam Hale', worth: 7000, expiresIn: 300,
+            member: { ref: 'm2_2222', name: XSS } }],
+        approvals: [{ id: 'ap1_1111', contractId: 'ct00000033', worth: 40000, expiresIn: 300,
+          member: { ref: 'm2_2222', name: XSS } }],
+        spots: [{ id: 'hitman:meeting:1', label: 'Pier' }] },
+      channel: [{ id: 'msg:1', from: XSS, body: 'Hello ' + XSS, at: NOW - 60, member: 'm2_2222' }] };
+    const off = boot(orgServer());
+    off.open(FULL);
+    await settled();
+    off.nav('orgwork');
+    await settled();
+    it('WORK: says every extra is off while orgGet carries none', function () {
+      has(off.main(), 'Every extra is switched off');
+    });
+    const members = orgOn().data.members.map(function (m) { return Object.assign({}, m); });
+    members[1].probation = { done: 1, need: 3 };
+    members[0].onDuty = true;
+    const app = boot(orgServer({ orgGet: orgOn({ extras: extras, members: members }) }));
+    app.open(FULL);
+    await settled();
+    app.nav('orgwork');
+    await settled();
+    it('WORK: draws each extra, every name and word escaped', function () {
+      has(app.main(), 'Accepts waiting for approval');
+      has(app.main(), 'Contracts sent to the organisation');
+      has(app.main(), 'On probation');
+      has(app.main(), 'On duty');
+      has(app.main(), 'The channel');
+      has(app.main(), 'Hello ' + XSS);
+      eq(app.$$('img').length, 0);
+    });
+    const byAct = function (act, attr, value) {
+      return app.$$('[data-act="' + act + '"]').filter(function (b) {
+        return !attr || b.getAttribute(attr) === value;
+      })[0];
+    };
+    app.click(byAct('org-work-approve', 'data-value', 'yes'));
+    const afterOne = app.requests('orgAcceptDecide').length;
+    app.click(byAct('org-work-approve', 'data-value', 'yes'));
+    await settled();
+    it('WORK: Approve takes two clicks and sends the id', function () {
+      eq(afterOne, 0);
+      eq(app.last('orgAcceptDecide').data, { id: 'ap1_1111', approve: true });
+    });
+    app.click(byAct('org-work-assign', 'data-id', 'ct00000031'));
+    it('WORK: Assign with no member picked says so and sends nothing', function () {
+      eq(app.requests('orgContractAssign').length, 0);
+      has(app.main(), 'Pick the member first.');
+    });
+    app.click(byAct('dd-open', 'data-dd', 'org-work-member:ct00000031'));
+    app.click(app.$$('[data-act="dd-pick"]').filter(function (b) {
+      return b.getAttribute('data-dd') === 'org-work-member:ct00000031' && b.getAttribute('data-value') === 'm1_1111';
+    })[0]);
+    app.click(byAct('org-work-assign', 'data-id', 'ct00000031'));
+    app.click(byAct('org-work-assign', 'data-id', 'ct00000031'));
+    await settled();
+    it('WORK: and assigns by the member\'s handle on two clicks', function () {
+      eq(app.last('orgContractAssign').data, { id: 'ct00000031', member: 'm1_1111' });
+    });
+    app.click(byAct('org-work-release', 'data-id', 'ct00000032'));
+    app.click(byAct('org-work-release', 'data-id', 'ct00000032'));
+    await settled();
+    it('WORK: Send to the open board on two clicks', function () {
+      eq(app.last('orgContractAssign').data, { id: 'ct00000032', release: true });
+    });
+    const bind = function (b) {
+      return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0];
+    };
+    app.type(bind('org.dossier.ct00000032'), 'Quietly');
+    app.click(app.$$('[data-act="org-work-rules"]').filter(function (b) {
+      return b.getAttribute('data-id') === 'ct00000032' && b.getAttribute('data-value') === 'clean';
+    })[0]);
+    app.click(byAct('org-work-dossier'));
+    app.click(byAct('org-work-dossier'));
+    await settled();
+    it('WORK: a dossier sends its notes and rules on two clicks', function () {
+      eq(app.last('orgDossier').data, { id: 'ct00000032', notes: 'Quietly', rules: 'clean' });
+    });
+    app.click(byAct('org-probation', 'data-value', 'yes'));
+    app.click(byAct('org-probation', 'data-value', 'yes'));
+    await settled();
+    app.click(byAct('org-duty-off'));
+    app.click(byAct('org-duty-off'));
+    await settled();
+    it('WORK: End probation and Send off duty name the member\'s handle', function () {
+      eq(app.last('orgProbation').data, { member: 'm2_2222', passed: true });
+      eq(app.last('orgDutyOff').data, { member: 'm1_1111' });
+    });
+    app.type(bind('org.channel'), 'Staff here');
+    app.click(byAct('org-chan-post'));
+    app.click(byAct('org-chan-post'));
+    await settled();
+    app.click(byAct('org-chan-mute'));
+    app.click(byAct('org-chan-mute'));
+    await settled();
+    app.click(byAct('org-chan-remove'));
+    app.click(byAct('org-chan-remove'));
+    await settled();
+    it('WORK: the channel posts, mutes and takes a message down, each on two clicks', function () {
+      eq(app.last('orgChannelPost').data, { text: 'Staff here' });
+      eq(app.last('orgChannelMute').data, { member: 'm2_2222', hours: 24 });
+      eq(app.last('orgChannelRemove').data, { id: 'msg:1' });
+    });
+  })();
+
   /* ---- read-only staff: every new write is disabled, and sends nothing ---- */
   await (async function () {
     const server = orgServer();
@@ -6885,7 +6998,7 @@ async function main() {
     app.open(READER);
     await settled();
     const writes = [];
-    for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'bpmatrix',
+    for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'bpmatrix',
       'bplimits', 'bpoffice', 'locations']) {
       app.nav(view);
       await settled();
@@ -7623,7 +7736,7 @@ async function main() {
     await settled();
     const single = [];
     for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices',
-      'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'inbox', 'changed']) {
+      'orgwork', 'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'inbox', 'changed']) {
       app.nav(view);
       await settled();
       app.$$('[data-gate]').forEach(function (b) {

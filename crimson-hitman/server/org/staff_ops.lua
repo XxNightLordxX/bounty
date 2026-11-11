@@ -41,6 +41,10 @@ StaffOps.ACTIONS = {
     'org_codename', 'org_salary', 'org_salary_max', 'org_payroll_run', 'org_payroll_skipped',
     'org_salary_applied', 'org_payroll_unconfirmed', 'org_payroll_refund_failed', 'org_payroll_refunded',
     'org_payroll_unmarked',
+    'org_contract_received', 'org_contract_assigned', 'org_contract_reassigned', 'org_contract_released',
+    'org_accept_requested', 'org_accept_approved', 'org_accept_refused', 'org_accept_expired',
+    'org_probation', 'org_probation_passed', 'org_duty', 'org_duty_forced', 'org_channel_post',
+    'org_channel_removed', 'org_channel_mute', 'org_dossier',
 }
 
 local function staff(src)
@@ -346,6 +350,59 @@ end }
 OPS.orgPick = { 'write', function(src, data)
     local cid = (data.member ~= nil or data.ref ~= nil or data.subject ~= nil) and memberCid(src, data) or nil
     return said(Org.pick(staff(src), Text.field(data.id, 64), cid))
+end }
+
+-- Organisation extras (server/org/extras.lua) -----------------------------------
+
+--- The channel's newest messages (orgGet carries the last 50 too).
+OPS.orgChannelGet = { 'read', function(src, data)
+    return said(Org.channelRead(staff(src), tonumber(data.limit)))
+end }
+
+--- Assign an organisation contract to a member (data.member), or send it
+--- to the open board (data.release).
+OPS.orgContractAssign = { 'write', function(src, data)
+    local id = Text.field(data.id, 64)
+    if data.release == true then return said(Org.releaseContract(staff(src), id)) end
+    local cid = memberCid(src, data)
+    if not cid then return false, Org.ERR.NOT_FOUND, Org.message(Org.ERR.NOT_FOUND) end
+    return said(Org.assignContract(staff(src), id, cid))
+end }
+
+OPS.orgAcceptDecide = { 'write', function(src, data)
+    return said(Org.decideAccept(staff(src), Text.field(data.id, 24), data.approve))
+end }
+
+--- End a member's probation (passed = true) or put them on it again (false).
+OPS.orgProbation = { 'write', function(src, data)
+    return said(Org.setProbation(staff(src), memberCid(src, data), data.passed))
+end }
+
+OPS.orgDutyOff = { 'write', function(src, data)
+    return said(Org.forceOffDuty(staff(src), memberCid(src, data)))
+end }
+
+OPS.orgChannelPost = { 'write', function(src, data)
+    return said(Org.channelPost(staff(src), Text.field(data.text, 8000)))
+end }
+
+OPS.orgChannelRemove = { 'write', function(src, data)
+    return said(Org.channelRemove(staff(src), Text.field(data.id, 64)))
+end }
+
+OPS.orgChannelMute = { 'write', function(src, data)
+    return said(Org.channelMute(staff(src), memberCid(src, data), data.hours))
+end }
+
+--- A dossier on an assigned organisation contract, or (clear) none.
+OPS.orgDossier = { 'write', function(src, data)
+    local id = Text.field(data.id, 64)
+    if data.clear == true then return said(Org.writeDossier(staff(src), id, false)) end
+    local notes = data.notes ~= nil and Text.field(data.notes, 8000) or nil
+    if data.notes ~= nil and not notes then return false, Org.ERR.INVALID, Org.message(Org.ERR.INVALID) end
+    return said(Org.writeDossier(staff(src), id, { notes = notes,
+        spot = data.spot ~= nil and (Text.field(data.spot, 48) or 0) or nil,
+        rules = data.rules ~= nil and (Text.field(data.rules, 16) or 0) or nil }))
 end }
 
 -- Applications ------------------------------------------------------------------

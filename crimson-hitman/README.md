@@ -101,7 +101,7 @@ each held exclusive contract's idle clocks, and every map spot set in
 Locations), and the organisation's
 `crimson_orgs`, `crimson_org_roles`, `crimson_org_members`,
 `crimson_org_grants`, `crimson_org_funds`,
-`crimson_org_splits` and `crimson_org_applications` (made on every start,
+`crimson_org_splits`, `crimson_org_applications` and `crimson_org_messages` (made on every start,
 read and written only with `Config.Organisation.Enabled`). A
 start refuses, changing nothing, where a table of one of these names belongs
 to another resource. Money columns are `INT` (at most $2,147,483,647; the
@@ -814,6 +814,55 @@ character that loaded before the job was registered (a late start).
   for longer than a period pays once, not for every period missed. Until the
   pay day the maintenance tick compares one number. Every pay day is on the
   record (`org_payroll_run`, `org_payroll_skipped`).
+- **Organisation extras** (server/org/extras.lua). Six more switches under
+  `Config.Organisation`, each off as shipped and each needing the organisation
+  on. Every boss side is its own row in Boss permissions, off until staff
+  allow it; staff do all of it from the panel (Hitman organisation, **Work &
+  channel**); every write takes two clicks or taps and is on the record.
+  - **Contracts to the organisation** (`OrgContracts`). The placer ticks
+    *Send to the organisation* on the form. The contract is placed as any
+    other (the same charges, rules and refusals), then held off the open
+    board while a boss holding **K4 Assign organisation contracts** gives it
+    to one member and that member takes it, `AssignMinutes` each; then it
+    goes on the open board and the placer is told. **K5 Reassign** moves it
+    to another member or sends it to the open board at once. Only the member
+    it is assigned to sees it on the board and may take it. The organisation
+    sees what a board card shows (the target's name, the worth, the rule),
+    never who placed it, and the placer is never told who took it beyond
+    what any contract says.
+  - **Accept approval** (`AcceptApproval`). A member's accept worth more than
+    `ApprovalAbove` (0: every accept), or any accept of a member on probation
+    (`ApprovalProbation`), waits for a boss holding **K6 Approve accepts**
+    (never one's own; only below the boss's rank). Nothing is taken while it
+    waits. Approved, the accept runs then with every rule checked again, the
+    stake and the fee the page showed included; refused, or not answered in
+    `ApprovalMinutes`, nothing was ever taken, so the stake stays with the
+    member, who is told.
+  - **Probation** (`Probation`). Members at or below `ProbationMaxGrade` take
+    only contracts worth up to `ProbationMaxReward`, none with a stake
+    (`ProbationNoStake`), until `ProbationCompletions` completions counted on
+    their record from when probation began, or a boss holding **M8 End
+    probation** signs them off. Staff may put a member on probation again.
+  - **Duty** (`Duty`). Members clock in and out in the tab (only at the boss
+    office with `DutyAtOffice`). Only members on duty are assigned, see and
+    take the organisation's contracts. Where the job is their primary one,
+    qbx_core is told (SetJobDuty, through the framework adapter), and a duty
+    change made at a qbx duty point is taken in. A boss holding **M9 Force off
+    duty** sends a member below them off duty. A character in again starts
+    off duty.
+  - **Private channel** (`Channel`). A message channel inside the
+    Organisation tab: plain text up to `ChannelMaxLength` characters, no
+    links or markup, `ChannelPerMinute` messages a member a minute, kept
+    `ChannelRetentionDays` (table `crimson_org_messages`). A boss holding **N3
+    Moderate channel** removes messages of members below them and mutes one
+    for up to `Config.Organisation.Limits.ChannelMuteMaxHours`. The record
+    keeps who wrote and how long, never the words.
+  - **Dossiers** (`Dossiers`). A boss holding **K7 Write dossiers** attaches
+    notes (up to `DossierMaxLength`), one of the organisation's meeting spots
+    and the rules of engagement to an assigned organisation contract. Only its
+    member reads it, in the tab. It has no field about the target, and notes
+    holding a citizen id of the target or the placer are refused: a dossier
+    never tells the hitman more about who the target is than the card does.
 
 **server.cfg.** Keep `set qbx:cleanPlayerGroups false` (true deletes the
 organisation's members at every qbx_core start) and `set
@@ -850,6 +899,13 @@ clicks, naming what it sets.
 | `orgAccess`, `orgPick` | write | A role's access rules; a boss pick |
 | `orgSalary` | write | A role's salary (`amount`), or the most it may be paid (`max`, false clears it): payroll |
 | `orgApplication` | write | Accept or reject an application |
+| `orgChannelGet` | read | The channel's newest messages (`limit`, at most 100); `orgGet` carries the last 50 under `extras` |
+| `orgContractAssign` | write | Assign a contract sent to the organisation to a member (`member`), or send it to the open board (`release`) |
+| `orgAcceptDecide` | write | Approve or refuse an accept waiting for approval (`id`, `approve`) |
+| `orgProbation` | write | End a member's probation (`passed` true) or put them on it again (false) |
+| `orgDutyOff` | write | Send a member off duty |
+| `orgChannelPost`, `orgChannelRemove`, `orgChannelMute` | write | Post as Staff, remove a message, mute a member (`hours`, 0 lifts it) |
+| `orgDossier` | write | A dossier on an assigned organisation contract (`notes`, `spot`, `rules`), or `clear` |
 
 #### Organisation requests (phone)
 
@@ -878,7 +934,12 @@ and Decline (`orgInviteAnswer`), and says whether the tab is for this player
 | `orgApplications`, `orgDecide` | N2 | `orgRename` | S1 |
 | `orgLayout` | S2 | `orgOfficeRule` | S3 |
 | `orgInviteAnswer` | the invited player | `orgCodename` | a member's own; M7 for another's |
-| `orgSalary` | P3 | | |
+| `orgSalary` | P3 | `orgWork` | K4, K5, K6 or K7 |
+| `orgAssign` | K4 (K5 to move one) | `orgRelease` | K5 |
+| `orgApprove` | K6 | `orgDossier` | K7 |
+| `orgProbationEnd` | M8 | `orgForceOff` | M9 |
+| `orgDuty` | a member's own | `orgChannel`, `orgChannelPost` | a member |
+| `orgChannelRemove`, `orgChannelMute` | N3 | | |
 
 ### Mission steps
 
@@ -1455,6 +1516,25 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Payroll` | `false` | every pay day each member is paid their role's salary from the funds |
 | `Config.Organisation.PayrollDays` | `7` | days between two pay days |
 | `Config.Organisation.PaySuspended` | `false` | whether a member suspended on pay day is paid that pay day; off, they are skipped and told |
+| `Config.Organisation.OrgContracts` | `false` | placers may send a contract to the organisation; a boss assigns it to a member |
+| `Config.Organisation.AssignMinutes` | `30` | minutes a contract sent to the organisation waits to be assigned, then to be taken, before the open board |
+| `Config.Organisation.AcceptApproval` | `false` | members' accepts above `ApprovalAbove` (or on probation) wait for a boss's approval; nothing is taken while they wait |
+| `Config.Organisation.ApprovalAbove` | `25000` | accepts worth more than this wait ($; 0 = every accept) |
+| `Config.Organisation.ApprovalProbation` | `true` | every accept of a member on probation waits too |
+| `Config.Organisation.ApprovalMinutes` | `15` | minutes an accept waits before it is refused (nothing was taken) |
+| `Config.Organisation.Probation` | `false` | new members take only small contracts until their completions are done or a boss signs them off |
+| `Config.Organisation.ProbationMaxGrade` | `0` | members at or below this grade are on probation |
+| `Config.Organisation.ProbationCompletions` | `3` | completions, counted from when probation began, that end it (0 = only a sign-off) |
+| `Config.Organisation.ProbationMaxReward` | `10000` | most a contract taken on probation pays ($) |
+| `Config.Organisation.ProbationNoStake` | `true` | no contract with a stake on probation |
+| `Config.Organisation.Duty` | `false` | members clock in; only members on duty are assigned, see and take organisation contracts |
+| `Config.Organisation.DutyAtOffice` | `false` | clock in only at the boss office |
+| `Config.Organisation.Channel` | `false` | a private message channel in the Organisation tab |
+| `Config.Organisation.ChannelRetentionDays` | `7` | days a channel message is kept |
+| `Config.Organisation.ChannelMaxLength` | `300` | characters in one message (longer is refused, never cut) |
+| `Config.Organisation.ChannelPerMinute` | `6` | messages one member may send a minute |
+| `Config.Organisation.Dossiers` | `false` | a boss attaches notes, a meeting spot and the rules of engagement to an assigned organisation contract |
+| `Config.Organisation.DossierMaxLength` | `600` | characters in a dossier's notes |
 | `Config.Organisation.Roles` | `{ '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no', '2, lieutenant, Lieutenant, 0, no', … 4 in all }` | the roles made with it: 'grade, name, label, pay, boss' |
 | `Config.Organisation.Limits.MaxMembers` | `20` | members at most |
 | `Config.Organisation.Limits.HireRadius` | `5.0` | metres a hire stands from the boss |
@@ -1484,6 +1564,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.SalaryMax` | `1000` | most salary a boss sets per role per pay day ($); staff may set a lower one per role |
 | `Config.Organisation.Limits.PayrollPerDayMax` | `0` | most paid in salaries in all on one pay day ($); members past it are skipped and told; 0 = no cap beyond each role's |
 | `Config.Organisation.Limits.CodenameCooldownMinutes` | `1440` | minutes between two changes a member makes to their own codename |
+| `Config.Organisation.Limits.ChannelMuteMaxHours` | `24` | longest a boss mutes a member in the organisation channel (hours) |
 
 ### Mission steps
 

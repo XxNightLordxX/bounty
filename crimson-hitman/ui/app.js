@@ -784,7 +784,10 @@
     org_bank_down: 'The organisation\'s bank account cannot be reached right now; nothing was moved.',
     org_name_taken: 'Another member already goes by that codename.',
     org_name_blocked: 'That codename is not allowed. Pick another.',
-    org_feature_off: 'Staff have not switched that on for the organisation.'
+    org_feature_off: 'Staff have not switched that on for the organisation.',
+    org_reserved: 'That contract is held for the organisation.',
+    org_approval: 'Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.',
+    org_probation: 'On probation you may not take that contract yet.'
   };
 
   /* The requests that can move money, each a handler in server/app.lua
@@ -3354,16 +3357,22 @@
      (Org.layout, S2) that renames or hides it. */
   var ORG_SCREENS = [
     { id: 'members', label: 'Members', layout: 'members',
-      powers: ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'D2'] },
+      powers: ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'M8', 'M9', 'D2'] },
     { id: 'roles', label: 'Roles', layout: 'roles', powers: ['R1', 'R2', 'R3', 'R4', 'P1', 'P3'] },
     { id: 'money', label: 'Money', layout: 'funds',
       powers: ['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'P2'] },
     { id: 'contracts', label: 'Contracts', layout: 'contracts', powers: ['K1', 'K2', 'K3'] },
+    { id: 'work', label: 'Assignments', layout: 'contracts', powers: ['K4', 'K5', 'K6', 'K7'] },
     { id: 'places', label: 'Places', layout: 'locations', powers: ['L1', 'L2', 'L3'] },
     { id: 'notices', label: 'Notices', layout: 'notices', powers: ['N1'] },
     { id: 'applications', label: 'Applications', layout: 'notices', powers: ['N2'] },
-    { id: 'settings', label: 'Settings', layout: 'settings', powers: ['S1', 'S2', 'S3'] }
+    { id: 'settings', label: 'Settings', layout: 'settings', powers: ['S1', 'S2', 'S3'] },
+    /* Not on the boss menu: every member's, from the Channel card. */
+    { id: 'channel', label: 'Channel', layout: 'notices', powers: [], member: true }
   ];
+  /* The extras' powers, each only while its switch is on (orgMine says). */
+  var ORG_POWER_SWITCH = { M7: 'codenames', P3: 'payroll', K4: 'orgContracts', K5: 'orgContracts',
+    K6: 'approval', K7: 'dossiers', M8: 'probationOn', M9: 'dutyOn', N3: 'channel' };
   var ORG_SPOT_WORDS = { office: 'Boss office', signup: 'Sign-up spot', meeting: 'Meeting spot',
     npc: 'Contact', place: 'Place' };
 
@@ -3398,8 +3407,8 @@
   function orgHolds(code) {
     var m = state.org.mine;
     if (!m || !m.powers || m.powers[code] !== true) { return false; }
-    if (code === 'M7' && !m.codenames) { return false; }
-    if (code === 'P3' && !m.payroll) { return false; }
+    var needs = ORG_POWER_SWITCH[code];
+    if (needs && !m[needs]) { return false; }
     return true;
   }
 
@@ -3417,6 +3426,7 @@
   function orgScreenShown(screen) {
     var m = state.org.mine;
     var hidden = m && m.layout && m.layout.hidden && asList(m.layout.hidden[screen.layout]);
+    if (screen.member) { return !!(m && m.channel); }
     if (hidden && hidden.indexOf(m.grade) !== -1) { return false; }
     return screen.powers.some(orgHolds);
   }
@@ -3466,6 +3476,8 @@
     if (id === 'money' && orgHolds('C8')) { orgRead('funds', function () { return post('orgFunds', { limit: 20 }); }); }
     if (id === 'places') { orgRead('spots', function () { return post('orgSpots', {}); }); }
     if (id === 'applications') { orgRead('applications', function () { return post('orgApplications', {}); }); }
+    if (id === 'work') { orgRead('work', function () { return post('orgWork', {}); }); }
+    if (id === 'channel') { orgRead('channel', function () { return post('orgChannel', { limit: 50 }); }); }
   }
 
   /* A write: once at a time, its answer said, and what the tab shows read
@@ -3696,7 +3708,9 @@
     stats.appendChild(el('div', 'hint', m.stats ? String(m.stats) : 'Not kept yet.'));
     view.appendChild(stats);
 
-    var screens = ORG_SCREENS.filter(orgScreenShown);
+    viewOrgExtras(view, m);
+
+    var screens = ORG_SCREENS.filter(function (s) { return !s.member && orgScreenShown(s); });
     if (screens.length) {
       var menu = orgCard('Boss menu', 'i-users');
       var away = Object.keys(m.officeOnly || {}).some(orgAway);
@@ -3767,8 +3781,250 @@
     ({
       members: orgMembersScreen, roles: orgRolesScreen, money: orgMoneyScreen,
       contracts: orgContractsScreen, places: orgPlacesScreen, notices: orgNoticesScreen,
-      applications: orgApplicationsScreen, settings: orgSettingsScreen
+      applications: orgApplicationsScreen, settings: orgSettingsScreen,
+      work: orgWorkScreen, channel: orgChannelScreen
     })[screen.id](view);
+  }
+
+  /* ---- Organisation extras: duty, probation, assigned contracts, the
+     channel (each drawn only while orgMine says its switch is on) ---- */
+
+  function viewOrgExtras(view, m) {
+    if (m.duty) {
+      var duty = orgCard('Duty', 'i-clock');
+      duty.appendChild(el('div', 'hint', m.duty.on
+        ? 'You are on duty: the organisation may assign you contracts.'
+        : 'You are off duty: the organisation\'s contracts are not shown to you.'
+          + (m.duty.atOffice ? ' You go on duty at the boss office.' : '')));
+      var dr = orgRow();
+      dr.appendChild(orgTwoTap(m.duty.on ? 'ghost' : 'primary', m.duty.on ? 'Go off duty' : 'Go on duty', 'duty',
+        m.duty.on ? 'Tap again to go off duty' : 'Tap again to go on duty', function () {
+          var want = !m.duty.on;
+          orgWrite('duty', function () { return post('orgDuty', { on: want }); },
+            want ? 'On duty.' : 'Off duty.');
+        }));
+      duty.appendChild(dr);
+      view.appendChild(duty);
+    }
+    if (m.probation) {
+      var p = m.probation;
+      var pro = orgCard('Probation', 'i-shield');
+      pro.appendChild(el('div', 'hint', 'You are on probation: contracts worth up to ' + money(Number(p.maxReward) || 0)
+        + (p.noStake ? ', none with a stake' : '') + '. '
+        + (Number(p.need) > 0 ? (Number(p.done) || 0) + ' of ' + p.need + ' completions done, or a boss signs you off.'
+          : 'A boss signs you off.')));
+      view.appendChild(pro);
+    }
+    asList(m.waiting).forEach(function (w) {
+      var wait = orgCard('Waiting for approval', 'i-clock');
+      wait.appendChild(el('div', 'hint', 'Your accept of ' + String(w.contractId || 'a contract')
+        + ' waits for a boss. Nothing is taken until it is approved; about '
+        + durationText(Math.max(1, Math.ceil((Number(w.expiresIn) || 0) / 60))) + ' left.'));
+      view.appendChild(wait);
+    });
+    if (m.orgContracts && Array.isArray(m.assigned)) {
+      var mine = orgCard('Assigned to you', 'i-crosshair');
+      if (!m.assigned.length) {
+        mine.appendChild(el('div', 'hint', 'Nothing assigned to you right now.'));
+      }
+      m.assigned.forEach(function (a) {
+        var row = el('div', 'org-assigned');
+        row.appendChild(el('div', 'target', String(a.targetName || 'A contract') + ' · ' + String(a.id || '')));
+        row.appendChild(el('div', 'hint', a.state === 'taken' ? 'You hold it.'
+          : 'Take it from the board within about ' + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60)))
+            + ', or it goes on the open board.'));
+        if (a.dossier) { row.appendChild(orgDossierView(a.dossier)); }
+        mine.appendChild(row);
+      });
+      view.appendChild(mine);
+    } else if (m.orgContracts && m.dutyOn && m.duty && !m.duty.on) {
+      var off = orgCard('Assigned to you', 'i-crosshair');
+      off.appendChild(el('div', 'hint', 'Go on duty to see what the organisation assigned you.'));
+      view.appendChild(off);
+    }
+    if (m.channel) {
+      var ch = orgCard('Channel', 'i-flag');
+      ch.appendChild(el('div', 'hint', m.channelMuted ? 'A boss muted you for now: you can read, not write.'
+        : 'The organisation\'s own messages. Plain text only.'));
+      var open = el('button', 'ghost', 'Open channel');
+      open.onclick = function () {
+        state.org.screen = 'channel';
+        state.org.armed = null;
+        render();
+        loadOrgScreen('channel');
+      };
+      var cr = orgRow();
+      cr.appendChild(open);
+      ch.appendChild(cr);
+      view.appendChild(ch);
+    }
+  }
+
+  function orgDossierView(d) {
+    var box = el('div', 'org-dossier');
+    box.appendChild(el('div', 'hint', 'Dossier'));
+    if (d.notes) { box.appendChild(el('div', 'org-notice', String(d.notes))); }
+    if (d.spot) { box.appendChild(el('div', 'hint', 'Meet at: ' + String(d.spot.label || 'a meeting spot'))); }
+    if (d.rulesText) { box.appendChild(el('div', 'hint', 'Rules of engagement: ' + String(d.rulesText))); }
+    return box;
+  }
+
+  /* Contracts sent to the organisation, and accepts waiting for approval. */
+  function orgWorkScreen(view) {
+    if (orgPending(view, 'work')) { return; }
+    var w = state.org.data.work;
+    var members = asList(w.members).map(function (x) {
+      return { value: x.ref, label: String(x.name || 'A member') + (x.onDuty === false ? ' (off duty)' : '')
+        + (x.probation ? ' (probation)' : '') };
+    });
+    if (Array.isArray(w.approvals) && orgHolds('K6')) {
+      var ap = orgCard('Accepts waiting', 'i-usercheck');
+      if (!w.approvals.length) { ap.appendChild(el('div', 'hint', 'No accept waits for approval.')); }
+      w.approvals.forEach(function (a) {
+        var key = 'ap:' + a.id;
+        ap.appendChild(el('div', 'target', String(a.member && a.member.name || 'A member') + ' · '
+          + String(a.contractId || '')));
+        ap.appendChild(el('div', 'hint', 'Worth ' + money(Number(a.worth) || 0) + (a.probation ? ', on probation' : '')
+          + '. About ' + durationText(Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60))) + ' left.'));
+        if (!a.own) {
+          var r = orgRow();
+          r.appendChild(orgTwoTap('primary', 'Approve', key + ':yes', 'Tap again to approve', function () {
+            orgWrite(key + ':yes', function () { return post('orgApprove', { id: a.id, approve: true }); },
+              'Approved: the accept ran.');
+          }));
+          r.appendChild(orgTwoTap('ghost', 'Refuse', key + ':no', 'Tap again to refuse', function () {
+            orgWrite(key + ':no', function () { return post('orgApprove', { id: a.id, approve: false }); },
+              'Refused. Nothing was taken.');
+          }));
+          ap.appendChild(r);
+        }
+      });
+      view.appendChild(ap);
+    }
+    if (!Array.isArray(w.contracts)) { return; }
+    var list = orgCard('Sent to the organisation', 'i-crosshair');
+    list.appendChild(el('div', 'hint', 'Who placed them is never shown. Not taken in time, each goes on the open board.'));
+    if (!w.contracts.length) { list.appendChild(el('div', 'hint', 'None waiting.')); }
+    view.appendChild(list);
+    w.contracts.forEach(function (c) {
+      var key = 'wc:' + c.id + ':';
+      var box = orgCard(String(c.targetName || 'A contract') + ' · ' + String(c.id), 'i-crosshair');
+      box.appendChild(el('div', 'hint', 'Worth ' + money(Number(c.worth) || 0)
+        + (c.staked ? ', staked' : '') + '. '
+        + (c.state === 'waiting' ? 'Not assigned yet.' : c.state === 'taken'
+          ? 'Taken by ' + String(c.member && c.member.name || 'a member') + '.'
+          : 'Assigned to ' + String(c.member && c.member.name || 'a member') + '.')
+        + (c.expiresIn ? ' About ' + durationText(Math.max(1, Math.ceil(Number(c.expiresIn) / 60))) + ' left.' : '')));
+      var canAssign = c.state === 'waiting' ? orgHolds('K4') : c.state === 'assigned' && orgHolds('K5');
+      if (canAssign && members.length) {
+        box.appendChild(orgChoice(key + 'member', members, undefined));
+        var ra = orgRow();
+        ra.appendChild(orgTwoTap('primary', c.state === 'waiting' ? 'Assign' : 'Reassign', key + 'assign',
+          'Tap again to assign it', function () {
+            var who = orgChosen(key + 'member', undefined);
+            if (who === undefined) { return say('Pick the member first.'); }
+            orgWrite(key + 'assign', function () { return post('orgAssign', { id: c.id, member: who }); },
+              'Assigned.');
+          }));
+        box.appendChild(ra);
+      }
+      if (c.state !== 'taken' && orgHolds('K5')) {
+        var rr = orgRow();
+        rr.appendChild(orgTwoTap('ghost', 'Send to the open board', key + 'release', 'Tap again to send it',
+          function () {
+            orgWrite(key + 'release', function () { return post('orgRelease', { id: c.id }); },
+              'On the open board.');
+          }));
+        box.appendChild(rr);
+      }
+      if (c.dossier) { box.appendChild(orgDossierView(c.dossier)); }
+      if (c.state !== 'waiting' && orgHolds('K7') && Array.isArray(w.rules)) {
+        box.appendChild(orgField(key + 'notes', 'Dossier notes', 'area', 'Plain text, no citizen ids', 2000));
+        var spots = asList(w.spots).map(function (sp) { return { value: sp.id, label: String(sp.label || 'Spot') }; });
+        if (spots.length) {
+          box.appendChild(el('div', 'hint', 'Meeting spot'));
+          box.appendChild(orgChoice(key + 'spot', spots, undefined));
+        }
+        box.appendChild(el('div', 'hint', 'Rules of engagement'));
+        box.appendChild(orgChoice(key + 'rules', w.rules.map(function (r) {
+          return { value: r.value, label: String(r.label) };
+        }), undefined));
+        var rd = orgRow();
+        rd.appendChild(orgTwoTap('ghost', 'Save dossier', key + 'dossier', 'Tap again to save it', function () {
+          var data = { id: c.id };
+          var notes = orgText(key + 'notes');
+          var spot = orgChosen(key + 'spot', undefined);
+          var rules = orgChosen(key + 'rules', undefined);
+          if (notes) { data.notes = notes; }
+          if (spot !== undefined) { data.spot = spot; }
+          if (rules !== undefined) { data.rules = rules; }
+          if (!notes && spot === undefined && rules === undefined) {
+            return say('Write notes, or pick a spot or the rules.');
+          }
+          orgWrite(key + 'dossier', function () { return post('orgDossier', data); }, 'Dossier saved.');
+        }));
+        if (c.dossier) {
+          rd.appendChild(orgTwoTap('ghost', 'Clear dossier', key + 'dclear', 'Tap again to clear it', function () {
+            orgWrite(key + 'dclear', function () { return post('orgDossier', { id: c.id, clear: true }); },
+              'Dossier cleared.');
+          }));
+        }
+        box.appendChild(rd);
+      }
+      view.appendChild(box);
+    });
+  }
+
+  /* The organisation's own channel: plain text, two taps to send. */
+  function orgChannelScreen(view) {
+    if (orgPending(view, 'channel')) { return; }
+    var c = state.org.data.channel;
+    var box = orgCard('Messages', 'i-flag');
+    var rows = asList(c.rows);
+    if (!rows.length) { box.appendChild(el('div', 'hint', 'No messages yet.')); }
+    var moderate = orgHolds('N3');
+    rows.forEach(function (r) {
+      var line = el('div', 'org-message' + (r.mine ? ' is-mine' : ''));
+      line.appendChild(el('div', 'hint', String(r.from || 'A member') + (r.at ? ' · ' + agoText(r.at) : '')));
+      line.appendChild(el('div', 'org-notice', String(r.body || '')));
+      if (moderate && !r.mine) {
+        var key = 'msg:' + r.id + ':';
+        var mr = orgRow();
+        mr.appendChild(orgTwoTap('ghost', 'Remove', key + 'rm', 'Tap again to remove it', function () {
+          orgWrite(key + 'rm', function () { return post('orgChannelRemove', { id: r.id }); }, 'Removed.');
+        }));
+        if (r.member) {
+          mr.appendChild(orgTwoTap('ghost', 'Mute ' + (orgBound('ChannelMuteMaxHours') || 1) + ' h', key + 'mute',
+            'Tap again to mute them', function () {
+              orgWrite(key + 'mute', function () {
+                return post('orgChannelMute', { member: r.member, hours: orgBound('ChannelMuteMaxHours') || 1 });
+              }, 'Muted.');
+            }));
+        }
+        line.appendChild(mr);
+      }
+      box.appendChild(line);
+    });
+    view.appendChild(box);
+    if (c.muted) {
+      view.appendChild(el('div', 'hint org-warn', 'A boss muted you for now: you can read, not write.'));
+      return;
+    }
+    var send = orgCard('Write', 'i-pencil');
+    send.appendChild(orgField('channel.text', 'Message', 'area', 'Plain text, no links', Number(c.maxLength) || 300));
+    var sr = orgRow();
+    sr.appendChild(orgTwoTap('primary', 'Send', 'channel:send', 'Tap again to send', function () {
+      var text = orgText('channel.text');
+      if (!text) { return say('Write the message first.'); }
+      orgWrite('channel:send', function () {
+        return post('orgChannelPost', { text: text }).then(function (r) {
+          if (r && r.ok) { state.org.form['channel.text'] = ''; }
+          return r;
+        });
+      }, 'Sent.');
+    }));
+    send.appendChild(sr);
+    view.appendChild(send);
   }
 
   /* ---- Members: hire, and each member's actions by the powers held ---- */
@@ -3821,6 +4077,9 @@
     if (m.boss) { meta.appendChild(chip('Boss', 'role', 'i-shield')); }
     if (m.suspendedUntil) { meta.appendChild(chip('Suspended', 'hot', 'i-clock')); }
     if (m.locked) { meta.appendChild(chip('Locked by staff', 'plain', 'i-lock')); }
+    if (m.onDuty === true) { meta.appendChild(chip('On duty', 'role', 'i-clock')); }
+    if (m.probation) { meta.appendChild(chip('Probation', 'plain', 'i-shield')); }
+    if (m.channelMuted) { meta.appendChild(chip('Muted', 'plain', 'i-flag')); }
     box.appendChild(meta);
     if (!open) { return box; }
     var key = 'm:' + m.ref + ':';
@@ -3850,6 +4109,24 @@
         }, 'Codename given.');
       }, 'M7'));
       box.appendChild(r7);
+    }
+    if (orgHolds('M8') && m.probation) {
+      box.appendChild(el('div', 'hint', 'On probation: ' + (Number(m.probation.done) || 0) + ' of '
+        + (Number(m.probation.need) || 0) + ' completions done.'));
+      var r8 = orgRow();
+      r8.appendChild(orgTwoTap('ghost', 'End probation', key + 'probation', 'Tap again to end it', function () {
+        orgWrite(key + 'probation', function () { return post('orgProbationEnd', { member: m.ref }); },
+          'Probation ended.');
+      }, 'M8'));
+      box.appendChild(r8);
+    }
+    if (orgHolds('M9') && m.onDuty === true) {
+      var r9 = orgRow();
+      r9.appendChild(orgTwoTap('ghost', 'Send off duty', key + 'offduty', 'Tap again to send them off duty',
+        function () {
+          orgWrite(key + 'offduty', function () { return post('orgForceOff', { member: m.ref }); }, 'Off duty.');
+        }, 'M9'));
+      box.appendChild(r9);
     }
     if (orgHolds('M5')) {
       var maxH = orgBound('SuspendMaxHours');
@@ -9514,6 +9791,26 @@
       anonSlot.appendChild(toggle);
     }
     drawAnonOption();
+    // Sent to the hitman organisation instead of the open board, where the
+    // server offers it (Config.Organisation.OrgContracts): a boss there
+    // assigns it, and it goes on the open board if nobody takes it in time.
+    var toOrg = settings().orgContracts;
+    if (toOrg && typeof toOrg === 'object') {
+      var org = make('input');
+      org.type = 'checkbox'; org.id = 'to-org';
+      org.checked = state.draft.toOrg === true;
+      org.onclick = function () { state.draft.toOrg = org.checked; };
+      var orgToggle = document.createElement('label');
+      orgToggle.className = 'toggle';
+      orgToggle.htmlFor = 'to-org';
+      orgToggle.appendChild(org);
+      orgToggle.appendChild(el('span', null, 'Send to ' + String(toOrg.label || 'the organisation')
+        + ' (a boss assigns it; not taken within ' + durationText(Number(toOrg.minutes) || 30)
+        + ', it goes on the open board)'));
+      terms.appendChild(orgToggle);
+    } else {
+      state.draft.toOrg = false;
+    }
     // A pick that changes the rule: the option drawn again, and a box
     // ticked under the other rule unticked where this one allows none.
     placeAnonSync = function () {
@@ -10448,7 +10745,7 @@
     // that dialog's Place it was the second tap.
     var totalTaken = worth + creatorFee;
     var armKey = JSON.stringify([target, slots, bonusPct, creatorFee, num('bailout'),
-      num('penalty'), state.draft.mode || 'exclusive', state.draft.anon === true]);
+      num('penalty'), state.draft.mode || 'exclusive', state.draft.anon === true, state.draft.toOrg === true]);
     if (!(protectedTarget && state.leoConfirmed === true)
         && !(state.placeArmed && state.placeArmed.key === armKey)) {
       var armedAt = Date.now();
@@ -10501,7 +10798,10 @@
         feeAccount: anonymityAccount(),
         fulfilment: placingRule(),
         protectedAck: protectedAck
-      }
+      },
+      // Sent to the hitman organisation, only where it was ticked and the
+      // server offers it (left out of the request otherwise).
+      toOrg: state.draft.toOrg === true && settings().orgContracts ? true : undefined
     }).then(function (r) {
       if (!r.ok) {
         /* A fee or the rule changed from the admin panel while the form was

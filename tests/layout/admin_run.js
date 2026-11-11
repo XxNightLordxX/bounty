@@ -457,7 +457,18 @@ function serverStub() {
     balance: 1234567890, bank: true,
     applications: [{ id: 'hitman:app:1', name: LONG, body: REASON + ' ' + REASON, at: NOW - 300 }],
     powers: POWERS, warnings: ['qbx:max_jobs_per_player is 1: members lose their other job when hired.'],
-    layout: { labels: { members: 'Crew' }, hidden: { funds: [1] } } } };
+    layout: { labels: { members: 'Crew' }, hidden: { funds: [1] } },
+    // The organisation extras, every one on, at their longest.
+    extras: { OrgContracts: true, AcceptApproval: true, Probation: true, Duty: true, Channel: true, Dossiers: true,
+      work: {
+        contracts: [{ id: 'ct10000001', state: 'waiting', targetName: LONG, worth: 2000000000, expiresIn: 86400, staked: true },
+          { id: 'ct10000002', state: 'assigned', targetName: LONG, worth: 5000, expiresIn: 600,
+            member: { ref: 'm0_1000', name: LONG }, dossier: { notes: REASON + ' ' + REASON,
+              rulesText: 'Discreet: no witnesses, nothing in public', spot: { label: LONG } } }],
+        approvals: [{ id: 'ap1_1000', contractId: 'ct10000003', worth: 2000000000, expiresIn: 900, probation: true,
+          member: { ref: 'm0_1000', name: LONG } }],
+        spots: [{ id: 'hitman:meeting:1', label: LONG }] },
+      channel: [{ id: 'msg:1', from: LONG, body: REASON + ' ' + REASON, at: NOW - 60, member: 'm0_1000' }] } } };
   answers.orgFunds = { ok: true, data: { balance: 1234567890, bank: true, rows: (function () {
     const out = [];
     for (let i = 0; i < 15; i++) {
@@ -725,7 +736,7 @@ async function main() {
   const sections = ['inbox', 'overview', 'announce', 'players', 'pmeasures', 'pmoney', 'pplaytime',
     'phistory', 'pdiag', 'their-contracts', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
     'contracts:bytarget', 'gear:contracts', 'gear:tljobs', 'rules', 'presets', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
-    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'logs:org',
+    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'logs:org',
     'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];
 

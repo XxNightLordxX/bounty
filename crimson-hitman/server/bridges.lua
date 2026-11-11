@@ -714,7 +714,12 @@ function Bridges.install(modules)
     -- SetJobDuty fires QBCore:Server:SetDuty (source, onDuty), a local event,
     -- and not OnJobUpdate. Without it the change waited for the tick's
     -- access check, which now runs every 30 seconds rather than every ten.
-    AddEventHandler('QBCore:Server:SetDuty', jobChanged)
+    -- The hitman organisation's duty (Config.Organisation.Duty) takes in a
+    -- qbx duty change of its job too: one comparison while that is off.
+    AddEventHandler('QBCore:Server:SetDuty', function(src, onDuty)
+        jobChanged(src)
+        if modules.org and modules.org.Extras then pcall(modules.org.Extras.frameworkDuty, tonumber(src), onDuty) end
+    end)
 
     -- A player's own client is the only one that can reliably render their
     -- headshot, so the image arrives from them and is bounded on arrival.

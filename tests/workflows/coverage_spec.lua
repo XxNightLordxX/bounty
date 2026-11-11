@@ -125,6 +125,7 @@ local function report(items, screens)
         '| `tests/workflows/matrix_spec.lua` | The main flows (place, accept, handover, payout; a kill verified at the scene; a buyout; an intel purchase; the organisation\'s pay day; body disposal; staff freeze, reassign and reward change) in every configuration, on every store, with faults injected |',
         '| `tests/workflows/phone_spec.lua` | Every phone request through the real page callbacks and the real client |',
         '| `tests/workflows/org_phone_spec.lua` | The Organisation tab, boss and member, through the page |',
+        '| `tests/workflows/org_extras_spec.lua` | The organisation extras: contracts to it, approval, probation, duty, the channel, dossiers |',
         '| `tests/workflows/panel_spec.lua` | Every admin panel op through the panel page (adminRequest) |',
         '| `tests/workflows/surface_spec.lua` | Commands, server and client net events, engine and framework events, tick jobs, every switch |',
         '| `tests/ui/run.js`, `tests/ui/admin_run.js` | Every phone and panel screen\'s main path (tests named `workflow screen:<id>`) |',

@@ -852,6 +852,11 @@ ul, ol { list-style: none; }
 .org-powers td.detail { min-width: 12rem; }
 .org-notice { margin: 0; padding: 0.6rem 0.8rem; border-left: 2px solid var(--gold); background: var(--panel-2);
   white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The organisation extras (Work & channel): a dossier under its contract,
+   and one channel message. */
+.org-dossier { margin: 0.4rem 0; display: grid; gap: 0.3rem; }
+.org-message { display: grid; gap: 0.3rem; padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
+.org-message:last-child { border-bottom: none; }
 .bp-wrap { max-height: none; }
 .bp-grid th.bp-col { text-align: center; white-space: normal; min-width: 7rem; }
 .bp-col-name { display: block; color: var(--ink); text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }

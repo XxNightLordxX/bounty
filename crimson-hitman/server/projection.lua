@@ -39,6 +39,11 @@ local StaffContract
 --- Meeting.init; nil, and no 'What to do' line, without it.
 Projection.meetingSteps = nil
 
+--- Contracts held off the open board for the hitman organisation
+--- (server/org/extras.lua): [contractId] = the one viewer shown it, or
+--- false for nobody. nil while none is held.
+Projection.reserved = nil
+
 function Projection.init(deps)
     Storage, Identity, Escrow, Kidnap, Mugshot, Record, Comms, Informant, Notify =
         deps.storage, deps.identity, deps.escrow, deps.kidnap, deps.mugshot, deps.record,
@@ -485,6 +490,15 @@ local function listedFor(contract, viewerCid)
     -- A target is not shown their own contract in the public list; they see
     -- it in their own Cleanse tab, which is a different projection.
     if contract.target_cid == viewerCid then return false end
+
+    -- Held for the hitman organisation (Config.Organisation.OrgContracts,
+    -- server/org/extras.lua): shown only to the member it is assigned to.
+    -- nil while none is held.
+    local held = Projection.reserved
+    if held then
+        local holder = held[contract.id]
+        if holder ~= nil and holder ~= viewerCid then return false end
+    end
 
     return true
 end

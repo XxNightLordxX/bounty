@@ -35,6 +35,10 @@ Powers.LIST = {
       about = 'Set a member\'s contracts at once and cooldown between accepts.' },
     { code = 'M7', area = 'members', label = 'Assign codenames', feature = 'Codenames',
       about = 'Give a member below you a codename (Config.Organisation.Codenames).' },
+    { code = 'M8', area = 'members', label = 'End probation', feature = 'Probation',
+      about = 'Sign a member below you off probation before their completions are done.' },
+    { code = 'M9', area = 'members', label = 'Force off duty', feature = 'Duty',
+      about = 'Send a member below you off duty.' },
     -- Roles
     { code = 'R1', area = 'roles', label = 'Create roles', office = true, limits = { 'MaxRoles', 'PayMax' },
       about = 'Add a role below your rank.' },
@@ -72,6 +76,14 @@ Powers.LIST = {
     { code = 'K2', area = 'contracts', label = 'Assign / recommend', about = 'Pin a contract to a member as a boss pick.' },
     { code = 'K3', area = 'contracts', label = 'Role cooldowns', limits = { 'MemberCooldownMaxMinutes' },
       about = 'Set the cooldown between accepts for a role.' },
+    { code = 'K4', area = 'contracts', label = 'Assign organisation contracts', feature = 'OrgContracts',
+      about = 'Give a contract sent to the organisation to one member to take.' },
+    { code = 'K5', area = 'contracts', label = 'Reassign organisation contracts', feature = 'OrgContracts',
+      about = 'Move an assigned organisation contract to another member, or send it to the open board.' },
+    { code = 'K6', area = 'contracts', label = 'Approve accepts', feature = 'AcceptApproval',
+      about = 'Approve or refuse a member\'s accept that waits for approval.' },
+    { code = 'K7', area = 'contracts', label = 'Write dossiers', feature = 'Dossiers',
+      about = 'Attach notes, a meeting spot and the rules of engagement to an assigned organisation contract.' },
     -- Locations
     { code = 'L1', area = 'locations', label = 'Move the boss office', limits = { 'OfficeMoveMetres', 'LocationCooldownMinutes' },
       about = 'Move the office to where you stand, near the staff point.' },
@@ -83,6 +95,8 @@ Powers.LIST = {
     { code = 'N1', area = 'notices', label = 'Post notice', limits = { 'NoticeMaxLength' },
       about = 'Edit the board notice and message every member.' },
     { code = 'N2', area = 'notices', label = 'Applications', about = 'Read, accept or reject sign-ups.' },
+    { code = 'N3', area = 'notices', label = 'Moderate channel', feature = 'Channel', limits = { 'ChannelMuteMaxHours' },
+      about = 'Remove messages in the organisation channel and mute members below you.' },
     -- Settings
     { code = 'S1', area = 'settings', label = 'Organisation label', limits = { 'RenameCooldownMinutes' },
       about = 'Rename the organisation\'s display label (never the job name).' },
@@ -148,6 +162,7 @@ Powers.LIMIT_KEYS = {
     InviteMinutes = { min = 1, max = 1440 },
     SalaryMax = { min = 0, max = 1000000 }, PayrollPerDayMax = { min = 0, max = 100000000 },
     CodenameCooldownMinutes = { min = 0, max = 43200 },
+    ChannelMuteMaxHours = { min = 0, max = 720 },
 }
 
 --- One staff bound, clamped, from the organisation's own value or config.

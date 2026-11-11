@@ -1743,3 +1743,8 @@ button.ghost.org-row { width: 100%; justify-content: flex-start; text-align: lef
 .org-power-name.org-grey { color: var(--ink-faint); }
 .hint.org-ledger { margin-top: 0.15rem; font-family: var(--f-mono); font-size: 0.72rem; }
 .org-card textarea, .org-card input { width: 100%; box-sizing: border-box; }
+/* Organisation extras: an assigned contract, its dossier, a channel message. */
+.org-assigned, .org-message { padding: 0.45rem 0; border-bottom: 1px solid var(--line-soft); }
+.org-assigned:last-child, .org-message:last-child { border-bottom: none; }
+.org-dossier { margin-top: 0.4rem; padding-left: 0.6rem; border-left: 2px solid var(--line-strong); }
+.org-message.is-mine .org-notice { color: var(--ink-dim); }

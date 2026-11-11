@@ -124,6 +124,30 @@ member's acceptances are gated one at a time, and a gate that raises refuses
 internal ledger above zero. Off, both hooks read one switch and `Funds.taken`,
 and no request reads anything.
 
+Organisation extras 1 (`server/org/extras.lua`, each its own switch under
+`Config.Organisation`, off as shipped): its functions are copied onto `Org`
+(`Extras.attach`) and work on the same state, settings row and record. Contracts
+sent to the organisation (`OrgContracts`) are kept in `settings.orgContracts`
+by contract id (`waiting`, `assigned`, `taken`), never with the placer; the
+board's filter is `Projection.reserved` (`[contract id] = the one viewer shown it
+| false`), rebuilt on every change and nil while none is held, so `listedFor`
+pays one nil check. The accept gate asks, in order: `Extras.reservedRefusal`
+(first, members or not; staff acceptances pass), the existing member rules,
+`Extras.probationGate`, the cut, then `Extras.approvalGate` last, so an accept
+is held for approval only once every other rule of the organisation passed.
+A held accept keeps only what the page showed (`checkDisclosure`, `disclosed`,
+`shownBand`, `shown`) and whether it was anonymous (the gate's `out.anonymous`,
+set by `Contracts.accept`); approval sets `Approved[contract:cid]` around one
+`Contracts.accept`, which checks everything again. Probation counts
+`readStats(cid).completed` less the count kept when it began
+(`settings.probation`). Duty is in memory (`OnDuty`), told to qbx_core with the
+framework adapter's optional `SetJobDuty` where the job is the primary one, and
+`QBCore:Server:SetDuty` (heard in `bridges.lua`) is taken in. The channel is
+`crimson_org_messages` (schema `messages`), read once when first used, the last
+200 kept in memory; its posts are a `Window` per member. Dossiers sit on the
+`orgContracts` entry. One tick job, `org.extras` (its own 30 s gate), expires and
+prunes; with every switch off it compares one value.
+
 Joining: a boss's `Org.hire` is an invite held in memory (`Invites`, expiring
 after `Limits.InviteMinutes`), shown to the player as the board's `orgInvite`
 and in `orgMine`, answered by `orgInviteAnswer` (`Org.answerInvite`, the hire

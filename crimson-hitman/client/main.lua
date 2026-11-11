@@ -675,6 +675,10 @@ local UI_EVENTS = {
     'orgRoleCreate', 'orgRoleEdit', 'orgRoleDelete', 'orgRolePowers', 'orgRolePay', 'orgSalary',
     'orgBonus', 'orgSetCut', 'orgDeposit', 'orgWithdraw', 'orgAccess', 'orgPick', 'orgRoleCooldown',
     'orgPlaceHere', 'orgRemoveSpot', 'orgNotice', 'orgDecide', 'orgRename', 'orgLayout', 'orgOfficeRule',
+    -- And the organisation extras (each off as shipped): contracts sent to
+    -- the organisation, approvals, dossiers, probation, duty, the channel.
+    'orgWork', 'orgAssign', 'orgRelease', 'orgApprove', 'orgDossier', 'orgProbationEnd', 'orgDuty',
+    'orgForceOff', 'orgChannel', 'orgChannelPost', 'orgChannelRemove', 'orgChannelMute',
 }
 
 --------------------------------------------------------------------------

@@ -1955,7 +1955,7 @@ async function main() {
   function orgStub() {
     const all = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'D2', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2', 'P3',
       'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
-      'S1', 'S2', 'S3'];
+      'S1', 'S2', 'S3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3'];
     const held = {};
     const names = { TAKE: { label: 'Take contracts' } };
     all.forEach(function (c) { held[c] = true; names[c] = { label: 'A power with a long name ' + c }; });
@@ -1970,9 +1970,16 @@ async function main() {
         notice: 'Meet at the docks at nine. Bring nothing that rattles, and leave the phones in the car, all of them.',
         terms: { orgPercent: 15, youKeepPercent: 85, stakePercent: 5, buyoutPercent: 5 },
         payroll: { salary: 1000, nextIn: 86400 }, limits: { maxAtOnce: 2, cooldownMinutes: 30 },
+        // The organisation extras, every one on, with their longest words.
+        dutyOn: true, duty: { on: true, atOffice: true }, probationOn: true,
+        probation: { done: 2, need: 3, maxReward: 10000, noStake: true }, orgContracts: true, dossiers: true,
+        approval: true, channel: true, waiting: [{ contractId: 'ct00000099', expiresIn: 840 }],
+        assigned: [{ id: 'ct00000098', state: 'assigned', targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
+          expiresIn: 1700, dossier: { notes: 'Wait until the last ferry has gone, then go in through the loading bay.',
+            rulesText: 'Discreet: no witnesses, nothing in public', spot: { label: 'Under the pier, by the third pylon' } } }],
         bounds: { WithdrawMax: 50000, CutMaxPercent: 25, TotalCutCapPercent: 40, HireRadius: 5, HireMaxGrade: 1,
           SuspendMaxHours: 72, MemberMaxAtOnce: 3, MemberCooldownMaxMinutes: 120, PayMax: 500, BonusMax: 10000,
-          NoticeMaxLength: 500, OfficeMoveMetres: 150 },
+          NoticeMaxLength: 500, OfficeMoveMetres: 150, ChannelMuteMaxHours: 24 },
         layout: { labels: {}, hidden: {} } } },
       orgMembers: { ok: true, data: { rows: [
         { ref: 'm1_1', name: 'Maximilian Featherstonehaugh-Cholmondeley', grade: 0, role: 'Recruit', online: true,
@@ -1988,7 +1995,24 @@ async function main() {
         { kind: 'cut', amount: 1250, reason: 'payout' }] } },
       orgSpots: { ok: true, data: { rows: [{ id: 's1', kind: 'meeting', label: 'Under the pier, by the third pylon' },
         { id: 's2', kind: 'office', label: 'Office' }] } },
-      orgApplications: { ok: true, data: { rows: [{ id: 'a1', name: 'Ada Quill', body: 'Steady hands, quiet mouth.' }] } }
+      orgApplications: { ok: true, data: { rows: [{ id: 'a1', name: 'Ada Quill', body: 'Steady hands, quiet mouth.' }] } },
+      orgWork: { ok: true, data: {
+        contracts: [{ id: 'ct00000097', state: 'waiting', targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
+          worth: 1250000, expiresIn: 1700, staked: true },
+        { id: 'ct00000096', state: 'assigned', targetName: 'Dana Reyes', worth: 5000, expiresIn: 600,
+          member: { ref: 'm2_2', name: 'Kestrel' }, dossier: { notes: 'Quietly.', rulesText: 'Clean: the target only' } }],
+        approvals: [{ id: 'ap1_1', contractId: 'ct00000095', worth: 40000, expiresIn: 600, probation: true,
+          member: { ref: 'm1_1', name: 'Maximilian Featherstonehaugh-Cholmondeley' } }],
+        members: [{ ref: 'm1_1', name: 'Maximilian Featherstonehaugh-Cholmondeley', grade: 0, onDuty: true,
+          probation: true }, { ref: 'm2_2', name: 'Kestrel', grade: 2, onDuty: false }],
+        spots: [{ id: 's1', label: 'Under the pier, by the third pylon' }],
+        rules: [{ value: 'clean', label: 'Clean: the target only' },
+          { value: 'discreet', label: 'Discreet: no witnesses, nothing in public' },
+          { value: 'open', label: 'Open: whatever it takes' }] } },
+      orgChannel: { ok: true, data: { maxLength: 300, rows: [
+        { id: 'msg:1', from: 'Maximilian Featherstonehaugh-Cholmondeley', at: 1,
+          body: 'A message long enough to wrap over the card a few times, with nothing in it that is a link.',
+          member: 'm1_1' }, { id: 'msg:2', from: 'Nightjar (codename)', body: 'Short.', at: 2, mine: true }] } }
     };
     window.fetch = function (url) {
       const name = url.split('/crimson:')[1];
@@ -2024,7 +2048,8 @@ async function main() {
   await op.click('[data-tab="org"]');
   await op.waitForTimeout(250);
   await orgMeasure('home');
-  for (const screen of ['Members', 'Roles', 'Money', 'Contracts', 'Places', 'Notices', 'Applications', 'Settings']) {
+  for (const screen of ['Members', 'Roles', 'Money', 'Contracts', 'Assignments', 'Places', 'Notices', 'Applications',
+    'Settings', 'Open channel']) {
     await op.evaluate(function (label) {
       const b = Array.prototype.slice.call(document.querySelectorAll('main button'))
         .filter(function (n) { return n.textContent === label; })[0];
@@ -2052,7 +2077,7 @@ async function main() {
     atLeast(orgBar.smallest, 44, 'the smallest tab');
   });
   it('the Organisation tab at 390px: the member page and every boss screen fit, nothing sideways', function () {
-    truthy(orgShots.length === 9, 'every screen measured: ' + orgShots.map(function (s) { return s.name; }).join(','));
+    truthy(orgShots.length === 11, 'every screen measured: ' + orgShots.map(function (s) { return s.name; }).join(','));
     const bad = orgShots.filter(function (s) { return s.escaped.length || s.sideways || s.small.length; });
     truthy(bad.length === 0, JSON.stringify(bad).slice(0, 1500));
   });

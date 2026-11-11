@@ -609,7 +609,7 @@ function _G.newStack()
     escrow.scrubSerial = impScrub.scrub
     impWeekly.init({ storage = storage, audit = audit })
     org.init({ storage = storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
-               contracts = contracts, settings = settings, review = review })
+               contracts = contracts, settings = settings, review = review, projection = projection })
     -- The step markers and body disposal, as main.lua wires them.
     missionSteps.init({ identity = identity, storage = storage, death = death, kidnap = kidnap,
                         rpProtection = rpProtection })
@@ -757,12 +757,13 @@ local suites = {
     'review_x_spec',
     'org_phone_spec', 'org_payroll_spec', 'org_codename_spec',
     'org_phone_review_spec',
+    'org_extras_spec',
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
     'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'payout_checks_spec', 'lib_players_spec',
     'lib_feature_spec',
     'adapters_spec',
-    'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
+    'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
     'docs_spec',
 }
 

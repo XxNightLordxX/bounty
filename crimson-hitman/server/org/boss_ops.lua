@@ -177,6 +177,50 @@ local REQUESTS = {
     { 'orgInviteAnswer', 'orgWrite', 'any', function(actor, p)
         return answer(Org.answerInvite(actor, Text.field(p.id, 48), p.accept))
     end },
+    -- Organisation extras (server/org/extras.lua), each off as shipped ---
+    { 'orgWork', 'org', 'K4-K7', function(actor)
+        return answer(Org.work(who(actor)))
+    end },
+    { 'orgAssign', 'orgWrite', 'K4-K5', function(actor, p)
+        local cid = memberOf(actor, p)
+        if not cid then return answer(false, Org.ERR.NOT_FOUND) end
+        return answer(Org.assignContract(who(actor), Text.field(p.id, 64), cid))
+    end },
+    { 'orgRelease', 'orgWrite', 'K5', function(actor, p)
+        return answer(Org.releaseContract(who(actor), Text.field(p.id, 64)))
+    end },
+    { 'orgApprove', 'orgWrite', 'K6', function(actor, p)
+        return answer(Org.decideAccept(who(actor), Text.field(p.id, 24), p.approve))
+    end },
+    { 'orgDossier', 'orgWrite', 'K7', function(actor, p)
+        if p.clear == true then return answer(Org.writeDossier(who(actor), Text.field(p.id, 64), false)) end
+        local notes = p.notes ~= nil and Text.field(p.notes, 8000) or nil
+        if p.notes ~= nil and not notes then return answer(false, Org.ERR.INVALID) end
+        return answer(Org.writeDossier(who(actor), Text.field(p.id, 64), { notes = notes,
+            spot = p.spot ~= nil and (Text.field(p.spot, 48) or 0) or nil,
+            rules = p.rules ~= nil and (Text.field(p.rules, 16) or 0) or nil }))
+    end },
+    { 'orgProbationEnd', 'orgWrite', 'M8', function(actor, p)
+        return answer(Org.setProbation(who(actor), memberOf(actor, p), true))
+    end },
+    { 'orgDuty', 'orgWrite', 'member', function(actor, p)
+        return answer(Org.setDuty(actor, p.on))
+    end },
+    { 'orgForceOff', 'orgWrite', 'M9', function(actor, p)
+        return answer(Org.forceOffDuty(who(actor), memberOf(actor, p)))
+    end },
+    { 'orgChannel', 'org', 'member', function(actor, p)
+        return answer(Org.channelRead(who(actor), tonumber(p.limit)))
+    end },
+    { 'orgChannelPost', 'orgWrite', 'member', function(actor, p)
+        return answer(Org.channelPost(who(actor), Text.field(p.text, 8000)))
+    end },
+    { 'orgChannelRemove', 'orgWrite', 'N3', function(actor, p)
+        return answer(Org.channelRemove(who(actor), Text.field(p.id, 64)))
+    end },
+    { 'orgChannelMute', 'orgWrite', 'N3', function(actor, p)
+        return answer(Org.channelMute(who(actor), memberOf(actor, p), p.hours))
+    end },
     -- Settings ----------------------------------------------------------
     { 'orgRename', 'orgWrite', 'S1', function(actor, p)
         return answer(Org.rename(who(actor), Text.field(p.label, 128)))

@@ -58,6 +58,11 @@ Schema.TABLES = {
         columns = { 'id', 'org_id', 'cid', 'name', 'body', 'state', 'decided_by', 'created_at', 'decided_at' },
         by = 'org_id',
     },
+    messages = {
+        table = 'crimson_org_messages',
+        columns = { 'id', 'org_id', 'cid', 'name', 'body', 'created_at' },
+        by = 'org_id',
+    },
 }
 
 --- The statements each table is read, written and deleted with.
@@ -147,6 +152,17 @@ Schema.SQL = {
         insert = [[INSERT INTO crimson_org_applications (id, org_id, cid, name, body, state, decided_by, created_at,
             decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)]],
         delete = 'DELETE FROM crimson_org_applications WHERE id = ?',
+    },
+    messages = {
+        all = 'SELECT * FROM crimson_org_messages',
+        by = 'SELECT * FROM crimson_org_messages WHERE org_id = ?',
+        one = 'SELECT * FROM crimson_org_messages WHERE id = ?',
+        upsert = [[INSERT INTO crimson_org_messages (id, org_id, cid, name, body, created_at)
+            VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE org_id = VALUES(org_id), cid = VALUES(cid),
+            name = VALUES(name), body = VALUES(body), created_at = VALUES(created_at)]],
+        insert = [[INSERT INTO crimson_org_messages (id, org_id, cid, name, body, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)]],
+        delete = 'DELETE FROM crimson_org_messages WHERE id = ?',
     },
 }
 
@@ -256,9 +272,20 @@ Schema.CREATE = {
         decided_at INT,
         INDEX idx_org_applications_org (org_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+    -- The private channel (Config.Organisation.Channel): one row a message,
+    -- kept Config.Organisation.ChannelRetentionDays.
+    [[CREATE TABLE IF NOT EXISTS crimson_org_messages (
+        id VARCHAR(64) PRIMARY KEY,
+        org_id VARCHAR(32) NOT NULL,
+        cid VARCHAR(32) NOT NULL,
+        name VARCHAR(64),
+        body TEXT,
+        created_at INT NOT NULL,
+        INDEX idx_org_messages_org (org_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
 }
 
 --- The short names, for a backend to walk.
-Schema.NAMES = { 'orgs', 'roles', 'members', 'grants', 'funds', 'splits', 'applications' }
+Schema.NAMES = { 'orgs', 'roles', 'members', 'grants', 'funds', 'splits', 'applications', 'messages' }
 
 return Schema

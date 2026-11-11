@@ -2089,7 +2089,7 @@ function StartCrimsonHitman()
     -- After escrow, contracts and settings: it hooks the payout
     -- (Escrow.orgCut), the accept (Contracts.acceptGate) and its switch.
     org.init({ storage = Storage, identity = identity, audit = audit, notify = notify, escrow = escrow,
-               contracts = contracts, settings = settings, review = review })
+               contracts = contracts, settings = settings, review = review, projection = projection })
     -- After death, kidnap and the bodyguards, whose steps it draws, and after
     -- the EMS rule, which disposal chains ahead of (Contracts.relistHold).
     -- Its hold is a payout check (server/payout.lua), asked ahead of proof
@@ -2719,6 +2719,7 @@ local MONEY_JOBS = {
 --- them (jobInterval). A function where it is a setting.
 local SELF_GATED = {
     ['playtime.pass'] = 60,                 -- Playtime.PASS_SECONDS
+    ['org.extras'] = 30,                    -- the organisation extras' own gate (Org.extrasTick)
     ['contracts.finishEndings'] = 30,       -- FINISH_ENDINGS_EVERY_SECONDS, sooner with more
     ['ledger.forgetOldPhotos'] = 600,       -- FORGET_EVERY_SECONDS, sooner with a backlog
     ['storage.prune'] = 600,                -- PRUNE_EVERY_SECONDS, sooner with a backlog
@@ -2975,6 +2976,9 @@ function Tick()
     -- The organisation's pay day (Config.Organisation.Payroll): nothing while
     -- off, and one comparison until the pay day comes (Org.payrollTick).
     if modules.org and modules.org.payrollTick then job('org.payroll', modules.org.payrollTick) end
+    -- The organisation extras' clocks (server/org/extras.lua): one comparison
+    -- while they are off, at most one pass a minute while on.
+    if modules.org and modules.org.extrasTick then job('org.extras', modules.org.extrasTick) end
     if modules.thresholds then every('thresholds.sweep', modules.thresholds.sweep, now) end
     -- Targets recovering from a kill on a contract, looked at
     -- (Config.Roleplay.EmsRelisting): nothing while it is off.

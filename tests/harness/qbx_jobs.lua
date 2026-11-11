@@ -14,6 +14,8 @@
 ---     onGroupUpdate with nil and no OnJobUpdate.
 ---   * SetPlayerPrimaryJob needs the job held ('player_not_in_job'), sets
 ---     onduty to defaultDuty and fires QBCore:Server:OnJobUpdate.
+---   * SetJobDuty sets the primary job's onduty and fires
+---     QBCore:Server:SetDuty (source, onduty).
 ---   * Renewed-Banking's add/removeAccountMoney validate nothing: a negative
 ---     amount moves the balance the other way, as there.
 ---
@@ -213,6 +215,18 @@ function QbxJobs.install()
             fire('QBCore:Server:OnJobUpdate', src, copy(player.PlayerData.job))
         end
         return true
+    end
+    -- server/player.lua SetJobDuty(identifier, onDuty): the primary job's
+    -- onduty set, then QBCore:Server:SetDuty fired (a server event) with
+    -- the source and the new duty.
+    core.SetJobDuty = function(_, identifier, onDuty)
+        note('SetJobDuty', identifier, onDuty)
+        local src = type(identifier) == 'number' and identifier or Env.byCitizen[identifier]
+        local player = src and Env.players[src]
+        if not player then return end
+        player.PlayerData.job = player.PlayerData.job or {}
+        player.PlayerData.job.onduty = not not onDuty
+        fire('QBCore:Server:SetDuty', src, player.PlayerData.job.onduty)
     end
     core.GetGroupMembers = function(_, name)
         local out = {}

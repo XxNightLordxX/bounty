@@ -416,6 +416,11 @@ describe('what this suite really covered', function()
     -- org_powers_spec ("answers ok to a boss holding the power") and their own specs.
     ELSEWHERE.orgCodename = 'org_powers_spec / org_codename_spec, through the net event'
     ELSEWHERE.orgSalary = 'org_powers_spec / org_payroll_spec, through the net event'
+    -- The organisation extras (off as shipped), through the net event in
+    -- org_powers_spec ("answers ok to a boss holding the power") and org_extras_spec.
+    for _, name in ipairs({ 'orgWork', 'orgAssign', 'orgRelease', 'orgApprove', 'orgDossier', 'orgProbationEnd', 'orgDuty', 'orgForceOff', 'orgChannel', 'orgChannelPost', 'orgChannelRemove', 'orgChannelMute' }) do
+        ELSEWHERE[name] = 'org_powers_spec / org_extras_spec, through the net event'
+    end
 
     it('got an ok from every handler the server registers', function()
         local App = require('crimson-hitman.server.app')

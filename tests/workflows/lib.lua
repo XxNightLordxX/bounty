@@ -108,6 +108,7 @@ W.ALL_ON_SKIPPED = {
     ['Database.Json.SyncOnFinancialWrite'] = 'read-only; on as shipped',
     ['Completion.RejectLastStand'] = 'read-only; on as shipped',
     ['Debug'] = 'console noise only; driven by the console workflow',
+    ['Organisation.AcceptApproval'] = 'holds every member accept for a boss: driven by org_extras_spec',
 }
 
 --- Every switch of the settings catalogue, by key.

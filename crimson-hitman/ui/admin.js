@@ -286,7 +286,7 @@
       logs: ['logs:settings', 'Change history'] },
     // The hitman organisation (server/org/), off as shipped.
     { id: 'org', head: 'Setup', label: 'Hitman organisation', icon: 'people-group',
-      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices'],
+      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork'],
       logs: ['logs:org', 'Org audit'] },
     { id: 'bossperms', head: 'Setup', label: 'Boss permissions', icon: 'key',
       views: ['bpmatrix', 'bplimits', 'bpoffice'], logs: ['logs:grants', 'Grant history'] },
@@ -309,6 +309,7 @@
     orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
     orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
     orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'],
+    orgwork: ['Work & channel', 'briefcase'],
     bpmatrix: ['Matrix', 'table-cells'], bplimits: ['Limits', 'sliders'], bpoffice: ['Delegation & office', 'building'],
     locations: ['Map points', 'location-dot'],
     logs: ['Logs', 'list-ul'], alerts: ['Alerts', 'bell'],
@@ -342,6 +343,7 @@
     orgfunds: 'The organisation\'s money and the cut it takes of contracts.',
     orgaccess: 'Which contracts the organisation\'s members may take.',
     orgnotices: 'Notices pinned for the organisation\'s members.',
+    orgwork: 'Contracts sent to the organisation, accepts waiting, probation, duty, the channel and dossiers.',
     bpmatrix: 'What each boss role, and each boss, may do in the organisation.',
     bplimits: 'The limits on each boss power.',
     bpoffice: 'Which powers bosses may hand down, and which need the boss office.',
@@ -366,7 +368,7 @@
   var PLAYER_VIEWS = { players: true, pmeasures: true, pmoney: true, pplaytime: true,
                        phistory: true, pdiag: true };
   var ORG_VIEWS = { orgsetup: true, orgroles: true, orgmembers: true, orgapps: true, orgfunds: true,
-                    orgaccess: true, orgnotices: true };
+                    orgaccess: true, orgnotices: true, orgwork: true };
   var BP_VIEWS = { bpmatrix: true, bplimits: true, bpoffice: true };
   var SECTIONS = [];
   GROUPS.forEach(function (g) { SECTIONS = SECTIONS.concat(g.views); });
@@ -4487,6 +4489,7 @@
     tljobs: { view: 'tldefaults' }, tlplayer: { view: 'tldefaults' },
     orgroles: { view: 'orgsetup' }, orgmembers: { view: 'orgsetup' }, orgapps: { view: 'orgsetup' },
     orgfunds: { view: 'orgsetup' }, orgaccess: { view: 'orgsetup' }, orgnotices: { view: 'orgsetup' },
+    orgwork: { view: 'orgsetup' },
     bpmatrix: { view: 'bplimits' }, bpoffice: { view: 'bplimits' },
     logs: { areas: ['staff'] }, alerts: { areas: ['staff'] },
     health: { view: 'devsettings' }, console: { view: 'devsettings' }, tools: { view: 'devsettings' }
@@ -8100,7 +8103,7 @@
      section is one card saying so, with its switch. */
 
   function orgReset() {
-    S.org = { data: null, error: null, answers: {}, funds: null, fundsError: null, audit: null, auditError: null,
+    S.org = { work: { member: {}, spot: {}, rules: {} }, data: null, error: null, answers: {}, funds: null, fundsError: null, audit: null, auditError: null,
       auditAction: '', member: null, role: null, nonce: null, dir: 'deposit', bonusTo: '', newGrade: null,
       layout: null, hire: null, history: null, historyError: null,
       bp: { pending: {}, cols: [], area: '', granted: false, col: '', add: '' },
@@ -8117,7 +8120,11 @@
     'org_cut_set', 'org_cut', 'org_split_frozen', 'org_access', 'org_pick', 'org_funds_deposit',
     'org_funds_withdraw', 'org_funds_staff_deposit', 'org_bonus', 'org_location_set', 'org_location_removed',
     'org_notice', 'org_applied', 'org_application', 'org_renamed', 'org_layout', 'org_external_adopted',
-    'org_external_reverted', 'org_funds_unrecorded', 'org_setup'];
+    'org_external_reverted', 'org_funds_unrecorded', 'org_setup',
+    'org_contract_received', 'org_contract_assigned', 'org_contract_reassigned', 'org_contract_released',
+    'org_accept_requested', 'org_accept_approved', 'org_accept_refused', 'org_accept_expired',
+    'org_probation', 'org_probation_passed', 'org_duty', 'org_duty_forced', 'org_channel_post',
+    'org_channel_removed', 'org_channel_mute', 'org_dossier'];
 
   function loadOrg() {
     return ask('orgGet', {}, 'orgGet').then(function (reply) {
@@ -8205,6 +8212,7 @@
       case 'orgfunds': return orgFundsBody(d);
       case 'orgaccess': return orgAccessBody(d);
       case 'orgnotices': return orgNoticesBody(d);
+      case 'orgwork': return orgWorkBody(d);
       case 'bpmatrix': return bpMatrixBody(d);
       case 'bplimits': return bpLimitsBody(d);
       case 'bpoffice': return bpOfficeBody(d);
@@ -8716,6 +8724,152 @@
         text ? writeBtn('.ghost', 'org-notice-clear', {}, 'Take it down', 'Click again: take the notice down', 'eraser')
           : null),
       orgAnswer('notice')));
+  }
+
+  /* -- Work & channel: the organisation extras (server/org/extras.lua) -- */
+
+  var DOSSIER_RULES = [{ value: 'discreet', label: 'Discreet' }, { value: 'clean', label: 'Clean' },
+    { value: 'open', label: 'Open' }];
+
+  DD['org-work-member'] = {
+    prefix: 'To',
+    options: function () {
+      return [{ value: '', label: 'Pick a member' }].concat(asList((S.org.data || {}).members).map(function (m) {
+        return { value: String(m.ref), label: String(m.name || 'member') + (m.onDuty === false ? ' (off duty)' : '') };
+      }));
+    },
+    value: function (id) { return S.org.work.member[id] || ''; },
+    pick: function (v, id) { disarm(); S.org.work.member[id] = v; }
+  };
+  DD['org-work-spot'] = {
+    prefix: 'Meet at',
+    options: function () {
+      var w = ((S.org.data || {}).extras || {}).work || {};
+      return [{ value: '', label: 'No spot' }].concat(asList(w.spots).map(function (p) {
+        return { value: String(p.id), label: String(p.label || 'Meeting spot') };
+      }));
+    },
+    value: function (id) { return S.org.work.spot[id] || ''; },
+    pick: function (v, id) { disarm(); S.org.work.spot[id] = v; }
+  };
+
+  function dossierText(dz) {
+    if (!dz) return null;
+    return h('div.org-dossier',
+      dz.notes ? h('blockquote.org-notice', String(dz.notes)) : null,
+      h('p.sub', [dz.spot ? 'Meet at ' + String(dz.spot.label || 'a meeting spot') : null,
+        dz.rulesText ? String(dz.rulesText) : null].filter(Boolean).join(' · ') || 'Notes only'));
+  }
+
+  function orgWorkBody(d) {
+    var x = d.extras;
+    if (!x) {
+      return card('Every extra is switched off', h('p.about', 'Contracts to the organisation, accept approval, '
+        + 'probation, duty, the private channel and dossiers are each a switch in Setup, all off as shipped. '
+        + 'Each boss power they add is its own row in Boss permissions, off until you allow it.'), '.is-warn');
+    }
+    var w = x.work || {};
+    var parts = [];
+    if (x.AcceptApproval) {
+      var aps = asList(w.approvals);
+      parts.push(card('Accepts waiting for approval', aps.length ? h('div.stack', aps.map(function (a) {
+        var id = String(a.id);
+        var who = String((a.member && a.member.name) || 'a member');
+        return h('article.card',
+          h('header.card-head', h('h3', who + ' · ' + String(a.contractId || '')),
+            h('span.sub', 'about ' + Math.max(1, Math.ceil((Number(a.expiresIn) || 0) / 60)) + ' min left')),
+          h('p.sub', 'Worth ' + money(a.worth) + (a.probation ? ', on probation' : '') + '. Nothing is taken until '
+            + 'it is approved.'),
+          h('div.btn-row',
+            writeBtn('.primary', 'org-work-approve', { 'data-id': id, 'data-value': 'yes' }, 'Approve',
+              'Click again: run ' + who + '\'s accept now', 'check'),
+            writeBtn('.danger', 'org-work-approve', { 'data-id': id, 'data-value': 'no' }, 'Refuse',
+              'Click again: refuse it; nothing was taken', 'xmark')),
+          orgAnswer('ap:' + id));
+      })) : empty('No accept waits for approval.'), '', h('span.sub', num(aps.length))));
+    }
+    if (x.OrgContracts) {
+      var cs = asList(w.contracts);
+      parts.push(card('Contracts sent to the organisation', cs.length ? h('div.stack', cs.map(function (c) {
+        var id = String(c.id);
+        var who = c.member ? String(c.member.name || 'a member') : null;
+        return h('article.card',
+          h('header.card-head', h('h3', String(c.targetName || 'A contract') + ' · ' + id),
+            h('span.sub', c.state === 'waiting' ? 'not assigned' : c.state === 'taken' ? 'taken by ' + who
+              : 'assigned to ' + who)),
+          h('p.sub', 'Worth ' + money(c.worth) + (c.staked ? ', staked' : '') + (c.expiresIn
+            ? '. On the open board in about ' + Math.max(1, Math.ceil(Number(c.expiresIn) / 60)) + ' min.' : '.')),
+          c.state !== 'taken' ? h('div.toolbar', dropdown('org-work-member:' + id),
+            writeBtn('.primary', 'org-work-assign', { 'data-id': id }, c.state === 'waiting' ? 'Assign' : 'Reassign',
+              'Click again: give it to the member picked', 'user-check'),
+            writeBtn('.ghost', 'org-work-release', { 'data-id': id }, 'Send to the open board',
+              'Click again: put it on the open board now', 'share')) : null,
+          x.Dossiers ? dossierText(c.dossier) : null,
+          x.Dossiers && c.state !== 'waiting' ? frag(
+            h('div.toolbar', field('org.dossier.' + id, { class: 'is-grow', maxlength: '2000',
+              placeholder: 'Dossier notes (no citizen ids)', 'aria-label': 'Dossier notes' })),
+            h('div.toolbar', dropdown('org-work-spot:' + id),
+              segmented('org-work-rules', DOSSIER_RULES, S.org.work.rules[id] || '', { 'data-id': id }),
+              writeBtn('.ghost', 'org-work-dossier', { 'data-id': id }, 'Save dossier', 'Click again: save it', 'file-pen'),
+              c.dossier ? writeBtn('.ghost', 'org-work-dclear', { 'data-id': id }, 'Clear',
+                'Click again: clear the dossier', 'eraser') : null)) : null,
+          orgAnswer('work:' + id));
+      })) : empty('Nothing sent to the organisation is waiting. Placers tick Send to the organisation on the form.'),
+      '', h('span.sub', num(cs.length))));
+    }
+    var members = asList(d.members);
+    if (x.Probation) {
+      var pro = members.filter(function (m) { return m.probation; });
+      parts.push(card('On probation', pro.length ? h('div.stack', pro.map(function (m) {
+        var ref = String(m.ref);
+        return h('div.toolbar', h('span.is-grow', String(m.name || 'member') + ' · ' + (Number(m.probation.done) || 0)
+          + ' of ' + (Number(m.probation.need) || 0) + ' completions'),
+          writeBtn('.ghost', 'org-probation', { 'data-ref': ref, 'data-value': 'yes' }, 'End probation',
+            'Click again: end ' + String(m.name || 'their') + ' probation', 'check'),
+          orgAnswer('pro:' + ref));
+      })) : empty('Nobody is on probation.')));
+      var back = members.filter(function (m) { return !m.probation; });
+      if (back.length) {
+        parts.push(card('Put on probation again', h('div.stack', back.map(function (m) {
+          var ref = String(m.ref);
+          return h('div.toolbar', h('span.is-grow', String(m.name || 'member')),
+            writeBtn('.ghost', 'org-probation', { 'data-ref': ref, 'data-value': 'no' }, 'Probation again',
+              'Click again: put them on probation, counted from now', 'rotate-left'),
+            orgAnswer('pro:' + ref));
+        }))));
+      }
+    }
+    if (x.Duty) {
+      var on = members.filter(function (m) { return m.onDuty; });
+      parts.push(card('On duty', on.length ? h('div.stack', on.map(function (m) {
+        var ref = String(m.ref);
+        return h('div.toolbar', h('span.is-grow', String(m.name || 'member')),
+          writeBtn('.ghost', 'org-duty-off', { 'data-ref': ref }, 'Send off duty',
+            'Click again: send ' + String(m.name || 'them') + ' off duty', 'power-off'),
+          orgAnswer('duty:' + ref));
+      })) : empty('Nobody is on duty.'), '', h('span.sub', num(on.length))));
+    }
+    if (x.Channel) {
+      var msgs = asList(x.channel);
+      parts.push(card('The channel', frag(
+        msgs.length ? h('div.stack', msgs.map(function (r) {
+          var id = String(r.id);
+          return h('div.org-message',
+            h('p.sub', String(r.from || 'A member') + (r.at ? ' · ' + ago(r.at) : '')),
+            h('blockquote.org-notice', String(r.body || '')),
+            h('div.btn-row',
+              writeBtn('.ghost', 'org-chan-remove', { 'data-id': id }, 'Remove', 'Click again: remove it', 'trash'),
+              r.member ? writeBtn('.ghost', 'org-chan-mute', { 'data-ref': String(r.member) }, 'Mute',
+                'Click again: mute the writer for the hours below', 'volume-xmark') : null),
+            orgAnswer('msg:' + id));
+        })) : empty('No messages yet.'),
+        h('div.toolbar', field('org.mute.hours', { type: 'number', min: '0', max: '720', value: '24',
+          'aria-label': 'Mute for hours' }), h('span.sub', 'hours a mute lasts (0 lifts it)')),
+        h('div.toolbar', field('org.channel', { class: 'is-grow', maxlength: '1000', placeholder: 'Write as Staff',
+          'aria-label': 'Message' }), writeBtn('.primary', 'org-chan-post', {}, 'Post', 'Click again: post it', 'paper-plane')),
+        orgAnswer('chan')), '', h('span.sub', num(msgs.length))));
+    }
+    return h('div.stack', parts.length ? parts : [empty('Turn a switch on in Setup.')]);
   }
 
   /* -- Org audit -- */
@@ -9642,6 +9796,73 @@
     var id = node.getAttribute('data-id');
     if (!armed(node)) return;
     orgWrite('orgApplication', { id: id, accept: node.getAttribute('data-value') === 'yes' }, 'app:' + id, node);
+  };
+
+  /* The organisation extras' clicks (Work & channel). */
+  ACTIONS['org-work-assign'] = function (node) {
+    var id = node.getAttribute('data-id');
+    var member = S.org.work.member[id];
+    if (!member) { orgRefuse('work:' + id, 'Pick the member first.'); return; }
+    if (!armed(node)) return;
+    orgWrite('orgContractAssign', { id: id, member: member }, 'work:' + id, node);
+  };
+  ACTIONS['org-work-release'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgContractAssign', { id: id, release: true }, 'work:' + id, node);
+  };
+  ACTIONS['org-work-approve'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgAcceptDecide', { id: id, approve: node.getAttribute('data-value') === 'yes' }, 'ap:' + id, node);
+  };
+  ACTIONS['org-work-rules'] = function (node) {
+    disarm();
+    S.org.work.rules[node.getAttribute('data-id')] = node.getAttribute('data-value');
+    drawOrg();
+  };
+  ACTIONS['org-work-dossier'] = function (node) {
+    var id = node.getAttribute('data-id');
+    var notes = trim(S.forms['org.dossier.' + id]);
+    var data = { id: id };
+    if (notes) data.notes = notes;
+    if (S.org.work.spot[id]) data.spot = S.org.work.spot[id];
+    if (S.org.work.rules[id]) data.rules = S.org.work.rules[id];
+    if (!data.notes && !data.spot && !data.rules) { orgRefuse('work:' + id, 'Write notes, or pick a spot or the rules.'); return; }
+    if (!armed(node, null, ['org.dossier.' + id])) return;
+    orgWrite('orgDossier', data, 'work:' + id, node, function () { delete S.forms['org.dossier.' + id]; });
+  };
+  ACTIONS['org-work-dclear'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgDossier', { id: id, clear: true }, 'work:' + id, node);
+  };
+  ACTIONS['org-probation'] = function (node) {
+    var ref = node.getAttribute('data-ref');
+    if (!armed(node)) return;
+    orgWrite('orgProbation', { member: ref, passed: node.getAttribute('data-value') === 'yes' }, 'pro:' + ref, node);
+  };
+  ACTIONS['org-duty-off'] = function (node) {
+    var ref = node.getAttribute('data-ref');
+    if (!armed(node)) return;
+    orgWrite('orgDutyOff', { member: ref }, 'duty:' + ref, node);
+  };
+  ACTIONS['org-chan-remove'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgChannelRemove', { id: id }, 'msg:' + id, node);
+  };
+  ACTIONS['org-chan-mute'] = function (node) {
+    var raw = trim(S.forms['org.mute.hours'] == null ? '24' : S.forms['org.mute.hours']);
+    if (!/^\d+$/.test(raw)) { orgRefuse('chan', 'Hours: a whole number, 0 lifts a mute.'); return; }
+    if (!armed(node, null, ['org.mute.hours'])) return;
+    orgWrite('orgChannelMute', { member: node.getAttribute('data-ref'), hours: parseInt(raw, 10) }, 'chan', node);
+  };
+  ACTIONS['org-chan-post'] = function (node) {
+    var text = trim(S.forms['org.channel']);
+    if (!text) { orgRefuse('chan', 'Write the message.'); return; }
+    if (!armed(node, null, ['org.channel'])) return;
+    orgWrite('orgChannelPost', { text: text }, 'chan', node, function () { delete S.forms['org.channel']; });
   };
 
   ACTIONS['org-dir'] = function (node) { disarm(); S.org.dir = node.getAttribute('data-value'); drawOrg(); };

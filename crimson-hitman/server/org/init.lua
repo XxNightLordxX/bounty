@@ -28,13 +28,14 @@ local Funds = CrimsonBoot.require('server.org.funds')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Places = CrimsonBoot.require('server.places')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local Extras = CrimsonBoot.require('server.org.extras')
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
 
 local Org = {}
 
-Org.Powers, Org.Engine, Org.Jobs, Org.Funds = Powers, Engine, Jobs, Funds
+Org.Powers, Org.Engine, Org.Jobs, Org.Funds, Org.Extras = Powers, Engine, Jobs, Funds, Extras
 
 local deps
 
@@ -94,6 +95,7 @@ Org.ERR = {
     RULE = 'org_rule', ALREADY = 'org_already', OFF_DUTY = 'org_off_duty',
     NOT_HELD = 'org_not_held', BANK_DOWN = 'org_bank_down', INVALID = CH.ERR.INVALID_INPUT,
     NAME_TAKEN = 'org_name_taken', NAME_BLOCKED = 'org_name_blocked', FEATURE_OFF = 'org_feature_off',
+    RESERVED = 'org_reserved', APPROVAL = 'org_approval', PROBATION = 'org_probation',
 }
 local ERR = Org.ERR
 
@@ -122,6 +124,9 @@ local MESSAGES = {
     org_name_taken = 'Another member already goes by that codename.',
     org_name_blocked = 'That codename is not allowed. Pick another.',
     org_feature_off = 'Staff have not switched that on for the organisation.',
+    org_reserved = 'That contract is held for the organisation.',
+    org_approval = 'Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.',
+    org_probation = 'On probation you may not take that contract yet.',
     invalid_input = 'Check what was entered.',
 }
 
@@ -202,6 +207,11 @@ local function settingsOf(raw)
     -- bank refused whose give-back to the funds is to be tried again.
     s.payroll.pending = type(s.payroll.pending) == 'table' and s.payroll.pending or {}
     s.payroll.refunds = type(s.payroll.refunds) == 'table' and s.payroll.refunds or {}
+    -- Organisation extras (server/org/extras.lua): contracts sent to the
+    -- organisation, probation counts and channel mutes, by contract or cid.
+    s.orgContracts = type(s.orgContracts) == 'table' and s.orgContracts or {}
+    s.probation = type(s.probation) == 'table' and s.probation or {}
+    s.channelMutes = type(s.channelMutes) == 'table' and s.channelMutes or {}
     return s
 end
 
@@ -288,6 +298,7 @@ function Org.init(d)
     Paying, PaidHere = {}, {}
     Jobs.reset()
     Funds.init({ storage = d.storage, audit = d.audit })
+    Extras.init(d)
     Places.attach(d.storage)
     registerSpots()
     -- The money path's two hooks, which read one switch while it is off.
@@ -316,6 +327,7 @@ function Org.boot(live)
     if not Feature.on('Organisation') then
         if live and State then
             State = nil
+            Extras.rebuild()
             Org.pushSpotsAll()
         end
         return false
@@ -333,6 +345,7 @@ function Org.boot(live)
         RegisteredSeq = Seq
     end
     Funds.ensureAccount(State)
+    Extras.loaded()
     Org.resync()
     Org.pushSpotsAll()
     return true
@@ -377,6 +390,7 @@ function Org.validate(warn)
         end
     end
     if type(cfg.NpcModel) ~= 'string' or not cfg.NpcModel:match('^[%w_]+$') then back('NpcModel', 'must be a ped model name') end
+    Extras.validate(warn)
     if type(cfg.Limits) ~= 'table' then
         back('Limits', 'must be a table')
     else
@@ -515,6 +529,11 @@ function Org.playerLoaded(src)
     if src then
         Seq = Seq + 1
         LoadedSeq[src] = Seq
+        -- A character in again starts off duty (Config.Organisation.Duty).
+        if Extras.on('Duty') then
+            local actor = deps.identity.resolve(src)
+            if actor then Extras.playerLoaded(actor.cid) end
+        end
     end
     Org.reconcile(src)
     Org.pushSpots(src)
@@ -1569,6 +1588,8 @@ end
 function Org.afterAccept(actor, contractId, gate)
     local org = Org.current()
     if not org or type(actor) ~= 'table' then return end
+    -- An organisation contract taken (Config.Organisation.OrgContracts).
+    Extras.afterAccept(org, actor, contractId)
     LastAccept[actor.cid] = now()
     local terms
     if type(gate) == 'table' then
@@ -1668,6 +1689,9 @@ function Org.acceptGate(actor, contractId, opts, out)
     if not Feature.on('Organisation') then return nil end
     local org = State
     if not org or type(actor) ~= 'table' then return nil end
+    -- Held for the organisation (OrgContracts): only its assigned member.
+    local held, heldData = Extras.reservedRefusal(org, actor, contractId, opts)
+    if held then return held, heldData end
     local member = org.members[actor.cid]
     local cfg = Config.Organisation
     if not member then
@@ -1716,12 +1740,19 @@ function Org.acceptGate(actor, contractId, opts, out)
     if wait > 0 and LastAccept[actor.cid] and now() - LastAccept[actor.cid] < wait * 60 then
         return ERR.COOLDOWN, { retryAfter = wait * 60 - (now() - LastAccept[actor.cid]) }
     end
+    -- Probation's limits (Config.Organisation.Probation).
+    local barred, barredData = Extras.probationGate(org, member, actor, contractId, contract, opts, out)
+    if barred then return barred, barredData end
     -- The cut, read once: the one the page must have shown (its board card
     -- says it, and the accept echoes it), and the one frozen.
     local terms = Org.termsFor(actor.cid)
     if type(opts) == 'table' and opts.checkDisclosure and shownCut(opts) ~= terms.orgPercent then
         return CH.ERR.TERMS_CHANGED, { orgCut = terms.orgPercent }
     end
+    -- Last, once every other rule passed: an accept that waits for a boss
+    -- (Config.Organisation.AcceptApproval). Nothing is taken while it does.
+    local waits, waitData = Extras.approvalGate(org, member, actor, contractId, opts, out)
+    if waits then return waits, waitData end
     if type(out) == 'table' then out.terms = terms end
     return nil
 end
@@ -2698,6 +2729,7 @@ local function memberView(org, viewer, m, full)
         joined = m.joined_at, suspendedUntil = m.suspended_until, locked = m.locked or nil,
         boss = role and role.is_boss or nil,
     }
+    Extras.memberView(org, m, out)
     if full then
         out.grants, out.denies = {}, {}
         for code, entry in pairs(m.grants) do
@@ -2768,6 +2800,7 @@ function Org.mine(actor)
     local role = org.roles[member.grade]
     local held = Engine.held(org, actor.cid)
     local office, bounds = {}, {}
+    local out
     for code in pairs(held) do
         if Engine.needsOffice(org, code) then office[code] = true end
         -- The staff bounds of the powers they hold, for the boss menu to
@@ -2775,7 +2808,7 @@ function Org.mine(actor)
         local spec = Powers.BY_CODE[code]
         for _, key in ipairs(spec and spec.limits or {}) do bounds[key] = Powers.limit(org, key) end
     end
-    return {
+    out = {
         enabled = true, member = true, label = org.label, grade = member.grade, role = role and role.label,
         powers = held, officeOnly = office, inOffice = Org.inOffice(org, actor.source), bounds = bounds,
         -- What each power is called, for the powers editor of a boss who
@@ -2797,6 +2830,10 @@ function Org.mine(actor)
         -- Placeholder: a member's own record lands here (plan R11).
         stats = nil,
     }
+    -- Duty, probation, assigned contracts, approvals and the channel, each
+    -- only while its switch is on (server/org/extras.lua).
+    Extras.mine(org, member, out)
+    return out
 end
 
 --- The roster (M1).
@@ -2865,7 +2902,7 @@ function Org.staffView(viewer)
     for key in pairs(Powers.LIMIT_KEYS) do limits[key] = Powers.limit(org, key) end
     local officeStaff = type(org.settings.officeStaff) == 'table' and org.settings.officeStaff or Powers.officeDefaults()
     local _, _, apps = Org.applications({ staff = true })
-    return {
+    local view = {
         enabled = true, loaded = true, job = org.job, label = org.label, type = org.jobType,
         requireJob = Config.Organisation.RequireJobToAccept == true,
         roles = roles and roles.rows or {}, members = members and members.rows or {}, ceiling = ceiling,
@@ -2882,6 +2919,13 @@ function Org.staffView(viewer)
             paySuspended = Config.Organisation.PaySuspended == true,
             perDayMax = Powers.limit(org, 'PayrollPerDayMax') } or nil,
     }
+    -- Organisation extras (server/org/extras.lua), each only while on.
+    Extras.staffView(org, viewer, view)
+    return view
 end
+
+Extras.attach(Org, {
+    fail = fail, record = record, save = function() saveOrgRow() end, deps = function() return deps end,
+})
 
 return Org

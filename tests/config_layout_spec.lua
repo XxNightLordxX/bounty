@@ -227,6 +227,12 @@ local ADDED = {
         CodenameBlocked = { 'admin', 'staff', 'moderator', 'police' }, Payroll = false, PayrollDays = 7,
         -- Whether suspended members are paid (the organisation review), off.
         PaySuspended = false,
+        -- Organisation extras 1 (plan R2-R5, R7, R8), each its own switch, off.
+        OrgContracts = false, AssignMinutes = 30, AcceptApproval = false, ApprovalAbove = 25000,
+        ApprovalProbation = true, ApprovalMinutes = 15, Probation = false, ProbationMaxGrade = 0,
+        ProbationCompletions = 3, ProbationMaxReward = 10000, ProbationNoStake = true, Duty = false,
+        DutyAtOffice = false, Channel = false, ChannelRetentionDays = 7, ChannelMaxLength = 300,
+        ChannelPerMinute = 6, Dossiers = false, DossierMaxLength = 600,
         Roles = { '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no',
             '2, lieutenant, Lieutenant, 0, no', '3, boss, Boss, 0, yes' },
         Limits = {
@@ -237,6 +243,7 @@ local ADDED = {
             BuyoutCutMaxPercent = 25, OfficeMoveMetres = 150.0, LocationCooldownMinutes = 60,
             MaxSignupSpots = 2, MaxMeetingSpots = 5, NoticeMaxLength = 500, RenameCooldownMinutes = 1440,
             InviteMinutes = 10, SalaryMax = 1000, CodenameCooldownMinutes = 1440, PayrollPerDayMax = 0,
+            ChannelMuteMaxHours = 24,
         },
     },
     ['Cooldowns.org'] = { per = 10, burst = 20 },
@@ -560,7 +567,9 @@ describe('the configuration as one short file', function()
         -- and its eleven-line table; the three settings it took in
         -- (DeathStateProviders' four lines, Funds, Progression's Resource)
         -- are gone.
-        truthy(lines < 904, 'config.lua is ' .. lines .. ' lines')
+        -- And the organisation extras 1 (step R2-R8): their one comment line,
+        -- nineteen settings and one staff bound.
+        truthy(lines < 925, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

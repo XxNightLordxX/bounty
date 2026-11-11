@@ -31,10 +31,11 @@ describe('the powers as constants', function()
         end
         for _, code in ipairs({ 'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2',
             'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
-            'S1', 'S2', 'S3', 'D2', 'D3', 'M7', 'P3' }) do
+            'S1', 'S2', 'S3', 'D2', 'D3', 'M7', 'P3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3' }) do
             truthy(codes[code], code)
         end
-        eq(#Powers.LIST, 35, 'the 31 area powers, D2, D3 (D1 is R4), and M7, P3 (codenames, payroll)')
+        eq(#Powers.LIST, 42, 'the 31 area powers, D2, D3 (D1 is R4), M7, P3 (codenames, payroll), and the '
+            .. 'extras K4-K7, M8, M9, N3')
         eq(Powers.resolve('D1'), 'R4')
         eq(Powers.resolve('TAKE'), nil, 'TAKE is no boss power')
         eq(Powers.resolve('TAKE', true), 'TAKE')
@@ -256,8 +257,11 @@ describe('rank, self and the last boss', function()
         W.office(s)
         W.at(11, 100.0, 100.0)
         truthy(s.org.setLimits(W.STAFF, { FireCooldownMinutes = 10, PromotionsPerDay = 2 }))
-        truthy(s.org.hire(W.STAFF, { cid = 'HITMAN01', name = 'Rook', source = 3 }, 0))
         truthy(s.org.hire(W.STAFF, { cid = 'CREATOR1', name = 'Pawn', source = 1 }, 0))
+        -- Its own member to fire first, never one an earlier test left in the job.
+        if not s.org.current().members.HITMAN01 then
+            truthy(s.org.hire(W.STAFF, { cid = 'HITMAN01', name = 'Rook', source = 3 }, 0))
+        end
         truthy(s.org.fire(BOSS, 'HITMAN01', 'gone'))
         local ok, err = s.org.fire(BOSS, 'CREATOR1', 'too soon')
         eq(err, 'org_cooldown', 'a second fire inside the cooldown')
@@ -381,6 +385,12 @@ describe('every phone request, through its net event', function()
             Config.Integrations.Banking = 'none'
             Config.Organisation.Codenames = true
             Config.Organisation.Payroll = true
+            -- And the extras (server/org/extras.lua).
+            for _, key in ipairs({ 'OrgContracts', 'AcceptApproval', 'Probation', 'Duty', 'Channel', 'Dossiers' }) do
+                Config.Organisation[key] = true
+            end
+            Config.Organisation.ApprovalAbove = 0
+            Config.Organisation.ProbationMaxGrade = -1 + 0
         end })
         for _, p in ipairs(require('server.org.powers').LIST) do W.allow(s, 3, p.code) end
         truthy(s.org.setLimits(W.STAFF, { LocationCooldownMinutes = 0 }))
@@ -442,6 +452,37 @@ describe('every phone request, through its net event', function()
         okd.orgApply = true
         local apps = ok('orgApplications', {})
         ok('orgDecide', { id = apps.rows[1].id, accept = false })
+        -- The extras: duty, a contract sent to the organisation assigned,
+        -- moved and released, a dossier, an accept approved, the channel.
+        ok('orgDuty', { on = true })
+        local lieut = ref(2)
+        eq(W.call('orgDuty', 12, { on = true }).ok, true)
+        local sent, why = W.place(s, f.creator, 'READER01', { mode = CH.MODE.EXCLUSIVE })
+        assert(sent, tostring(why))
+        truthy(s.org.receiveContract(sent.id, f.creator.cid))
+        ok('orgWork', {})
+        ok('orgAssign', { id = sent.id, member = lieut })
+        ok('orgPlaceHere', { kind = 'meeting', label = 'Pier' })
+        local pier
+        for _, l in pairs(org.locations) do if l.kind == 'meeting' then pier = l.id end end
+        ok('orgDossier', { id = sent.id, notes = 'Quietly.', spot = pier, rules = 'discreet' })
+        ok('orgRelease', { id = sent.id })
+        local wanted = assert(W.place(s, f.creator, 'HITMAN01', { mode = CH.MODE.EXCLUSIVE }))
+        eq(W.call('accept', 12, { id = wanted.id, shown = { orgCut = 5 } }).err, 'org_approval', 'every accept waits here')
+        local waiting = ok('orgWork', {}).approvals
+        ok('orgApprove', { id = waiting[1].id, approve = true })
+        ok('orgForceOff', { member = lieut })
+        ok('orgChannelPost', { text = 'Evening, all.' })
+        eq(W.call('orgChannelPost', 12, { text = 'Evening, boss.' }).ok, true)
+        local said = ok('orgChannel', {}).rows
+        ok('orgChannelMute', { member = lieut, hours = 1 })
+        for _, m in ipairs(said) do
+            if not m.mine then ok('orgChannelRemove', { id = m.id }) end
+        end
+        Config.Organisation.ProbationMaxGrade = 0
+        local rookie
+        for _, m in ipairs(ok('orgMembers', {}).rows) do if m.probation then rookie = m.ref end end
+        ok('orgProbationEnd', { member = rookie })
         local missing = {}
         for _, entry in ipairs(require('server.org.boss_ops').LIST) do
             if not okd[entry.name] then missing[#missing + 1] = entry.name end

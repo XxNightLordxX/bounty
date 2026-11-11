@@ -5703,7 +5703,7 @@ async function main() {
   await (async function placeFormTotals() {
     async function place(opts) {
       const app = boot({
-        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: opts.settings || {} } },
         mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
         ledger: LEDGER,
         searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Ann Ryder' }] },
@@ -5735,6 +5735,10 @@ async function main() {
         if (field) { field.value = String(value); if (field.oninput) { field.oninput(); } }
       }
       Object.keys(opts.fields).forEach(function (id) { set(id, opts.fields[id]); });
+      if (opts.tick) {
+        const box = app.view.all().filter(function (n) { return n._id === opts.tick || n.id === opts.tick; })[0];
+        if (box) { box.checked = true; box.onclick(); }
+      }
       app.view.all().filter(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
       })[0].onclick(); confirmPlace(app);
@@ -5748,6 +5752,24 @@ async function main() {
       eq(created(exact), 0, 'sent for a refusal the page could have seen');
       truthy(exact.notice().indexOf('15,000') !== -1 && exact.notice().indexOf('bonus') !== -1,
         exact.notice());
+    });
+
+    // Send to the organisation (Config.Organisation.OrgContracts): offered
+    // only where the server says, sent only where it was ticked.
+    const toOrgSettings = { orgContracts: { label: 'Crimson Contractors', minutes: 30 } };
+    const ticked = await place({ cash: 10000, settings: toOrgSettings, tick: 'to-org',
+      fields: { 'slot-cash-1': 1000, bonus: 0 } });
+    const unticked = await place({ cash: 10000, settings: toOrgSettings, fields: { 'slot-cash-1': 1000, bonus: 0 } });
+    const notOffered = await place({ cash: 10000, fields: { 'slot-cash-1': 1000, bonus: 0 } });
+    it('ORG EXTRAS: Send to the organisation is offered where the server says, and sent only ticked', function () {
+      const sent = ticked.sent.filter(function (x) { return x.name === 'create'; });
+      eq(sent.length, 1, ticked.notice());
+      eq(sent[0].body.toOrg, true);
+      const plain = unticked.sent.filter(function (x) { return x.name === 'create'; });
+      eq(plain.length, 1);
+      eq(plain[0].body.toOrg, undefined, 'not ticked: not sent');
+      eq(notOffered.view.all().filter(function (n) { return n._id === 'to-org' || n.id === 'to-org'; }).length, 0,
+        'not drawn where the server does not offer it');
     });
 
     const noBonus = await place({ cash: 10000, fields: { 'slot-cash-1': 10000, bonus: 0 } });
@@ -14943,6 +14965,134 @@ async function main() {
       truthy(invited.view.textContent.indexOf('You are invited to join Crimson Contractors') !== -1,
         invited.view.textContent);
       truthy(buttons(invited).indexOf('Accept') !== -1 && buttons(invited).indexOf('Decline') !== -1);
+    });
+
+    // Organisation extras 1: duty, probation, assigned contracts, the
+    // channel, and a boss's Assignments screen (each only while on).
+    const extrasOff = await openOrg(memberMine([], { role: 'Recruit', grade: 0 }));
+    it('ORG EXTRAS: nothing of the extras is drawn while their switches are off', function () {
+      const text = extrasOff.view.textContent;
+      ['Duty', 'Probation', 'Assigned to you', 'Channel', 'Waiting for approval'].forEach(function (w) {
+        eq(text.indexOf(w), -1, w + ' not drawn');
+      });
+    });
+    const onDuty = await openOrg(memberMine([], { role: 'Recruit', grade: 0, dutyOn: true, duty: { on: false },
+      probationOn: true, probation: { done: 1, need: 3, maxReward: 10000, noStake: true },
+      orgContracts: true, approval: true, waiting: [{ contractId: 'ct00000009', expiresIn: 600 }],
+      channel: true }), { orgDuty: function () { return { ok: true, data: { onDuty: true } }; } });
+    const dutyText = onDuty.view.textContent;
+    click(onDuty, 'Go on duty');
+    await settle();
+    const dutyAfterOne = onDuty.orgSent.filter(function (x) { return x.name === 'orgDuty'; }).length;
+    click(onDuty, 'Tap again to go on duty');
+    await settle(); await settle(); await settle();
+    it('ORG EXTRAS: a member sees duty, probation, an accept waiting, and goes on duty with two taps', function () {
+      truthy(dutyText.indexOf('You are off duty') !== -1, dutyText);
+      truthy(dutyText.indexOf('1 of 3 completions done') !== -1, 'probation counted');
+      truthy(dutyText.indexOf('none with a stake') !== -1);
+      truthy(dutyText.indexOf('ct00000009 waits for a boss') !== -1, 'the accept waiting');
+      truthy(dutyText.indexOf('Go on duty to see what the organisation assigned you') !== -1);
+      eq(dutyAfterOne, 0, 'nothing on the first tap');
+      const sent = onDuty.orgSent.filter(function (x) { return x.name === 'orgDuty'; });
+      eq(sent.length, 1);
+      eq(JSON.stringify(sent[0].body), '{"on":true}', 'only the switch, nothing else');
+      drewCleanly(onDuty);
+    });
+    const withWork = await openOrg(memberMine([], { role: 'Recruit', grade: 0, orgContracts: true, dossiers: true,
+      assigned: [{ id: 'ct00000011', state: 'assigned', targetName: 'Dana Reyes', expiresIn: 900,
+        dossier: { notes: '<img src=x onerror=alert(1)>Wait for dark', rulesText: 'Discreet: no witnesses',
+          spot: { id: 'hitman:meeting:1', label: 'Pier' } } }] }));
+    it('ORG EXTRAS: an assigned contract and its dossier, every word as text', function () {
+      const text = withWork.view.textContent;
+      truthy(text.indexOf('Dana Reyes · ct00000011') !== -1, text);
+      truthy(text.indexOf('Meet at: Pier') !== -1);
+      truthy(text.indexOf('Rules of engagement: Discreet') !== -1);
+      truthy(text.indexOf('<img src=x onerror=alert(1)>Wait for dark') !== -1, 'markup shown as text');
+      eq(withWork.view.all().filter(function (n) { return n.tagName === 'IMG'; }).length, 0, 'never an element');
+      drewCleanly(withWork);
+    });
+
+    const WORK = { ok: true, data: {
+      contracts: [{ id: 'ct00000021', state: 'waiting', targetName: 'Dana Reyes', worth: 5000, expiresIn: 1200 },
+        { id: 'ct00000022', state: 'assigned', targetName: 'Sam Hale', worth: 9000, expiresIn: 600,
+          member: { ref: 'm1_1111', name: 'Kestrel' } }],
+      approvals: [{ id: 'ap1_1234', contractId: 'ct00000023', worth: 40000, expiresIn: 600,
+        member: { ref: 'm1_1111', name: 'Kestrel' } }],
+      members: [{ ref: 'm1_1111', name: 'Kestrel', grade: 0, onDuty: true }],
+      spots: [{ id: 'hitman:meeting:1', label: 'Pier' }],
+      rules: [{ value: 'clean', label: 'Clean: the target only' }, { value: 'discreet', label: 'Discreet' }] } };
+    const boss = await openOrg(memberMine(['K4', 'K5', 'K6', 'K7'], { orgContracts: true, approval: true,
+      dossiers: true }), { orgWork: WORK });
+    const bossMenu = buttons(boss);
+    await screen(boss, 'Assignments');
+    const workText = boss.view.textContent;
+    click(boss, 'Approve');
+    await settle();
+    click(boss, 'Tap again to approve');
+    await settle(); await settle(); await settle();
+    click(boss, 'Kestrel');
+    await settle();
+    click(boss, 'Assign');
+    await settle();
+    click(boss, 'Tap again to assign it');
+    await settle(); await settle(); await settle();
+    type(boss, 'ct00000022-notes', 'Quietly');
+    click(boss, 'Save dossier');
+    await settle();
+    click(boss, 'Tap again to save it');
+    await settle(); await settle(); await settle();
+    it('ORG EXTRAS: the Assignments screen approves, assigns and saves a dossier, each with two taps', function () {
+      truthy(bossMenu.indexOf('Assignments') !== -1, bossMenu.join('|'));
+      truthy(workText.indexOf('Who placed them is never shown') !== -1, workText);
+      truthy(workText.indexOf('Worth $40,000') !== -1 || workText.indexOf('Worth $40000') !== -1, workText);
+      const ap = boss.orgSent.filter(function (x) { return x.name === 'orgApprove'; });
+      eq(ap.length, 1);
+      eq(JSON.stringify(ap[0].body), '{"id":"ap1_1234","approve":true}');
+      const as = boss.orgSent.filter(function (x) { return x.name === 'orgAssign'; });
+      eq(as.length, 1);
+      eq(as[0].body.id, 'ct00000021');
+      eq(as[0].body.member, 'm1_1111');
+      const dz = boss.orgSent.filter(function (x) { return x.name === 'orgDossier'; });
+      eq(dz.length, 1);
+      eq(dz[0].body.id, 'ct00000022');
+      eq(dz[0].body.notes, 'Quietly');
+      drewCleanly(boss);
+    });
+    const noPower = await openOrg(memberMine(['K4'], { orgContracts: false }), { orgWork: WORK });
+    it('ORG EXTRAS: a power whose switch is off draws no screen', function () {
+      eq(buttons(noPower).indexOf('Assignments'), -1);
+    });
+
+    const CHANNEL = { ok: true, data: { maxLength: 300, rows: [
+      { id: 'msg:1', from: 'Kestrel', body: '<b>hi</b> all', at: 1, member: 'm1_1111' },
+      { id: 'msg:2', from: 'P11', body: 'mine', at: 2, mine: true }] } };
+    const chat = await openOrg(memberMine(['N3'], { channel: true }), { orgChannel: CHANNEL,
+      orgChannelPost: function () { return { ok: true, data: { id: 'msg:3' } }; },
+      orgChannelRemove: function () { return { ok: true, data: { done: true } }; } });
+    click(chat, 'Open channel');
+    await settle(); await settle(); await settle();
+    const chatText = chat.view.textContent;
+    type(chat, 'channel-text', 'Evening');
+    click(chat, 'Send');
+    await settle();
+    const sentAfterOne = chat.orgSent.filter(function (x) { return x.name === 'orgChannelPost'; }).length;
+    click(chat, 'Tap again to send');
+    await settle(); await settle(); await settle();
+    click(chat, 'Remove');
+    await settle();
+    click(chat, 'Tap again to remove it');
+    await settle(); await settle(); await settle();
+    it('ORG EXTRAS: the channel reads as text, sends and removes with two taps', function () {
+      truthy(chatText.indexOf('<b>hi</b> all') !== -1, 'markup as text: ' + chatText);
+      eq(chat.view.all().filter(function (n) { return n.tagName === 'B'; }).length, 0);
+      eq(sentAfterOne, 0);
+      const posts = chat.orgSent.filter(function (x) { return x.name === 'orgChannelPost'; });
+      eq(posts.length, 1);
+      eq(JSON.stringify(posts[0].body), '{"text":"Evening"}');
+      const rm = chat.orgSent.filter(function (x) { return x.name === 'orgChannelRemove'; });
+      eq(rm.length, 1);
+      eq(rm[0].body.id, 'msg:1');
+      drewCleanly(chat);
     });
 
     it('ORG TAB: the page words every org_* refusal the server can send', function () {

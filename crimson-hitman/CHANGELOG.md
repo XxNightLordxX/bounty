@@ -5,6 +5,19 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Organisation extras** (each its own switch under `Config.Organisation`, off as shipped)
+- **Contracts to the organisation** (`OrgContracts`): a placer may send a
+  contract to the organisation; a boss assigns it to a member, and it goes on
+  the open board if nobody takes it within `AssignMinutes`. The placer is never
+  shown to the organisation.
+- **Accept approval** (`AcceptApproval`): bigger accepts, or any on probation,
+  wait for a boss; nothing is taken while they wait.
+- **Probation** (`Probation`), **Duty** (`Duty`, with qbx_core's duty), a
+  **private channel** (`Channel`, table `crimson_org_messages`) and
+  **dossiers** (`Dossiers`) on assigned organisation contracts.
+- Seven new Boss permissions rows (K4-K7, M8, M9, N3), off until staff allow
+  them; staff do all of it from Hitman organisation, Work & channel.
+
 **Lighter loops**
 - The condition sampler no longer runs while no contract is running; it
   starts again the moment one is placed. `ch-diag` says `idle` meanwhile.

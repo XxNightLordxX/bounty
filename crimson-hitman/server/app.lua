@@ -1158,6 +1158,16 @@ function App.register()
             return false, CH.ERR.NOT_FOUND
         end
 
+        -- Sent to the hitman organisation instead of the open board
+        -- (Config.Organisation.OrgContracts, off as shipped): refused before
+        -- anything is placed or charged where it cannot be.
+        local toOrg = payload.toOrg == true
+        if toOrg then
+            if not (deps.org and deps.org.sendRefusal) then return false, 'org_off' end
+            local refused, data = deps.org.sendRefusal()
+            if refused then return false, refused, data end
+        end
+
         local contract, err, refusal = deps.contracts.create(actor, {
             targetCid     = targetCid,
             reason        = payload.reason,
@@ -1176,12 +1186,15 @@ function App.register()
             shown         = type(payload.shown) == 'table' and payload.shown or {},
         })
         if not contract then return false, err, refusal end
+        -- Held for the organisation before anybody else can take it.
+        local sent = toOrg and deps.org.receiveContract(contract.id, actor.cid) or nil
         -- Counted for the staff alert thresholds (server/thresholds.lua).
         if deps.thresholds then pcall(deps.thresholds.placed, actor.cid, contract.target_cid) end
         local reply = deps.projection.contract(contract, actor.cid)
         -- On success the third is the anonymity fee taken, for the
         -- confirmation to name.
         if reply and refusal then reply.charged = refusal end
+        if reply and toOrg then reply.sentToOrg = sent == true end
         return reply
     end)
 

@@ -1164,7 +1164,7 @@ end)
 --- The jobs of a feature that is off as shipped, or a staff tool's clock:
 --- with their features off, none calls the store at all in ten minutes.
 local QUIET_OFF = { 'record.tick', 'imp_decay.tick', 'imp_weekly.tick', 'rp.tick', 'rp_intent.sweep',
-    'rp_protection.sweep', 'informant.retryUnsaved', 'rp_places.announce', 'org.payroll', 'disposal.tick',
+    'rp_protection.sweep', 'informant.retryUnsaved', 'rp_places.announce', 'org.payroll', 'org.extras', 'disposal.tick',
     'mission_steps.tick', 'summary.tick', 'thresholds.sweep', 'target_limits.prune', 'holds.tick',
     'sanctions.tick', 'holds.syncAppPause', 'amendments.expire', 'death.sweep', 'ratelimit.sweep',
     'app.sweepHandles', 'app.sweepFloodCounters', 'escrow.retryWaiting', 'notify.deliverKept',

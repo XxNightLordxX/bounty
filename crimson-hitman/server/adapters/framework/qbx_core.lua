@@ -45,5 +45,8 @@ function Adapter.RemoveJobGrade(...) return exports.qbx_core:RemoveJobGrade(...)
 function Adapter.AddPlayerToJob(...) return exports.qbx_core:AddPlayerToJob(...) end
 function Adapter.SetPlayerPrimaryJob(...) return exports.qbx_core:SetPlayerPrimaryJob(...) end
 function Adapter.RemovePlayerFromJob(...) return exports.qbx_core:RemovePlayerFromJob(...) end
+-- The duty of the player's primary job (server/player.lua: SetJobDuty(identifier,
+-- onDuty)); optional: an adapter without it leaves qbx duty as it is.
+function Adapter.SetJobDuty(...) return exports.qbx_core:SetJobDuty(...) end
 
 return Adapter

@@ -742,6 +742,26 @@ Config.Organisation = {
     Payroll            = false,                  -- a salary per role, paid from the funds every pay day
     PayrollDays        = 7,                      -- days between two pay days
     PaySuspended       = false,                  -- suspended members are paid their salary too
+    -- Organisation extras (README, Organisation extras), each its own switch, off.
+    OrgContracts       = false,                  -- placers may send a contract to the organisation
+    AssignMinutes      = 30,                     -- minutes to assign it, then to take it, before the open board
+    AcceptApproval     = false,                  -- members' bigger accepts wait for a boss's approval
+    ApprovalAbove      = 25000,                  -- accepts worth more than this wait ($; 0 = every one)
+    ApprovalProbation  = true,                   -- every accept of a member on probation waits too
+    ApprovalMinutes    = 15,                     -- minutes an accept waits before it is refused
+    Probation          = false,                  -- new members take only small contracts at first
+    ProbationMaxGrade  = 0,                      -- members at or below this grade are on probation
+    ProbationCompletions = 3,                    -- completions that end it (0 = only a sign-off)
+    ProbationMaxReward = 10000,                  -- most a contract on probation pays ($)
+    ProbationNoStake   = true,                   -- no staked contracts on probation
+    Duty               = false,                  -- members clock in; only those on duty get organisation contracts
+    DutyAtOffice       = false,                  -- clock in only at the boss office
+    Channel            = false,                  -- a private message channel in the Organisation tab
+    ChannelRetentionDays = 7,                    -- days a message is kept
+    ChannelMaxLength   = 300,                    -- characters in one message
+    ChannelPerMinute   = 6,                      -- messages one member sends a minute
+    Dossiers           = false,                  -- briefings on assigned organisation contracts
+    DossierMaxLength   = 600,                    -- characters in a dossier's notes
     Roles              = { -- the roles made with it: 'grade, name, label, pay, boss'
         '0, recruit, Recruit, 0, no',
         '1, operative, Operative, 0, no',
@@ -777,6 +797,7 @@ Config.Organisation = {
         SalaryMax                = 1000,    -- most salary a boss sets per role per pay day ($)
         PayrollPerDayMax         = 0,       -- most paid in salaries in all on one pay day ($); 0 = no cap
         CodenameCooldownMinutes  = 1440,    -- minutes between two own codename changes
+        ChannelMuteMaxHours      = 24,      -- longest a boss mutes a member in the channel (hours)
     },
 }
 -- ============================================================================

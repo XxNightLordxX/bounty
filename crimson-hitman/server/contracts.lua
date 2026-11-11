@@ -2095,8 +2095,9 @@ function Contracts.accept(actor, contractId, anonymous, opts)
     -- the player, so two of theirs at once cannot both pass a limit or a
     -- cooldown, and the cut it checked is the one frozen (Org.afterAccept,
     -- told inside the same hold). A gate that raised refuses: a rule that
-    -- could not be checked is not passed.
-    local gate = {}
+    -- could not be checked is not passed. It is told whether they asked to
+    -- go on anonymously, for an accept it holds for approval to run later.
+    local gate = { anonymous = anonymous == true }
     local out = table.pack(Contracts.serialized({ 'contract:' .. contractId, 'hitman:' .. tostring(actor.cid) },
         function()
             if Contracts.acceptGate then
@@ -2135,7 +2136,7 @@ function Contracts.acceptHeld(actor, contractId, anonymous, opts)
     -- The organisation's gate as Contracts.accept asks it: inside this
     -- hitman's hold, a gate that raised refusing, and the cut it checked
     -- the one frozen (Org.afterAccept, told inside the same hold).
-    local gate = {}
+    local gate = { anonymous = anonymous == true }
     local dry = type(opts) == 'table' and opts.dryRun == true
     local out = table.pack(Contracts.serialized({ 'hitman:' .. tostring(actor.cid) }, function()
         if Contracts.acceptGate then

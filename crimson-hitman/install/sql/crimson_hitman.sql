@@ -12,7 +12,7 @@
 --
 -- mysql is the shipped mode; in json mode nothing here is used.
 --
--- The 32 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
+-- The 33 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
 -- crimson_amendments, crimson_messages, crimson_ledger, crimson_pending,
 -- crimson_stats, crimson_audit, crimson_reveals, crimson_placer_informants,
 -- crimson_mutes, crimson_photos, crimson_review, crimson_settings,
@@ -21,10 +21,10 @@
 -- crimson_staff_records, crimson_meta and crimson_rp_rows (the roleplay and
 -- improvements features' rows: proof-of-intent holds, bodyguard jobs, heat,
 -- decay steps, tip warnings, going dark, EMS holds, the map spots staff set
--- and the like), and the hitman organisation's seven (Config.Organisation,
+-- and the like), and the hitman organisation's eight (Config.Organisation,
 -- off as shipped): crimson_orgs, crimson_org_roles, crimson_org_members,
--- crimson_org_grants, crimson_org_funds, crimson_org_splits and
--- crimson_org_applications.
+-- crimson_org_grants, crimson_org_funds, crimson_org_splits,
+-- crimson_org_applications and crimson_org_messages.
 --
 -- These are the same statements as server/storage/mysql.lua runs, word for
 -- word: utf8mb4 with utf8mb4_unicode_ci, as qbx_core's own tables are, and
@@ -564,4 +564,16 @@ CREATE TABLE IF NOT EXISTS crimson_org_applications (
     created_at INT NOT NULL,
     decided_at INT,
     INDEX idx_org_applications_org (org_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- The private channel (Config.Organisation.Channel): one row a message,
+-- kept Config.Organisation.ChannelRetentionDays.
+CREATE TABLE IF NOT EXISTS crimson_org_messages (
+    id VARCHAR(64) PRIMARY KEY,
+    org_id VARCHAR(32) NOT NULL,
+    cid VARCHAR(32) NOT NULL,
+    name VARCHAR(64),
+    body TEXT,
+    created_at INT NOT NULL,
+    INDEX idx_org_messages_org (org_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
