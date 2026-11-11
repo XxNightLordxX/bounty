@@ -239,6 +239,14 @@ local ADDED = {
         StatsBandLong = 480, Discipline = false, StrikeDecayDays = 30, StrikeSuspendAt = 3, StrikeSuspendHours = 48,
         StrikeDemoteAt = 0, Recruitment = false, RecruitQuestions = 5, RecruitAnswerMax = 300, RecruitNoteMax = 500,
         RecruitCooldownHours = 24, RecruitPerHour = 10,
+        -- Organisation extras 3 (plan R1, R14-R20), each its own switch, off.
+        SeveralOrganisations = false, MaxOrganisations = 3,
+        Reputation = false, RepCompletion = 10, RepFailure = 15, RepHeat = 2,
+        RepTiers = { '0, Unknown, 25000', '100, Known, 75000', '300, Trusted, 200000', '700, Elite, 0' },
+        DeadDrops = false, DeadDropMinutes = 60, DeadDropUnclaimed = 'pay', Territory = false, TerritoryMinutes = 5,
+        TerritorySightMetres = 75.0, Garage = false, GarageVehicles = {}, GarageMaxOut = 3, GarageKeepMinutes = 60,
+        GarageReturnMetres = 15.0, InternalContracts = false, InternalExpireHours = 24, Handler = false,
+        HandlerAssigns = true, ActivityLog = false, ActivityKeep = 200,
         Roles = { '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no',
             '2, lieutenant, Lieutenant, 0, no', '3, boss, Boss, 0, yes' },
         Limits = {
@@ -577,7 +585,9 @@ describe('the configuration as one short file', function()
         -- nineteen settings and one staff bound.
         -- And the organisation extras 2 (R9, R11-R13): their one comment
         -- line, twenty-one settings and three staff bounds.
-        truthy(lines < 950, 'config.lua is ' .. lines .. ' lines')
+        -- And the organisation extras 3 (R1, R14-R20): their one comment
+        -- line and their settings.
+        truthy(lines < 985, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

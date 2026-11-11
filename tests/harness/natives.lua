@@ -143,6 +143,8 @@ function Natives.install()
     end
     _G.GetPlayerPed = function(src) return 1000 + tonumber(src) end
     _G.GetEntityCoords = function(ped)
+        local v = Env.vehicles and Env.vehicles[ped]
+        if v then return { x = v.x, y = v.y, z = v.z } end
         local src = ped - 1000
         local p = Env.players[src]
         if not p then return { x = 0.0, y = 0.0, z = 0.0 } end
@@ -214,7 +216,27 @@ function Natives.install()
         end
         return 0
     end
-    _G.DoesEntityExist = function(entity) return (entity and entity ~= 0) and 1 or false end
+    _G.DoesEntityExist = function(entity)
+        if Env.vehicles and entity and entity >= 900000 then return Env.vehicles[entity] and 1 or false end
+        return (entity and entity ~= 0) and 1 or false
+    end
+    -- Server-made vehicles, for the organisation's garage adapter
+    -- (server/adapters/garage/onesync.lua). Entities from 900000 up.
+    _G.CreateVehicleServerSetter = function(model, kind, x, y, z, h)
+        Env.vehicleSeq = (Env.vehicleSeq or 0) + 1
+        local id = 900000 + Env.vehicleSeq
+        Env.vehicles[id] = { model = model, kind = kind, x = x, y = y, z = z, h = h, state = {} }
+        return id
+    end
+    _G.GetHashKey = function(name) return name end
+    _G.SetVehicleNumberPlateText = function(v, plate) if Env.vehicles[v] then Env.vehicles[v].plate = plate end end
+    _G.SetVehicleDoorsLocked = function(v, lock) if Env.vehicles[v] then Env.vehicles[v].locked = lock end end
+    _G.DeleteEntity = function(v) if Env.vehicles then Env.vehicles[v] = nil end end
+    _G.Entity = function(v)
+        return { state = { set = function(_, key, value)
+            if Env.vehicles[v] then Env.vehicles[v].state[key] = value end
+        end } }
+    end
 
     _G.print = function(...)
         local parts = {}

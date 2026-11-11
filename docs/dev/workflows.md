@@ -14,6 +14,7 @@ when an item in scope is driven by nothing and not listed below with why.
 | `tests/workflows/org_phone_spec.lua` | The Organisation tab, boss and member, through the page |
 | `tests/workflows/org_extras_spec.lua` | The organisation extras: contracts to it, approval, probation, duty, the channel, dossiers |
 | `tests/workflows/org_extras2_spec.lua` | The organisation extras 2: the armory, the record and leaderboard, discipline, recruitment |
+| `tests/workflows/org_extras3_spec.lua` | The organisation extras 3: several organisations, reputation, dead drops, the garage, internal contracts, the handler, the activity log |
 | `tests/workflows/panel_spec.lua` | Every admin panel op through the panel page (adminRequest) |
 | `tests/workflows/surface_spec.lua` | Commands, server and client net events, engine and framework events, tick jobs, every switch |
 | `tests/ui/run.js`, `tests/ui/admin_run.js` | Every phone and panel screen's main path (tests named `workflow screen:<id>`) |
@@ -41,20 +42,20 @@ when an item in scope is driven by nothing and not listed below with why.
 | Category | In scope | Items | Driven by a workflow |
 |---|---|---:|---:|
 | ace | counted | 5 | 0 |
-| audit | counted | 346 | 165 |
+| audit | counted | 360 | 178 |
 | command | yes | 12 | 12 |
-| config | counted | 604 | 0 |
-| err | counted | 150 | 4 |
+| config | counted | 629 | 0 |
+| err | counted | 152 | 4 |
 | event | yes | 24 | 24 |
 | ext | counted | 59 | 0 |
-| handler | yes | 115 | 115 |
+| handler | yes | 122 | 122 |
 | netevent.client | yes | 18 | 18 |
 | netevent.server | yes | 11 | 11 |
-| nui | yes | 116 | 116 |
-| op | yes | 116 | 116 |
-| screen | yes | 77 | 77 |
-| setting | counted | 546 | 0 |
-| switch | yes | 147 | 147 |
+| nui | yes | 123 | 123 |
+| op | yes | 125 | 125 |
+| screen | yes | 78 | 78 |
+| setting | counted | 571 | 0 |
+| switch | yes | 156 | 156 |
 | tick | yes | 45 | 45 |
 
 ## Not in scope, and why
@@ -154,8 +155,9 @@ None.
 | `muteThread` | phone: messages and calls > the placer writes to the hitman through the masked relay, mutes, calls, reports |
 | `openPhoto` | phone: the kill photo > the hitman photographs the kill, the placer opens it once and keeps it |
 | `orgAccess` | organisation from the phone > the boss edits the roles: create, rename, powers, pay, cooldown, access, delete |
+| `orgActivity` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgApplications` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule; organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
-| `orgApply` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule; organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired; panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
+| `orgApply` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule; organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired; organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off |
 | `orgApprove` | organisation extras from the phone and the panel > a contract sent to the organisation: assigned, briefed, approved and taken |
 | `orgArmory` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
 | `orgArmoryLimit` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
@@ -176,7 +178,12 @@ None.
 | `orgFire` | organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them |
 | `orgForceOff` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
 | `orgFunds` | organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
+| `orgGarage` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `orgGarageOffer` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `orgGarageReturn` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `orgGarageTake` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgHire` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
+| `orgInternalRequest` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgInterviewNote` | organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
 | `orgInviteAnswer` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
 | `orgLayout` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
@@ -186,6 +193,7 @@ None.
 | `orgMine` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
 | `orgNotice` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
 | `orgOfficeRule` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
+| `orgPayoutMethod` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgPick` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
 | `orgPlaceHere` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
 | `orgProbationEnd` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
@@ -274,7 +282,7 @@ None.
 | `crimson-hitman:iRevived` | server net events > a death and a revive, a mask, a headshot, a new look, a photo arriving, a defib |
 | `crimson-hitman:maskState` | server net events > a death and a revive, a mask, a headshot, a new look, a photo arriving, a defib |
 | `crimson-hitman:mugshot` | phone: my tabs > the hitman, the placer and the target each read their own tab and the ledger; phone: the target > buys an informant's name of the hitman after them; server net events > a death and a revive, a mask, a headshot, a new look, a photo arriving, a defib |
-| `crimson-hitman:orgUse` | server net events > an organisation spot used in the world |
+| `crimson-hitman:orgUse` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log; server net events > an organisation spot used in the world |
 | `crimson-hitman:photoArrived` | server net events > a death and a revive, a mask, a headshot, a new look, a photo arriving, a defib; client events > the client hears its access, settings, pushes, notices, markers, and unloads cleanly |
 | `crimson-hitman:whoAmI` | phone: the board, the place form, placing > reads the board, finds a target, sees the reward options, places a contract; phone: the board, the place form, placing > shows the target's face by the reference the board handed out; phone: accept and abandon > a second hitman accepts from the board, then puts it down |
 | `sc-ambulance:server:UseDefib` | server net events > a death and a revive, a mask, a headshot, a new look, a photo arriving, a defib |
@@ -314,8 +322,9 @@ None.
 | `crimson:muteThread` | phone: messages and calls > the placer writes to the hitman through the masked relay, mutes, calls, reports |
 | `crimson:openPhoto` | phone: the kill photo > the hitman photographs the kill, the placer opens it once and keeps it |
 | `crimson:orgAccess` | organisation from the phone > the boss edits the roles: create, rename, powers, pay, cooldown, access, delete |
+| `crimson:orgActivity` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `crimson:orgApplications` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule; organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
-| `crimson:orgApply` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule; organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
+| `crimson:orgApply` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule; organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired; organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off |
 | `crimson:orgApprove` | organisation extras from the phone and the panel > a contract sent to the organisation: assigned, briefed, approved and taken |
 | `crimson:orgArmory` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
 | `crimson:orgArmoryLimit` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
@@ -336,7 +345,12 @@ None.
 | `crimson:orgFire` | organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them |
 | `crimson:orgForceOff` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
 | `crimson:orgFunds` | organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
+| `crimson:orgGarage` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `crimson:orgGarageOffer` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `crimson:orgGarageReturn` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `crimson:orgGarageTake` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `crimson:orgHire` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
+| `crimson:orgInternalRequest` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `crimson:orgInterviewNote` | organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
 | `crimson:orgInviteAnswer` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
 | `crimson:orgLayout` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
@@ -346,6 +360,7 @@ None.
 | `crimson:orgMine` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the money: a deposit, a cut, a salary, a bonus, a withdrawal, the funds read back |
 | `crimson:orgNotice` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
 | `crimson:orgOfficeRule` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
+| `crimson:orgPayoutMethod` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `crimson:orgPick` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
 | `crimson:orgPlaceHere` | organisation from the phone > places, notices, applications, picks, renaming, the layout and the office rule |
 | `crimson:orgProbationEnd` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
@@ -432,7 +447,8 @@ None.
 | `measures` | panel: players > looks a player up, views them, their history, and every measure on them |
 | `orgAcceptDecide` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
 | `orgAccess` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
-| `orgApplication` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
+| `orgActivityGet` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `orgApplication` | organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off; panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgArmoryGet` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
 | `orgArmoryLimit` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
 | `orgArmoryStock` | organisation extras 2 from the phone and the panel > the armory: stocked by staff, filled by a member, limited by the boss, drawn from |
@@ -441,16 +457,21 @@ None.
 | `orgChannelPost` | organisation extras from the phone and the panel > the channel: written, read, muted and moderated from the phone and the panel |
 | `orgChannelRemove` | organisation extras from the phone and the panel > the channel: written, read, muted and moderated from the phone and the panel |
 | `orgContractAssign` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
+| `orgCreate` | organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off |
 | `orgCuts` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgDossier` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
+| `orgDropSettle` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgDutyOff` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
 | `orgFunds` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgFundsBackend` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgFundsMove` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application; workflow matrix: shipped > payroll on memory: clean; workflow matrix: shipped > payroll on memory: the creator leaves before salary |
-| `orgGet` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back; panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
+| `orgGarageOffer` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `orgGarageRemove` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
+| `orgGet` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back; organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off; panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
+| `orgInternalDecide` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgInterviewNote` | organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
 | `orgLayout` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
-| `orgMemberFire` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
+| `orgMemberFire` | organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off; panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgMemberHire` | organisation from the phone > the boss hires a recruit, who reads their own tab, the spots and the roles; organisation from the phone > the boss manages a member: role, suspension, limits, grant, codename, then fires them; organisation from the phone > the boss edits the roles: create, rename, powers, pay, cooldown, access, delete |
 | `orgMemberLimits` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgMemberOverride` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
@@ -458,10 +479,13 @@ None.
 | `orgMemberSuspend` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgNotice` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgOverturn` | organisation extras 2 from the phone and the panel > discipline: a strike and a warning given, read by the member, one overturned by staff |
+| `orgPayoutMethod` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgPick` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgProbation` | organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |
 | `orgRecruitForm` | organisation extras 2 from the phone and the panel > recruitment: the form set, answered, noted, and the applicant hired |
+| `orgRemove` | organisation extras 3 from the phone and the panel > several organisations: a second added, an outsider applies to it, one taken off |
 | `orgRename` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
+| `orgRepAdjust` | organisation extras 3 from the phone and the panel > reputation, a dead drop, the garage, an internal contract, the handler and the log |
 | `orgRolePowers` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application; workflow matrix: allon > contract on memory: clean; workflow matrix: allon > contract on memory: the creator leaves before place |
 | `orgRoleRemove` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
 | `orgRoleSet` | panel: the organisation and boss permissions > sets up, edits roles, hires and manages a member, moves money, decides an application |
@@ -570,6 +594,7 @@ None.
 | `admin.view:orgrecord` | tests/ui/admin_run.js |
 | `admin.view:orgroles` | tests/ui/admin_run.js (every admin.view:) |
 | `admin.view:orgsetup` | tests/ui/admin_run.js (every admin.view:) |
+| `admin.view:orgturf` | tests/ui/admin_run.js |
 | `admin.view:orgwork` | tests/ui/admin_run.js (every admin.view:) |
 | `admin.view:overview` | tests/ui/admin_run.js (every admin.view:) |
 | `admin.view:pdiag` | tests/ui/admin_run.js (every admin.view:) |
@@ -673,18 +698,24 @@ None.
 | `Notifications.PushEnabled` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.AcceptApproval` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.AcceptNeedsPower` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.ActivityLog` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.ApplyAtSignupOnly` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.ApprovalProbation` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Armory` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.ArmoryAtOffice` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Channel` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Codenames` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.DeadDrops` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.DefaultDuty` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Discipline` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Dossiers` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Duty` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.DutyAtOffice` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Enabled` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.Garage` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.Handler` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.HandlerAssigns` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.InternalContracts` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.OnDutyOnly` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.OrgContracts` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.PaySuspended` | feature switches > every switch turns from the panel and back, in force at once and written down |
@@ -693,10 +724,13 @@ None.
 | `Organisation.ProbationNoStake` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.QbxBossFlag` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Recruitment` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.Reputation` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.RequireJobToAccept` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.SetPrimaryOnHire` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.SeveralOrganisations` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.Stats` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Organisation.StatsLeaderboard` | feature switches > every switch turns from the panel and back, in force at once and written down |
+| `Organisation.Territory` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Penalty.RequireDisclosureOnAccept` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Record.Heat.Enabled` | feature switches > every switch turns from the panel and back, in force at once and written down |
 | `Record.PlacerRecord.Enabled` | feature switches > every switch turns from the panel and back, in force at once and written down |

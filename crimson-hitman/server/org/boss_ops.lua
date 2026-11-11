@@ -268,6 +268,37 @@ local REQUESTS = {
         if text == nil then return answer(false, Org.ERR.INVALID) end
         return answer(Org.interviewNote(who(actor), Text.field(p.id, 48), text))
     end },
+    -- Organisation extras 3 (server/org/extras3.lua), each off as shipped -
+    { 'orgPayoutMethod', 'orgWrite', 'P4', function(actor, p)
+        return answer(Org.setPayoutMethod(who(actor), Text.field(p.method, 12)))
+    end },
+    { 'orgGarage', 'org', 'member', function(actor)
+        return answer(Org.garageView(who(actor)))
+    end },
+    { 'orgGarageTake', 'orgWrite', 'member', function(actor, p)
+        return answer(Org.garageTake(who(actor), Text.field(p.model, 32)))
+    end },
+    { 'orgGarageReturn', 'orgWrite', 'member', function(actor)
+        return answer(Org.garageReturn(who(actor)))
+    end },
+    { 'orgGarageOffer', 'orgWrite', 'V1', function(actor, p)
+        if type(p.models) ~= 'table' then return answer(false, Org.ERR.INVALID) end
+        local set = {}
+        for i = 1, math.min(#p.models, 50) do
+            local m = Text.field(p.models[i], 32)
+            if m then set[m] = true end
+        end
+        return answer(Org.garageOffer(who(actor), set))
+    end },
+    { 'orgInternalRequest', 'orgWrite', 'K8', function(actor, p)
+        local cid = memberOf(actor, p)
+        if not cid then return answer(false, Org.ERR.NOT_FOUND) end
+        return answer(Org.internalRequest(who(actor), cid, { reason = Text.field(p.reason, 800),
+            amount = p.amount, anonymous = p.anonymous == true }))
+    end },
+    { 'orgActivity', 'org', 'M12', function(actor, p)
+        return answer(Org.activity(who(actor), tonumber(p.limit)))
+    end },
     -- Settings ----------------------------------------------------------
     { 'orgRename', 'orgWrite', 'S1', function(actor, p)
         return answer(Org.rename(who(actor), Text.field(p.label, 128)))
@@ -292,6 +323,12 @@ function BossOps.register(deps)
         deps.app.addHandler(name, bucket, function(actor, payload)
             if not Feature.on('Organisation') and name ~= 'orgMine' then return answer(false, Org.ERR.OFF) end
             if type(payload) ~= 'table' then payload = {} end
+            -- Several organisations: a member's own; anybody else's, the one
+            -- the payload names (an applicant's pick) or the one inviting,
+            -- holding their application or whose sign-up spot they stand at.
+            local org, unknown = Org.contextFor(actor, payload.org)
+            if unknown then return answer(false, Org.ERR.NOT_FOUND) end
+            if org then return Org.within(org, fn, actor, payload) end
             return fn(actor, payload)
         end)
     end

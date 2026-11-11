@@ -47,7 +47,10 @@ StaffOps.ACTIONS = {
     'org_channel_removed', 'org_channel_mute', 'org_dossier',
     'org_armory_deposit', 'org_armory_withdraw', 'org_armory_limit', 'org_armory_stocked', 'org_armory_removed',
     'org_armory_refund_failed', 'org_stats_reset', 'org_strike', 'org_warning', 'org_discipline_overturned',
-    'org_recruit_form', 'org_interview_note',
+    'org_recruit_form', 'org_interview_note', 'org_added', 'org_removed',
+    'org_rep_adjusted', 'org_payout_method', 'org_drop_left', 'org_drop_collected', 'org_drop_expired',
+    'org_drop_settled', 'org_territory_hold', 'org_vehicle_out', 'org_vehicle_returned', 'org_vehicle_removed',
+    'org_garage_offer', 'org_internal_requested', 'org_internal_decided',
 }
 
 local function staff(src)
@@ -111,6 +114,15 @@ local function orgLog(src, data)
     end
     table.sort(rows, function(a, b) return (a.ts or 0) > (b.ts or 0) end)
     local canIdentify = deps.panel.identifies and deps.panel.identifies(src)
+    -- Several organisations: only the one picked (data.org; the first by default).
+    if Org.severalOn() then
+        local here, kept = Org.current().id, {}
+        for _, r in ipairs(rows) do
+            local o = type(r.detail) == 'table' and r.detail.org or nil
+            if o == nil or o == here then kept[#kept + 1] = r end
+        end
+        rows = kept
+    end
     local out = {}
     for i = 1, math.min(#rows, limit) do
         local r = rows[i]
@@ -469,10 +481,85 @@ OPS.orgInterviewNote = { 'write', function(src, data)
     return said(Org.interviewNote(staff(src), Text.field(data.id, 48), text))
 end }
 
+-- Organisation extras 3 (server/org/extras3.lua) --------------------------------
+
+--- Move the reputation by data.points (either way), with a reason.
+OPS.orgRepAdjust = { 'write', function(src, data)
+    return said(Org.repAdjust(staff(src), data.points, Text.field(data.reason, 800)))
+end }
+
+--- How members' payouts are handed over: data.method 'bank' or 'deaddrop'.
+OPS.orgPayoutMethod = { 'write', function(src, data)
+    return said(Org.setPayoutMethod(staff(src), Text.field(data.method, 12)))
+end }
+
+--- Settle a dead drop now (data.key): data.how 'release' or 'refund'.
+OPS.orgDropSettle = { 'write', function(src, data)
+    return said(Org.dropSettle(staff(src), Text.field(data.key, 120), Text.field(data.how, 8)))
+end }
+
+--- Which approved models the organisation offers (data.models, a list).
+OPS.orgGarageOffer = { 'write', function(src, data)
+    if type(data.models) ~= 'table' then return false, Org.ERR.INVALID, Org.message(Org.ERR.INVALID) end
+    local set = {}
+    for i = 1, math.min(#data.models, 50) do
+        local m = Text.field(data.models[i], 32)
+        if m then set[m] = true end
+    end
+    return said(Org.garageOffer(staff(src), set))
+end }
+
+--- Take a member's garage vehicle away (data.member).
+OPS.orgGarageRemove = { 'write', function(src, data)
+    return said(Org.garageRemove(staff(src), memberCid(src, data)))
+end }
+
+--- Approve or decline an internal contract request (data.id, data.approve).
+OPS.orgInternalDecide = { 'write', function(src, data)
+    return said(Org.internalDecide(staff(src), Text.field(data.id, 32), data.approve))
+end }
+
+--- The organisation's activity log (orgGet carries the last 50).
+OPS.orgActivityGet = { 'read', function(src, data)
+    return said(Org.activity(staff(src), tonumber(data.limit)))
+end }
+
 -- Applications ------------------------------------------------------------------
 
 OPS.orgApplication = { 'write', function(src, data)
     return said(Org.decide(staff(src), Text.field(data.id, 48), data.accept))
+end }
+
+--- Several organisations: an op runs on the one data.org names (its id),
+--- the first where none is named; an id that names none is refused.
+---@param fn function the op
+---@return function
+function StaffOps.scoped(fn)
+    return function(src, data, ...)
+        local wanted = type(data) == 'table' and data.org or nil
+        if wanted == nil then return fn(src, data, ...) end
+        local org = Org.byId(wanted)
+        if not org then
+            if not Feature.on('Organisation') then return off() end
+            return false, Org.ERR.NOT_FOUND, 'No such organisation: refresh the page.'
+        end
+        return Org.within(org, fn, src, data, ...)
+    end
+end
+
+-- Several organisations (Config.Organisation.SeveralOrganisations) ------------
+
+--- Add an organisation: data.job (its qbx_core job name) and data.label.
+OPS.orgCreate = { 'write', function(src, data)
+    local ok, err, extra, message = Org.create(staff(src), { job = Text.field(data.job, 32),
+        label = Text.field(data.label, 128) })
+    if not ok then return said(ok, err, extra, message) end
+    return true, nil, ('Organisation %s added, with its own job %s.'):format(extra.label, extra.id), extra
+end }
+
+--- Take one off the list (data.id): no members, empty funds, nothing held.
+OPS.orgRemove = { 'write', function(src, data)
+    return said(Org.removeOrg(staff(src), Text.field(data.id, 32)))
 end }
 
 --- Add every op to the panel.
@@ -485,9 +572,9 @@ function StaffOps.register(d)
     for name, entry in pairs(OPS) do
         local level = entry[1] == 'write' and levels.WRITE or levels.READ
         StaffOps.OPS[name] = level
-        d.panel.extend(name, level, entry[2])
+        d.panel.extend(name, level, StaffOps.scoped(entry[2]))
     end
-    if d.panel.logArea then d.panel.logArea('org', orgLog) end
+    if d.panel.logArea then d.panel.logArea('org', StaffOps.scoped(orgLog)) end
 end
 
 return StaffOps

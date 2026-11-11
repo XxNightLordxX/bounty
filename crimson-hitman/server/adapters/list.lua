@@ -15,6 +15,7 @@ return {
     banking     = { 'Renewed-Banking' },
     phone       = { 'lb-phone' },                 -- server and client
     keys        = { 'qbx_vehiclekeys' },
+    garage      = { 'onesync' },
     mugshot     = { 'MugShotBase64' },            -- client
     clothing    = { 'qb-clothing', 'illenium-appearance', 'rcore_clothing' },  -- client
     progression = { 'sc-blackmarket' },

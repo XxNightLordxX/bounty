@@ -1161,10 +1161,16 @@ function App.register()
         -- Sent to the hitman organisation instead of the open board
         -- (Config.Organisation.OrgContracts, off as shipped): refused before
         -- anything is placed or charged where it cannot be.
-        local toOrg = payload.toOrg == true
+        -- Several organisations: payload.toOrg names which (its id); true
+        -- is the first. An id that names none is refused.
+        local toOrg = payload.toOrg == true or type(payload.toOrg) == 'string'
+        local toOrgId = type(payload.toOrg) == 'string' and payload.toOrg:sub(1, 33) or nil
         if toOrg then
             if not (deps.org and deps.org.sendRefusal) then return false, 'org_off' end
-            local refused, data = deps.org.sendRefusal()
+            if toOrgId and not deps.org.byId(toOrgId) then
+                return false, 'org_not_found', { message = 'No such organisation: refresh and try again.' }
+            end
+            local refused, data = deps.org.sendRefusal(toOrgId)
             if refused then return false, refused, data end
         end
 
@@ -1187,7 +1193,14 @@ function App.register()
         })
         if not contract then return false, err, refusal end
         -- Held for the organisation before anybody else can take it.
-        local sent = toOrg and deps.org.receiveContract(contract.id, actor.cid) or nil
+        local sent = toOrg and deps.org.receiveContract(contract.id, actor.cid, toOrgId) or nil
+        -- Not sent anywhere: first refusal for the organisation whose
+        -- territory the target is in, where a member of it can see them
+        -- (Config.Organisation.Territory, server/org/extras3.lua). Nobody
+        -- is told why, nor where; one switch while it is off.
+        if not toOrg and deps.org and deps.org.territoryClaim then
+            pcall(deps.org.territoryClaim, contract.id, contract.target_cid)
+        end
         -- Counted for the staff alert thresholds (server/thresholds.lua).
         if deps.thresholds then pcall(deps.thresholds.placed, actor.cid, contract.target_cid) end
         local reply = deps.projection.contract(contract, actor.cid)

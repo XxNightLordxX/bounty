@@ -37,6 +37,7 @@ Developer, **Other scripts** (client kinds are sent to every player's game).
 | `Banking` | `Renewed-Banking` | server | The organisation's funds in this resource's own ledger (chosen once, kept) | Renewed-Banking 2.1.4 |
 | `Phone` | `lb-phone` | both | No phone app; notices shown in the game's feed | lb-phone 2.9 documented exports |
 | `Keys` | `qbx_vehiclekeys` | server | The disposal vehicle is left unlocked, no keys | its `GiveKeys(source, vehicle)` as qbx_core calls it |
+| `Garage` | `onesync` | server | The organisation's garage is off, in one line | no resource: the FiveM server natives `CreateVehicleServerSetter`, `SetEntityOrphanMode`, `SetEntityRoutingBucket`, `SetVehicleNumberPlateText`, `SetVehicleDoorsLocked`, `DoesEntityExist`, `GetEntityCoords`, `DeleteEntity` (docs.fivem.net); no garage resource's export is guessed |
 | `Mugshot` | `MugShotBase64` | client | No target headshots | MugShotBase64 read |
 | `Clothing` | `qb-clothing`, `illenium-appearance`, `rcore_clothing` | client | A change of clothes does not refresh the headshot early | events only, as always listened for; not read |
 | `Progression` | `sc-blackmarket` | server | No trust per completion | escrowed: `AddTrust(cid, amount)`, as always called |
@@ -68,6 +69,7 @@ documents every function:
 | phone (server) | `GetEquippedPhoneNumber`, `SendNotification`, `ContainsBlacklistedWord`, `IsInCall`, `EndCall`, `GetConfig`, `PostBirdy`, `canCall()`, `CreateCall` |
 | phone (client) | `AddCustomApp`, `RemoveCustomApp`, `SendCustomAppMessage`, `SendNotification`, `SaveToGallery`, `EnableWalkableCam`, `DisableWalkableCam`, `SetCameraComponent` |
 | keys | `GiveKeys(source, vehicle)` |
+| garage | `detect()`, `spawn(model, { x, y, z, h })`, `prepare(vehicle, plate, source)`, `exists(vehicle)`, `coords(vehicle)`, `remove(vehicle)` |
 | target | `addSphereZone`, `removeZone`, `addLocalEntity`, `removeLocalEntity` |
 | mugshot | `GetMugShotBase64(ped, transparent)` |
 | clothing | `events = { 'their:outfitChanged', ... }` (no functions) |

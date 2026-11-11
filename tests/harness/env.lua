@@ -199,6 +199,9 @@ function Env.reset()
     -- ox_inventory's registered stashes (RegisterStash), by name: each
     -- { label, slots, maxWeight, groups, _inventory = { slot, ... } }.
     Env.stashes = {}
+    -- Server-made vehicles (CreateVehicleServerSetter, the garage adapter):
+    -- [entity] = { model, x, y, z, h, plate, locked, bucket, state }.
+    Env.vehicles, Env.vehicleSeq = {}, 0
     -- qbx_core's job list, which GetJob answers from. Only the jobs a test
     -- names; a job missing here reads as one the framework does not know.
     Env.jobDefinitions = {

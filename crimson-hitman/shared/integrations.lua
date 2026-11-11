@@ -62,6 +62,12 @@ Integrations.KINDS = {
     { kind = 'keys', key = 'Keys', side = 'server',
       without = 'the disposal vehicle is left unlocked, with no keys given',
       needed = function(c) return type(c.Disposal) == 'table' and c.Disposal.Enabled == true end },
+    { kind = 'garage', key = 'Garage', side = 'server',
+      without = 'the organisation\'s garage is off',
+      needed = function(c)
+          local org = type(c.Organisation) == 'table' and c.Organisation or {}
+          return org.Enabled == true and org.Garage == true
+      end },
     { kind = 'mugshot', key = 'Mugshot', side = 'client',
       without = 'target headshots are off',
       needed = function(c) return type(c.Mugshot) == 'table' and c.Mugshot.Enabled == true end },

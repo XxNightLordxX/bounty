@@ -426,6 +426,11 @@ describe('what this suite really covered', function()
         'orgDisciplineRecord', 'orgRecruitForm', 'orgInterviewNote' }) do
         ELSEWHERE[name] = 'org_powers_spec / org_extras2_spec, through the net event'
     end
+    -- And the extras 3 (off as shipped), the same way, and org_extras3_spec.
+    for _, name in ipairs({ 'orgPayoutMethod', 'orgGarage', 'orgGarageTake', 'orgGarageReturn', 'orgGarageOffer',
+        'orgInternalRequest', 'orgActivity' }) do
+        ELSEWHERE[name] = 'org_powers_spec / org_extras3_spec, through the net event'
+    end
 
     it('got an ok from every handler the server registers', function()
         local App = require('crimson-hitman.server.app')

@@ -762,12 +762,14 @@ local suites = {
     'org_phone_review_spec',
     'org_extras_spec',
     'org_extras2_spec',
+    'org_several_spec',
+    'org_extras3_spec',
     'capability_inventory_spec',
     'lib_lock_spec', 'lib_window_spec', 'lib_bridge_spec', 'lib_db_spec', 'lib_lifecycle_spec',
     'lib_geo_spec', 'lib_text_spec', 'lib_words_spec', 'lib_npc_spec', 'lib_notify_spec', 'police_discord_spec', 'logs_view_spec', 'record_spec', 'payout_checks_spec', 'lib_players_spec',
     'lib_feature_spec',
     'adapters_spec',
-    'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
+    'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.org_extras3_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
     'docs_spec',
 }
 

@@ -452,6 +452,16 @@ function Places.addOps(panel)
     end
     Places.OPS = { placeList = READ, placeMyPosition = READ, placeSet = WRITE, placeRemove = WRITE,
         placeReset = WRITE }
+    -- Several organisations: an op on the one data.org names (Places.scope,
+    -- set by server/org/init.lua); the first where none is named.
+    local extend = panel.extend
+    local function scoped(name, level, fn)
+        extend(name, level, function(src, data)
+            if Places.scope then return Places.scope(data, function() return fn(src, data) end) end
+            return fn(src, data)
+        end)
+    end
+    panel = setmetatable({ extend = scoped }, { __index = panel })
     panel.extend('placeList', READ, function()
         return true, nil, nil, Places.view()
     end)

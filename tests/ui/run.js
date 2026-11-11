@@ -5739,6 +5739,12 @@ async function main() {
         const box = app.view.all().filter(function (n) { return n._id === opts.tick || n.id === opts.tick; })[0];
         if (box) { box.checked = true; box.onclick(); }
       }
+      if (opts.press) {
+        const pressed = app.view.all().filter(function (n) {
+          return n.tagName === 'BUTTON' && n.textContent === opts.press;
+        })[0];
+        if (pressed) { pressed.onclick(); }
+      }
       app.view.all().filter(function (n) {
         return n.tagName === 'BUTTON' && n.textContent === 'Place contract';
       })[0].onclick(); confirmPlace(app);
@@ -5770,6 +5776,23 @@ async function main() {
       eq(plain[0].body.toOrg, undefined, 'not ticked: not sent');
       eq(notOffered.view.all().filter(function (n) { return n._id === 'to-org' || n.id === 'to-org'; }).length, 0,
         'not drawn where the server does not offer it');
+    });
+
+    // Several organisations (Config.Organisation.SeveralOrganisations): the
+    // placer picks which one, and the page sends its id.
+    const twoOrgs = { orgContracts: { label: 'Crimson Contractors', minutes: 30,
+      orgs: [{ id: 'hitman', label: 'Crimson Contractors' }, { id: 'syndicate', label: '<b>The Syndicate</b>' }] } };
+    const picked = await place({ cash: 10000, settings: twoOrgs, tick: 'to-org', press: '<b>The Syndicate</b>',
+      fields: { 'slot-cash-1': 1000, bonus: 0 } });
+    const firstPick = await place({ cash: 10000, settings: twoOrgs, tick: 'to-org',
+      fields: { 'slot-cash-1': 1000, bonus: 0 } });
+    it('ORG EXTRAS 3: with several organisations the placer picks one, sent by its id', function () {
+      const sent = picked.sent.filter(function (x) { return x.name === 'create'; });
+      eq(sent.length, 1, picked.notice());
+      eq(sent[0].body.toOrg, 'syndicate');
+      eq(picked.view.all().filter(function (n) { return n.tagName === 'B'; }).length, 0, 'a label as text');
+      const first = firstPick.sent.filter(function (x) { return x.name === 'create'; });
+      eq(first[0].body.toOrg, 'hitman', 'the first unless another is picked');
     });
 
     const noBonus = await place({ cash: 10000, fields: { 'slot-cash-1': 10000, bonus: 0 } });
@@ -15260,6 +15283,100 @@ async function main() {
       drewCleanly(applicant);
     });
 
+    // Several organisations: an outsider picks which one, and applies to it.
+    const pickers = [];
+    const chooser = boot({ list: listing('signup'), mine: MINE, ledger: LEDGER,
+      orgMine: function (body) {
+        pickers.push(body);
+        const id = body && body.org === 'syndicate' ? 'syndicate' : 'hitman';
+        return { ok: true, data: { enabled: true, member: false, id: id,
+          label: id === 'syndicate' ? 'The Syndicate' : 'Crimson Contractors',
+          choices: [{ id: 'hitman', label: 'Crimson Contractors' }, { id: 'syndicate', label: '<i>The Syndicate</i>' }] } };
+      },
+      orgApply: function (body) { answers.push(body); return { ok: true, data: { id: 'a3' } }; } });
+    await settle(); await settle(); await settle();
+    tab(chooser, 'org');
+    await settle(); await settle();
+    click(chooser, '<i>The Syndicate</i>');
+    await settle(); await settle(); await settle();
+    const chosenText = chooser.view.textContent;
+    click(chooser, 'Apply');
+    await settle();
+    click(chooser, 'Tap again to apply');
+    await settle(); await settle(); await settle();
+    it('ORG EXTRAS 3: an outsider picks one of several organisations and applies to it', function () {
+      truthy(pickers.some(function (b) { return b && b.org === 'syndicate'; }), JSON.stringify(pickers));
+      truthy(chosenText.indexOf('The Syndicate') !== -1, chosenText);
+      eq(chooser.view.all().filter(function (n) { return n.tagName === 'I' && n.textContent === 'The Syndicate'; }).length, 0,
+        'a label as text');
+      const sent = answers[answers.length - 1];
+      eq(sent.org, 'syndicate');
+      drewCleanly(chooser);
+    });
+
+    // Organisation extras 3: reputation, the payout method, the garage, an
+    // internal contract and the activity log, each two taps.
+    const x3 = await openOrg(memberMine(['P4', 'K8', 'V1', 'M12'], {
+      reputation: { points: 120, tier: 'Known <b>x</b>', next: 'Trusted', toNext: 180, max: 75000 },
+      deadDrops: { method: 'bank', waiting: 1, spot: '<i>Pier</i>', choose: true },
+      garage: true, activity: true,
+      internal: { rows: [{ id: 'ic1', name: 'Kestrel', state: 'pending' }],
+        targets: [{ ref: 'm1_1111', name: '<u>Kestrel</u>' }] } }),
+      { orgPayoutMethod: function () { return { ok: true, data: { method: 'deaddrop' } }; },
+        orgInternalRequest: function () { return { ok: true, data: { id: 'ic2' } }; },
+        orgGarage: { ok: true, data: { ready: true, hasSpot: true, max: 3, models: ['sultan'], manage: true,
+          all: [{ model: 'sultan', offered: true }, { model: 'baller' }], out: [] } },
+        orgGarageTake: function () { return { ok: true, data: { model: 'sultan', plate: 'CO123456' } }; },
+        orgGarageOffer: function () { return { ok: true, data: { models: ['sultan', 'baller'] } }; },
+        orgActivity: { ok: true, data: { rows: [{ at: 1, what: 'Contract accepted', by: '<b>Kestrel</b>',
+          action: 'accepted' }] } } });
+    const homeText = x3.view.textContent;
+    click(x3, 'Pay at the dead drop');
+    await settle();
+    const methodAfterOne = x3.orgSent.filter(function (x) { return x.name === 'orgPayoutMethod'; }).length;
+    click(x3, 'Tap again to change it');
+    await settle(); await settle(); await settle();
+    type(x3, 'org-ic-reason', 'Sold us out');
+    type(x3, 'org-ic-amount', '2000');
+    click(x3, 'Ask staff');
+    await settle();
+    click(x3, 'Tap again to ask staff');
+    await settle(); await settle(); await settle();
+    await screen(x3, 'Open garage');
+    const garageText = x3.view.textContent;
+    click(x3, 'Take out');
+    await settle();
+    click(x3, 'Tap again to take it');
+    await settle(); await settle(); await settle();
+    click(x3, 'baller');
+    await settle();
+    click(x3, 'Save');
+    await settle();
+    click(x3, 'Tap again to save it');
+    await settle(); await settle(); await settle();
+    click(x3, 'Back');
+    await settle();
+    await screen(x3, 'Activity log');
+    const logText = x3.view.textContent;
+    it('workflow screen:phone.org.extras3 — reputation, the payout method, a request, the garage and the log', function () {
+      truthy(homeText.indexOf('Known <b>x</b> · 120 points') !== -1, homeText);
+      truthy(homeText.indexOf('1 payout(s) wait for you at the dead drop.') !== -1);
+      eq(x3.view.all().filter(function (n) { return n.tagName === 'B' || n.tagName === 'U' || n.tagName === 'I'; }).length, 0,
+        'every label as text');
+      eq(methodAfterOne, 0, 'two taps');
+      const method = x3.orgSent.filter(function (x) { return x.name === 'orgPayoutMethod'; });
+      eq(JSON.stringify(method[0].body), '{"method":"deaddrop"}');
+      const ask = x3.orgSent.filter(function (x) { return x.name === 'orgInternalRequest'; });
+      eq(JSON.stringify(ask[0].body), '{"member":"m1_1111","reason":"Sold us out","amount":2000}');
+      truthy(garageText.indexOf('sultan') !== -1, garageText);
+      const take = x3.orgSent.filter(function (x) { return x.name === 'orgGarageTake'; });
+      eq(JSON.stringify(take[0].body), '{"model":"sultan"}');
+      const offer = x3.orgSent.filter(function (x) { return x.name === 'orgGarageOffer'; });
+      eq(JSON.stringify(offer[0].body), '{"models":["sultan","baller"]}');
+      truthy(logText.indexOf('Contract accepted · <b>Kestrel</b>') !== -1, logText);
+      drewCleanly(x3);
+    });
+
     it('ORG TAB: the page words every org_* refusal the server can send', function () {
       const lua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'init.lua'), 'utf8');
       const codes = {};
@@ -15267,7 +15384,7 @@ async function main() {
       const page = fs.readFileSync(APP, 'utf8');
       const map = page.slice(page.indexOf('var ERRORS = {'), page.indexOf('};', page.indexOf('var ERRORS = {')));
       const missing = Object.keys(codes).filter(function (c) {
-        return c.indexOf('org_') === 0 && !/^org_(split|cut|member|role|grant|limits|office_rule|access|pick|funds|bonus|location|notice|applied|application|renamed|layout|external|setup|invite|codename|salary|payroll|created)/.test(c)
+        return c.indexOf('org_') === 0 && !/^org_(split|cut|member|role|grant|limits|office_rule|access|pick|funds|bonus|location|notice|applied|application|renamed|layout|external|setup|invite|codename|salary|payroll|created|added|removed)/.test(c)
           && map.indexOf(c + ':') === -1;
       });
       truthy(Object.keys(codes).length > 20, 'read the codes');

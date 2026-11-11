@@ -425,7 +425,7 @@ describe('one Places registry: every staff-set map spot (server/places.lua)', fu
         local ids = {}
         for _, k in ipairs(view.kinds) do ids[#ids + 1] = k.id end
         eq(table.concat(ids, ','),
-            'broker,informant,office,signup,meeting,npc,place,disposal_vehicle,disposal_drop')
+            'broker,informant,office,signup,meeting,npc,place,deaddrop,garage,territory,disposal_vehicle,disposal_drop')
         eq(kind(view, 'office').group, 'org')
         eq(kind(view, 'office').single, true)
         eq(kind(view, 'office').fields.radius, true)

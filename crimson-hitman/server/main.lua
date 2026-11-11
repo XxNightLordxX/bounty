@@ -3523,6 +3523,8 @@ AddEventHandler('onResourceStop', function(name)
     -- Every disposal vehicle taken away; in memory mode, where the steps go
     -- with the tables, each hold lifted first so the release below pays it.
     if modules.disposal then pcall(modules.disposal.stop, Config.Database.Mode == 'memory') end
+    -- Every organisation garage vehicle taken away (server/org/extras3.lua).
+    if modules.org and modules.org.Extras3 then pcall(modules.org.Extras3.stop) end
 
     -- Memory mode: release every open escrow before the tables vanish.
     if Config.Database.Mode == 'memory' then

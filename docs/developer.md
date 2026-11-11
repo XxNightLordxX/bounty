@@ -174,6 +174,59 @@ character no plain text can hold), read back by `Extras2.readBody`; the hourly
 cap is a `Window` by organisation. `Org.apply`, `Org.applications` and
 `Org.decide` ask `Extras2` only while Recruitment is on. There is no tick.
 
+Several organisations (`Config.Organisation.SeveralOrganisations`, off as
+shipped): `server/org/init.lua` keeps every organisation loaded in `Orgs` (by
+id, the job name) and `Order` (the first, from config.lua, first; the others'
+ids in its `settings.others`). Every function reads "the" organisation through
+`Cur()`, the one set for the running coroutine by `Org.within(org, fn, ...)`
+(a weak table keyed by `coroutine.running()`, so a request that waits on the
+store or a bank never hands its organisation to another), and the first where
+none is set, which is everything when only one is loaded. The ways in set it:
+`BossOps` (the member's own, `Org.contextFor`: else `payload.org`, the inviting
+one, the one holding their application, the one at whose sign-up spot they
+stand), `StaffOps.scoped` and `Places.scope` (`data.org`, refused when it names
+none), the hooks wrapped at the end of the file (`termsFor`, `shownName`,
+`playerLoaded`, `inviteFor`, `answerInvite`, `onGroupUpdate`, `useSpot`,
+`sendRefusal`/`receiveContract` by the id the placer sent, `Extras2.observe`,
+`Extras.frameworkDuty`), and the loops (`reconcile`, `spotsFor`, `tabFor`,
+`payrollTick`, `extrasTick` run on each in turn). `Org.cutFor` takes the
+organisation from the split's `org_id`, so a cut lands in the funds of the
+organisation the member was in when they took the contract. `acceptGate` asks
+`Extras.reservedRefusal` of every other organisation first, so a contract held
+for one is held from everybody else; `afterAccept` marks it taken in whichever
+holds it. `Org.orgOf(cid)` is the one membership index (a citizen is in one at
+most: `enrol`, `Org.hire`, `Org.apply`, `Org.answerInvite` and `Org.external`
+refuse a second). The channel's cache is by organisation. The tables were
+keyed by `org_id` from the start; nothing in the store changed.
+
+Organisation extras 3 (`server/org/extras3.lua`, each its own switch, off as
+shipped), copied onto `Org` the same way (`Extras3.attach`). Reputation is
+`settings.rep` (`points`, `c`, `f`), fed by the record's observer (the
+wrapped `Extras2.observe` calls `Extras3.observe` after the stats, on the
+member's own organisation), its standing read at use (`Extras3.standing`, the
+heat from `server/record/heat.lua`'s `Heat.of`), and asked by the accept gate
+(`Extras3.tierGate`, after probation and before approval). Dead drops are a
+payout check, `'deaddrop'`, last in `Payout.ORDER`: `onClaim` writes the drop
+to `settings.drops[contract:cid]` (and the in-memory index `Drops`, rebuilt by
+`Extras3.loaded` at every boot), `holds` keeps the member's baseline and bonus
+lines owed and queued (one `next()` while none waits), the drop's ox_target use
+(`Org.useSpot`) or the tick ends it, and `escrow.retryPending` hands it over;
+`'refund'` gives every held line back with `escrow.release`, as body disposal
+does. Territory is the `territory` place kind (hidden: `Org.spotsFor` never
+sends it), read by `Org.territoryClaim` (asked by `server/app.lua` after a
+placement not sent anywhere): the target's server position, a zone, and a
+member of that organisation within `TerritorySightMetres` in the same routing
+bucket; the hold is an `orgContracts` entry marked `territory`, so
+`release` tells the placer nothing. The garage keeps its vehicles in memory
+(`Vehicles[cid]`) and makes them through the `garage` adapter kind
+(`server/adapters/garage/onesync.lua`); the tick and `onResourceStop` take them
+away. Internal contract requests are `settings.internal[id]`; approval calls
+`Contracts.create` with the requesting boss as the actor. The handler is the
+`npc` place kind's use with `Handler` on. The activity log is
+`settings.activity`, appended by `Org.record` (an allow-list of actions and of
+detail fields), `Org.afterAccept` and the observer. The extras tick
+(`org.extras`) runs `Extras3.tick` on each organisation.
+
 Joining: a boss's `Org.hire` is an invite held in memory (`Invites`, expiring
 after `Limits.InviteMinutes`), shown to the player as the board's `orgInvite`
 and in `orgMine`, answered by `orgInviteAnswer` (`Org.answerInvite`, the hire

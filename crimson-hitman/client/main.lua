@@ -683,6 +683,10 @@ local UI_EVENTS = {
     -- record and leaderboard, discipline, the application form.
     'orgArmory', 'orgArmoryPut', 'orgArmoryTake', 'orgArmoryLimit', 'orgStats', 'orgStrike',
     'orgDisciplineRecord', 'orgRecruitForm', 'orgInterviewNote',
+    -- And the organisation extras 3 (each off as shipped): the payout
+    -- method, the garage, internal contracts, the activity log.
+    'orgPayoutMethod', 'orgGarage', 'orgGarageTake', 'orgGarageReturn', 'orgGarageOffer', 'orgInternalRequest',
+    'orgActivity',
 }
 
 --------------------------------------------------------------------------

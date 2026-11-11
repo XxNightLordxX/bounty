@@ -752,7 +752,7 @@ async function main() {
     'phistory', 'pdiag', 'their-contracts', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
     'contracts:bytarget', 'gear:contracts', 'gear:tljobs', 'rules', 'presets', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
     'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'orgarmory',
-    'orgrecord', 'logs:org',
+    'orgrecord', 'orgturf', 'logs:org',
     'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];
 

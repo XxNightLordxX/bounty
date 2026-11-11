@@ -22,7 +22,7 @@ local Log = require('crimson-hitman.shared.log')
 local OWNER = {
     framework = 'qbx_core', inventory = 'ox_inventory', target = 'ox_target', dispatch = 'sc-dispatch',
     ambulance = 'sc-ambulance', banking = 'Renewed-Banking', phone = 'lb-phone', keys = 'qbx_vehiclekeys',
-    mugshot = 'MugShotBase64', clothing = 'qb-clothing', progression = 'sc-blackmarket',
+    mugshot = 'MugShotBase64', clothing = 'qb-clothing', progression = 'sc-blackmarket', garage = 'onesync',
 }
 
 --- Every resource an adapter stands for, started.
@@ -61,7 +61,7 @@ describe('adapters: which one answers', function()
             truthy(Integrations.BY_KIND[kind], kind)
             truthy(#Integrations.names(kind) > 0, kind .. ' has an adapter')
         end
-        eq(#Integrations.KINDS, 11)
+        eq(#Integrations.KINDS, 12)
     end)
 
     it("picks on the owner's server exactly what the calls went to before", function()
@@ -79,7 +79,9 @@ describe('adapters: which one answers', function()
             local name = Integrations.names(spec.kind)[1]
             local adapter = Integrations.adapter(spec.kind, name)
             local resource = adapter.resource
-            local listenedAlways = spec.kind == 'clothing'
+            -- Clothing only listens; the garage's OneSync adapter answers
+            -- wherever the server has the native (it is no resource).
+            local listenedAlways = spec.kind == 'clothing' or spec.kind == 'garage'
             Natives.resourceStates[resource] = 'started'
             Config.Integrations[spec.key] = 'auto'
             truthy(Integrations.get(spec.kind), spec.kind .. ' auto, started')

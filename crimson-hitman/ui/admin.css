@@ -951,3 +951,4 @@ ul, ol { list-style: none; }
 .ct-reward .btn > .lbl, .ct-reward .btn > .cfm, .ct-reassign .btn > .lbl, .ct-reassign .btn > .cfm,
 .dp-steps .btn > .lbl, .dp-steps .btn > .cfm { min-width: 0; overflow-wrap: anywhere; }
 .dp-steps .grid td .sub { display: block; }
+.grid tr.is-on td { background: var(--panel); }

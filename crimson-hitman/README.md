@@ -920,6 +920,92 @@ character that loaded before the job was registered (a late start).
     the applicant is told. Against spam, a declined applicant waits
     `RecruitCooldownHours` before they apply again, and the organisation takes
     at most `RecruitPerHour` applications an hour.
+- **Organisation extras 3** (server/org/init.lua, server/org/extras3.lua).
+  More switches under `Config.Organisation`, each off as shipped and each
+  needing the organisation on, as the extras above; staff do all of it from the
+  panel; every write takes two clicks or taps and is on the record.
+  - **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`).
+    Staff add more hitman organisations (rival crews) in Hitman organisation,
+    Setup, **Organisations**: each is its own qbx_core job (the job name staff
+    give, lower case, never another's) with its own roles (made from
+    `Config.Organisation.Roles`), members, funds (its own society account or
+    ledger rows), places, Boss permissions, settings and log, all kept by its id
+    (the job name). The card picks which one every Hitman organisation, Boss
+    permissions and Locations view works on (the ops carry `org`; none is the
+    first, the config.lua one). A citizen is a member of one at most: a hire,
+    an invite, an application or a job change made elsewhere into a second is
+    refused (`org_other_org`). A member's phone always works on their own; an
+    outsider picks which one to look at and apply to; a placer sending a
+    contract to an organisation picks which. Each pay day, extras tick, channel
+    and contract held is its own. Staff take one off the list only when it has
+    no member, empty funds and nothing held; its rows stay, and adding its job
+    name again brings it back. Off: only the first is read, exactly as before;
+    the others are kept for when it is on. `MaxOrganisations` (1-10) counts the
+    first.
+  - **Reputation and tiers** (`Reputation`). The organisation's standing:
+    `RepCompletion` points for each member's completion, `RepFailure` off for
+    each failure (counted from the record's own outcomes from when it is on),
+    less `RepHeat` for every point of heat its members carry now
+    (`Config.Record.Heat`). `RepTiers` names the tiers, one line each as
+    `'points, label, most an accept is worth'` ($, 0 = no cap): a member's
+    accept of a contract worth more than their organisation's tier allows is
+    refused in words (`org_tier`); a higher tier unlocks bigger ones. Members
+    see the tier, the points and what the next needs; staff see how it is made
+    up and adjust it (with a reason) in **Reputation, drops & garage**.
+  - **Dead drops** (`DeadDrops`, `DeadDropMinutes`, `DeadDropUnclaimed`). Staff
+    set the organisation's dead drop in Locations (**Dead drops**); a boss
+    holding **P4 Choose payout method** (or staff) picks *the usual way* or
+    *the dead drop*. With the dead drop, a member's payout (baseline, bonus,
+    items included) waits in escrow, owed to them and queued, until they use
+    the drop (its ox_target option) within `DeadDropMinutes`; unclaimed, it is
+    handed over the usual way (`'pay'`) or given back to the placer
+    (`'refund'`). It is a payout check (server/payout.lua) on the escrow's own
+    give, so only the escrow's paths move money: what was escrowed is what the
+    member (and the funds' cut) or the placer receive. A restart keeps every
+    drop. Staff hand one over or refund it at once.
+  - **Territory** (`Territory`, `TerritoryMinutes`, `TerritorySightMetres`;
+    needs `OrgContracts`). Staff draw zones in Locations (**Territory**: a
+    centre and a radius). A contract placed (not sent anywhere) on somebody
+    standing in an organisation's zone, while one of its members stands within
+    `TerritorySightMetres` of them in the same routing bucket, is held for that
+    organisation for `TerritoryMinutes` as a contract sent to it, then goes on
+    the open board. **Privacy:** the target's position is read once, on the
+    server, and acted on only when a member can already see the target
+    (standing beside them); it is never stored, sent or logged; no zone is ever
+    sent to a game; the organisation is told exactly what it is told of a
+    contract a placer sent ("A contract was sent to the organisation"), so it
+    cannot tell a territory hold from a placer's choice; and the placer is told
+    nothing, then or when it goes on the open board, so they learn nothing of
+    where the target was. The staff log has the hold, with no position.
+  - **Garage** (`Garage`, `GarageVehicles`, `GarageMaxOut`, `GarageKeepMinutes`,
+    `GarageReturnMetres`). Staff set the garage spot (Locations, **Garage**) and
+    approve models; a boss holding **V1 Manage garage** chooses which of them
+    are offered. A member standing at the spot takes one out in the tab (one at
+    a time, `GarageMaxOut` for the organisation): made by the server through
+    the garage adapter (`Config.Integrations.Garage`, `onesync`: server
+    vehicles, nobody's own car, kept by the server, a random plate, locked,
+    keys from the keys adapter), and returned near the spot. Out for
+    `GarageKeepMinutes`, or its member gone from the city or the organisation,
+    it is taken away; every one goes at the resource's stop. Staff take one
+    away from the panel. With the adapter `none`, the garage says so.
+  - **Internal contracts** (`InternalContracts`, `InternalExpireHours`). A boss
+    holding **K8 Request internal contract** asks staff for a contract on a
+    member below them who went rogue: a reason and the cash reward. Nothing is
+    placed or taken until staff approve it in the panel; it is then placed in
+    the boss's name, with their own money, through the ordinary placement, so
+    every limit, cap and anonymity rule applies (a boss away or short is told,
+    and the request stays open). Declined or run out, the boss is told.
+  - **Handler** (`Handler`, `HandlerAssigns`). The organisation's NPC spots
+    (Locations, NPC spots; drawn only within `DrawMetres`, nothing runs while
+    far) brief a member who talks to them: their assigned contract, its dossier
+    and the notice; with `HandlerAssigns`, a member on duty with nothing
+    assigned is given the oldest contract waiting for the organisation.
+  - **Activity log** (`ActivityLog`, `ActivityKeep`). What members and bosses
+    did (accepts, completions and failures, deposits, withdrawals and bonuses,
+    grants, hires and fires, armory moves, vehicles), for a boss holding **M12
+    View org log** and for staff: members by the name the organisation shows
+    (codename where on), staff as *Staff*, never a citizen id, a placer or a
+    target.
 
 **server.cfg.** Keep `set qbx:cleanPlayerGroups false` (true deletes the
 organisation's members at every qbx_core start) and `set
@@ -972,6 +1058,19 @@ clicks, naming what it sets.
 | `orgOverturn` | write | Overturn a strike or warning (`id`) with a `reason`; the member is told |
 | `orgRecruitForm` | write | The application form's `questions` (a list; empty clears it) |
 | `orgInterviewNote` | write | An interview note on an open application (`id`, `text`), or `clear` |
+| `orgCreate` | write | Add an organisation (`job`, `label`): Several organisations |
+| `orgRemove` | write | Take one off the list (`id`): no members, empty funds, nothing held |
+| `orgRepAdjust` | write | Move the reputation by `points` (either way), with a `reason` |
+| `orgPayoutMethod` | write | Payouts the usual way or at the dead drop (`method`: `bank` or `deaddrop`) |
+| `orgDropSettle` | write | Settle a dead drop now (`key`; `how`: `release` or `refund`) |
+| `orgGarageOffer` | write | Which approved models the organisation offers (`models`, a list) |
+| `orgGarageRemove` | write | Take a member's garage vehicle away (`member`) |
+| `orgInternalDecide` | write | Approve (placed by the boss who asked) or decline an internal contract request (`id`, `approve`) |
+| `orgActivityGet` | read | The activity log (`limit`); `orgGet` carries the last 50 under `extras3` |
+
+With Several organisations on, every op above (and Boss permissions' and
+Locations' `place*` ops) takes `org`, the id of the one it works on; none is the
+first, and an id that names none is refused.
 
 #### Organisation requests (phone)
 
@@ -1009,6 +1108,13 @@ and Decline (`orgInviteAnswer`), and says whether the tab is for this player
 | `orgArmoryLimit` | A2 | `orgStats` | a member (M10 for every number) |
 | `orgStrike` | M11 | `orgDisciplineRecord` | a member's own; M11 or M5 for another's |
 | `orgRecruitForm` | N4 | `orgInterviewNote` | N2 |
+| `orgPayoutMethod` | P4 | `orgGarage`, `orgGarageTake`, `orgGarageReturn` | a member |
+| `orgGarageOffer` | V1 | `orgInternalRequest` | K8 |
+| `orgActivity` | M12 | | |
+
+With Several organisations on, a member's requests always work on their own
+organisation; anybody else's take `org` (the one picked in the tab), or else the
+one inviting them, holding their application or whose sign-up spot they stand at.
 
 ### Mission steps
 
@@ -1149,6 +1255,7 @@ Which of your other scripts this resource works with, one per kind (docs/dev/ada
 | `Config.Integrations.Banking` | `'auto'` | 'auto' \| 'Renewed-Banking' \| 'none' (organisation funds) |
 | `Config.Integrations.Phone` | `'auto'` | 'auto' \| 'lb-phone' \| 'none' (the phone app) |
 | `Config.Integrations.Keys` | `'auto'` | 'auto' \| 'qbx_vehiclekeys' \| 'none' (disposal vehicle) |
+| `Config.Integrations.Garage` | `'auto'` | 'auto' \| 'onesync' \| 'none' (organisation garage vehicles) |
 | `Config.Integrations.Mugshot` | `'auto'` | 'auto' \| 'MugShotBase64' \| 'none' (target headshots) |
 | `Config.Integrations.Clothing` | `'auto'` | 'auto' \| a clothing adapter's name \| 'none' |
 | `Config.Integrations.Progression` | `'auto'` | 'auto' \| 'sc-blackmarket' \| 'none' (trust per kill) |
@@ -1626,6 +1733,30 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.RecruitNoteMax` | `500` | characters in an interview note |
 | `Config.Organisation.RecruitCooldownHours` | `24` | hours a declined applicant waits to apply again |
 | `Config.Organisation.RecruitPerHour` | `10` | applications the organisation takes an hour |
+| `Config.Organisation.SeveralOrganisations` | `false` | staff may add more organisations, each its own job |
+| `Config.Organisation.MaxOrganisations` | `3` | organisations at most, the first included (1-10) |
+| `Config.Organisation.Reputation` | `false` | the organisation's reputation, in tiers that unlock bigger contracts |
+| `Config.Organisation.RepCompletion` | `10` | points a member's completion earns |
+| `Config.Organisation.RepFailure` | `15` | points a member's failure costs |
+| `Config.Organisation.RepHeat` | `2` | points off for each point of heat members carry now |
+| `Config.Organisation.RepTiers` | `{ '0, Unknown, 25000', '100, Known, 75000', '300, Trusted, 200000', … 4 in all }` | 'points, label, most an accept is worth ($; 0 = no cap)' |
+| `Config.Organisation.DeadDrops` | `false` | payouts may be left at a staff-set dead drop to collect |
+| `Config.Organisation.DeadDropMinutes` | `60` | minutes a member has to collect it |
+| `Config.Organisation.DeadDropUnclaimed` | `'pay'` | 'pay' (handed over as always) \| 'refund' (back to the placer) |
+| `Config.Organisation.Territory` | `false` | staff-drawn zones: the organisation gets first refusal (needs OrgContracts) |
+| `Config.Organisation.TerritoryMinutes` | `5` | minutes the contract is held for it first |
+| `Config.Organisation.TerritorySightMetres` | `75.0` | a member this close to the target, who can see them, is needed |
+| `Config.Organisation.Garage` | `false` | staff-approved vehicles members take out at the garage spot |
+| `Config.Organisation.GarageVehicles` | `{}` | the models staff approve (model names); empty = none |
+| `Config.Organisation.GarageMaxOut` | `3` | vehicles out at once for the organisation |
+| `Config.Organisation.GarageKeepMinutes` | `60` | minutes before a vehicle out is taken away |
+| `Config.Organisation.GarageReturnMetres` | `15.0` | how near the garage spot a vehicle is returned |
+| `Config.Organisation.InternalContracts` | `false` | a boss may ask staff for a contract on a rogue member |
+| `Config.Organisation.InternalExpireHours` | `24` | hours a request waits for staff |
+| `Config.Organisation.Handler` | `false` | the organisation's NPC spots brief members in the world |
+| `Config.Organisation.HandlerAssigns` | `true` | and hand out the oldest contract waiting for the organisation |
+| `Config.Organisation.ActivityLog` | `false` | an organisation-only log of what members and bosses did |
+| `Config.Organisation.ActivityKeep` | `200` | entries kept |
 | `Config.Organisation.Roles` | `{ '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no', '2, lieutenant, Lieutenant, 0, no', … 4 in all }` | the roles made with it: 'grade, name, label, pay, boss' |
 | `Config.Organisation.Limits.MaxMembers` | `20` | members at most |
 | `Config.Organisation.Limits.HireRadius` | `5.0` | metres a hire stands from the boss |
@@ -1866,6 +1997,8 @@ The audit log records every money movement and every refused attempt:
 ## What's New
 
 **1.2.0, other scripts optional, first-start setup (newest)**
+
+- **Organisation extras 3**, each off as shipped: **several organisations** (rival crews, each its own job, roles, funds and places), **reputation and tiers**, **dead drops**, **territory**, the **garage**, **internal contracts** on rogue members, the **handler** NPC and the boss's **activity log**. See Optional features, Organisation extras 3.
 
 - **Organisation extras 2**, each off as shipped: the **armory**, each member's **record and the leaderboard**, **discipline** (strikes and warnings) and **recruitment** (the boss's application form). See Optional features, Organisation extras 2.
 

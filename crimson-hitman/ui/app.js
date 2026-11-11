@@ -787,7 +787,9 @@
     org_feature_off: 'Staff have not switched that on for the organisation.',
     org_reserved: 'That contract is held for the organisation.',
     org_approval: 'Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.',
-    org_probation: 'On probation you may not take that contract yet.'
+    org_probation: 'On probation you may not take that contract yet.',
+    org_other_org: 'They are a member of another organisation already.',
+    org_tier: 'The organisation\'s reputation does not unlock contracts worth that much yet.'
   };
 
   /* The requests that can move money, each a handler in server/app.lua
@@ -3348,7 +3350,7 @@
 
   state.org = {
     mine: null, failed: null, screen: null, data: {}, dataFailed: {}, form: {},
-    armed: null, open: {}
+    armed: null, open: {}, pick: null
   };
   var orgSeq = 0;
   var orgNonceSeq = 0;
@@ -3372,12 +3374,16 @@
        flag on orgMine that says its switch is on). */
     { id: 'channel', label: 'Channel', layout: 'notices', powers: [], member: 'channel' },
     { id: 'armory', label: 'Armory', layout: 'members', powers: [], member: 'armory' },
-    { id: 'stats', label: 'Leaderboard', layout: 'members', powers: [], member: 'statsOn' }
+    { id: 'stats', label: 'Leaderboard', layout: 'members', powers: [], member: 'statsOn' },
+    { id: 'garage', label: 'Garage', layout: 'members', powers: [], member: 'garage' },
+    /* Organisation extras 3: the activity log on the boss menu (M12). */
+    { id: 'activity', label: 'Activity log', layout: 'members', powers: ['M12'] }
   ];
   /* The extras' powers, each only while its switch is on (orgMine says). */
   var ORG_POWER_SWITCH = { M7: 'codenames', P3: 'payroll', K4: 'orgContracts', K5: 'orgContracts',
     K6: 'approval', K7: 'dossiers', M8: 'probationOn', M9: 'dutyOn', N3: 'channel',
-    A1: 'armory', A2: 'armory', M10: 'statsOn', M11: 'discipline', N4: 'recruitment' };
+    A1: 'armory', A2: 'armory', M10: 'statsOn', M11: 'discipline', N4: 'recruitment',
+    M12: 'activity', P4: 'deadDrops', K8: 'internal', V1: 'garage' };
   var ORG_SPOT_WORDS = { office: 'Boss office', signup: 'Sign-up spot', meeting: 'Meeting spot',
     npc: 'Contact', place: 'Place' };
 
@@ -3445,7 +3451,8 @@
   function loadOrg() {
     orgSeq += 1;
     var current = orgSeq;
-    return post('orgMine', {}).then(function (r) {
+    // Several organisations: the one an outsider picked to look at.
+    return post('orgMine', state.org.pick ? { org: state.org.pick } : {}).then(function (r) {
       if (current !== orgSeq) { return; }
       if (r && r.ok && r.data && typeof r.data === 'object') {
         state.org.mine = r.data;
@@ -3488,6 +3495,8 @@
       if (orgHolds('A2')) { orgRead('roles', function () { return post('orgRoles', {}); }); }
     }
     if (id === 'stats') { orgRead('stats', function () { return post('orgStats', {}); }); }
+    if (id === 'garage') { orgRead('garage', function () { return post('orgGarage', {}); }); }
+    if (id === 'activity') { orgRead('activity', function () { return post('orgActivity', { limit: 100 }); }); }
   }
 
   /* A write: once at a time, its answer said, and what the tab shows read
@@ -3652,6 +3661,24 @@
   function viewOrgOutside(view, m) {
     var invite = inviteBanner();
     if (invite) { view.appendChild(invite); return; }
+    // Several organisations: which one to look at and apply to.
+    if (Array.isArray(m.choices) && m.choices.length > 1) {
+      var pick = orgCard('Organisations', 'i-briefcase');
+      var chips = orgRow();
+      m.choices.forEach(function (c) {
+        var b = el('button', 'btn' + (c.id === m.id ? ' primary' : ''), String(c.label || c.id));
+        b.type = 'button';
+        b.setAttribute('aria-pressed', c.id === m.id ? 'true' : 'false');
+        b.onclick = function () {
+          if (c.id === m.id) { return; }
+          state.org.pick = String(c.id);
+          loadOrg();
+        };
+        chips.appendChild(b);
+      });
+      pick.appendChild(chips);
+      view.appendChild(pick);
+    }
     var box = orgCard(m.label || 'The organisation', 'i-briefcase');
     if (m.applied) {
       box.appendChild(el('div', 'hint', 'Your application is waiting for an answer. You will be told.'));
@@ -3674,6 +3701,7 @@
     row.appendChild(orgTwoTap('primary', 'Apply', 'apply', 'Tap again to apply', function () {
       var text = orgText('apply.text');
       var data = text ? { text: text } : {};
+      if (m.id) { data.org = m.id; }
       if (questions.length) {
         data.answers = questions.map(function (q, i) { return orgText('apply.a' + i); });
         if (data.answers.some(function (x) { return !x; })) { redraw(); return say('Answer every question first.'); }
@@ -3732,6 +3760,7 @@
     if (m.armory) { view.appendChild(orgOpenCard('Armory', 'i-box', m.armoryReady
       ? 'The organisation\'s stash: put in what staff allow, take out your role\'s share a day.'
       : 'The armory needs an inventory script the server does not have.', 'Open armory', 'armory')); }
+    viewOrgExtras3(view, m);
 
     viewOrgExtras(view, m);
 
@@ -3808,7 +3837,8 @@
       contracts: orgContractsScreen, places: orgPlacesScreen, notices: orgNoticesScreen,
       applications: orgApplicationsScreen, settings: orgSettingsScreen,
       work: orgWorkScreen, channel: orgChannelScreen,
-      armory: orgArmoryScreen, stats: orgStatsScreen, recruiting: orgRecruitingScreen
+      armory: orgArmoryScreen, stats: orgStatsScreen, recruiting: orgRecruitingScreen,
+      garage: orgGarageScreen, activity: orgActivityScreen
     })[screen.id](view);
   }
 
@@ -3817,6 +3847,152 @@
      says its switch is on) ---- */
 
   /* A card with one button that opens a member screen. */
+  /* ---- Organisation extras 3: reputation, dead drops, the garage and
+     internal contracts (each drawn only while orgMine says its switch is
+     on). The handler is in the world; territory is never shown. ---- */
+
+  function viewOrgExtras3(view, m) {
+    if (m.reputation) {
+      var rep = orgCard('Reputation', 'i-shield');
+      var r = m.reputation;
+      rep.appendChild(el('div', 'target', (r.tier || 'No tier yet') + ' · ' + (Number(r.points) || 0) + ' points'));
+      rep.appendChild(el('div', 'hint', Number(r.max) > 0
+        ? 'Members may take contracts worth up to ' + money(Number(r.max)) + '.'
+        : 'No cap on what members may take.'));
+      if (r.next) {
+        rep.appendChild(el('div', 'hint', (Number(r.toNext) || 0) + ' more points to ' + r.next + '.'));
+      }
+      view.appendChild(rep);
+    }
+    if (m.deadDrops) {
+      var d = m.deadDrops;
+      var drop = orgCard('Payouts', 'i-box');
+      drop.appendChild(el('div', 'hint', d.method === 'deaddrop'
+        ? 'Payouts are left at the dead drop' + (d.spot ? ' (' + d.spot + ')' : '') + ': collect them there.'
+        : 'Payouts are handed over the usual way.'));
+      if (Number(d.waiting) > 0) {
+        drop.appendChild(el('div', 'hint org-warn', Number(d.waiting) + ' payout(s) wait for you at the dead drop.'));
+      }
+      if (d.choose) {
+        var other = d.method === 'deaddrop' ? 'bank' : 'deaddrop';
+        var row = orgRow();
+        row.appendChild(orgTwoTap('ghost', other === 'bank' ? 'Pay the usual way' : 'Pay at the dead drop',
+          'paymethod', 'Tap again to change it', function () {
+            orgWrite('paymethod', function () { return post('orgPayoutMethod', { method: other }); },
+              'Payout method changed.');
+          }, 'P4'));
+        drop.appendChild(row);
+      }
+      view.appendChild(drop);
+    }
+    if (m.garage) {
+      view.appendChild(orgOpenCard('Garage', 'i-pin', 'Vehicles staff approved, taken out at the garage spot.',
+        'Open garage', 'garage'));
+    }
+    if (m.internal) { view.appendChild(orgInternalCard(m.internal)); }
+  }
+
+  function orgInternalCard(info) {
+    var box = orgCard('Internal contract', 'i-flag');
+    box.appendChild(el('div', 'hint', 'Ask staff for a contract on a member below you who went rogue. Only staff '
+      + 'approve it; it is then placed in your name, with your money, as any contract.'));
+    var targets = asList(info.targets);
+    if (!targets.length) {
+      box.appendChild(el('div', 'hint', 'Nobody below you.'));
+    } else {
+      box.appendChild(orgChoice('ic.member', targets.map(function (t) {
+        return { value: String(t.ref), label: String(t.name) };
+      }), String(targets[0].ref)));
+      box.appendChild(orgField('ic.reason', 'Why', 'area', 'What they did', 200));
+      box.appendChild(orgField('ic.amount', 'Reward ($, cash)', 'number', '5000'));
+      var row = orgRow();
+      row.appendChild(orgTwoTap('primary', 'Ask staff', 'ic:ask', 'Tap again to ask staff', function () {
+        var reason = orgText('ic.reason'), amount = orgNumber('ic.amount');
+        if (!reason || !amount) { redraw(); return say('Write why, and the reward.'); }
+        orgWrite('ic:ask', function () {
+          return post('orgInternalRequest', { member: orgChosen('ic.member', String(targets[0].ref)),
+            reason: reason, amount: amount });
+        }, 'Sent to staff. You are told the answer.');
+      }, 'K8'));
+      box.appendChild(row);
+    }
+    asList(info.rows).forEach(function (q) {
+      box.appendChild(el('div', 'hint', String(q.name) + ': ' + ({ pending: 'waiting for staff',
+        placed: 'placed', declined: 'declined', expired: 'ran out' }[q.state] || String(q.state))));
+    });
+    return box;
+  }
+
+  function orgGarageScreen(view) {
+    if (orgPending(view, 'garage')) { return; }
+    var g = state.org.data.garage;
+    if (!g.ready) { view.appendChild(el('div', 'hint', 'The garage needs a vehicle adapter the server does not have.')); }
+    if (!g.hasSpot) { view.appendChild(el('div', 'hint', 'Staff have not set a garage spot yet.')); }
+    var mine = orgCard('Yours', 'i-pin');
+    if (g.mine) {
+      mine.appendChild(el('div', 'target', String(g.mine.model) + ' · ' + String(g.mine.plate || '')));
+      var back = orgRow();
+      back.appendChild(orgTwoTap('ghost', 'Return it', 'garage:return', 'Tap again to return it', function () {
+        orgWrite('garage:return', function () { return post('orgGarageReturn', {}); }, 'Returned.');
+        orgRead('garage', function () { return post('orgGarage', {}); });
+      }));
+      mine.appendChild(back);
+      mine.appendChild(el('div', 'hint', 'Bring it back to the garage spot first.'));
+    } else {
+      mine.appendChild(el('div', 'hint', 'None out. Stand at the garage spot to take one.'));
+      asList(g.models).forEach(function (model) {
+        var row = orgRow();
+        row.appendChild(el('span', 'target', String(model)));
+        row.appendChild(orgTwoTap('ghost', 'Take out', 'garage:take:' + model, 'Tap again to take it', function () {
+          orgWrite('garage:take:' + model, function () { return post('orgGarageTake', { model: model }); },
+            'It is yours: the keys too.');
+          orgRead('garage', function () { return post('orgGarage', {}); });
+        }));
+        mine.appendChild(row);
+      });
+    }
+    view.appendChild(mine);
+    var out = orgCard('Out now', 'i-layers');
+    out.appendChild(el('div', 'hint', asList(g.out).length + ' of ' + (Number(g.max) || 0) + ' out.'));
+    asList(g.out).forEach(function (o) { out.appendChild(el('div', 'hint', String(o.name) + ': ' + String(o.model))); });
+    view.appendChild(out);
+    if (g.manage) {
+      var offer = orgCard('Offered to members', 'i-lock');
+      asList(g.all).forEach(function (a) {
+        var key = 'garage.offer.' + a.model;
+        var on = state.org.form[key] !== undefined ? state.org.form[key] === true : a.offered === true;
+        var b = el('button', 'ghost' + (on ? ' is-on' : ''), String(a.model));
+        b.setAttribute('aria-pressed', on ? 'true' : 'false');
+        b.onclick = function () { state.org.form[key] = !on; redraw(); };
+        offer.appendChild(b);
+      });
+      var save = orgRow();
+      save.appendChild(orgTwoTap('primary', 'Save', 'garage:offer', 'Tap again to save it', function () {
+        var models = asList(g.all).filter(function (a) {
+          var key = 'garage.offer.' + a.model;
+          return state.org.form[key] !== undefined ? state.org.form[key] === true : a.offered === true;
+        }).map(function (a) { return a.model; });
+        orgWrite('garage:offer', function () { return post('orgGarageOffer', { models: models }); }, 'Saved.');
+        orgRead('garage', function () { return post('orgGarage', {}); });
+      }, 'V1'));
+      offer.appendChild(save);
+      view.appendChild(offer);
+    }
+  }
+
+  function orgActivityScreen(view) {
+    if (orgPending(view, 'activity')) { return; }
+    var rows = asList(state.org.data.activity.rows);
+    var box = orgCard('What happened', 'i-layers');
+    if (!rows.length) { box.appendChild(el('div', 'hint', 'Nothing yet.')); }
+    rows.forEach(function (r) {
+      var line = String(r.what) + ' · ' + String(r.by || '') + (r.member ? ' → ' + String(r.member) : '')
+        + (Number(r.amount) > 0 ? ' · ' + money(Number(r.amount)) : '') + (r.model ? ' · ' + String(r.model) : '');
+      box.appendChild(el('div', 'hint', line + (agoText(r.at) ? ' · ' + agoText(r.at) : '')));
+    });
+    view.appendChild(box);
+  }
+
   function orgOpenCard(title, icon, text, label, screenId) {
     var box = orgCard(title, icon);
     box.appendChild(el('div', 'hint', text));
@@ -10074,6 +10250,31 @@
         + ' (a boss assigns it; not taken within ' + durationText(Number(toOrg.minutes) || 30)
         + ', it goes on the open board)'));
       terms.appendChild(orgToggle);
+      // Several organisations: which one it goes to.
+      var orgList = Array.isArray(toOrg.orgs) ? toOrg.orgs : [];
+      if (orgList.length > 1) {
+        if (!orgList.some(function (o) { return o.id === state.draft.toOrgId; })) {
+          state.draft.toOrgId = String(orgList[0].id);
+        }
+        var orgPick = el('div', 'row org-actions');
+        orgList.forEach(function (o) {
+          var b = el('button', 'btn' + (o.id === state.draft.toOrgId ? ' primary' : ''), String(o.label || o.id));
+          b.type = 'button';
+          b.setAttribute('aria-pressed', o.id === state.draft.toOrgId ? 'true' : 'false');
+          b.onclick = function () {
+            state.draft.toOrgId = String(o.id);
+            Array.prototype.forEach.call(orgPick.children, function (other) {
+              var on = other === b;
+              other.className = 'btn' + (on ? ' primary' : '');
+              other.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+          };
+          orgPick.appendChild(b);
+        });
+        terms.appendChild(orgPick);
+      } else {
+        state.draft.toOrgId = null;
+      }
     } else {
       state.draft.toOrg = false;
     }
@@ -11011,7 +11212,8 @@
     // that dialog's Place it was the second tap.
     var totalTaken = worth + creatorFee;
     var armKey = JSON.stringify([target, slots, bonusPct, creatorFee, num('bailout'),
-      num('penalty'), state.draft.mode || 'exclusive', state.draft.anon === true, state.draft.toOrg === true]);
+      num('penalty'), state.draft.mode || 'exclusive', state.draft.anon === true, state.draft.toOrg === true,
+      state.draft.toOrgId || null]);
     if (!(protectedTarget && state.leoConfirmed === true)
         && !(state.placeArmed && state.placeArmed.key === armKey)) {
       var armedAt = Date.now();
@@ -11067,7 +11269,7 @@
       },
       // Sent to the hitman organisation, only where it was ticked and the
       // server offers it (left out of the request otherwise).
-      toOrg: state.draft.toOrg === true && settings().orgContracts ? true : undefined
+      toOrg: state.draft.toOrg === true && settings().orgContracts ? (state.draft.toOrgId || true) : undefined
     }).then(function (r) {
       if (!r.ok) {
         /* A fee or the rule changed from the admin panel while the form was

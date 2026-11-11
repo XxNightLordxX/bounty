@@ -78,7 +78,8 @@ local OnDuty = {}
 
 --- The channel (R7), newest last, at most KEEP in memory; nil until it is
 --- first read with the switch on.
-local Messages, MessageSeq = nil, 0
+--- By organisation (Config.Organisation.SeveralOrganisations): [orgId] = rows.
+local Messages, MessageSeq = {}, 0
 local KEEP = 200
 
 --- Messages each member sent in the last minute (ChannelPerMinute).
@@ -149,22 +150,24 @@ Extras.plain = plain
 local function rebuild()
     local d = deps()
     if not d.projection then return end
-    local org = O.current()
-    if not org or not on('OrgContracts') then
+    if not O.current() or not on('OrgContracts') then
         d.projection.reserved = nil
         return
     end
     local map, any = {}, false
     local duty = on('Duty')
-    for id, entry in pairs(org.settings.orgContracts) do
-        if entry.state == 'waiting' then
-            map[id] = false
-        elseif entry.state == 'assigned' then
-            map[id] = (not duty or OnDuty[entry.cid]) and entry.cid or false
-        else
-            map[id] = entry.cid or false
+    -- Every organisation's (SeveralOrganisations): a contract is sent to one.
+    for _, org in ipairs(O.all()) do
+        for id, entry in pairs(org.settings.orgContracts) do
+            if entry.state == 'waiting' then
+                map[id] = false
+            elseif entry.state == 'assigned' then
+                map[id] = (not duty or OnDuty[entry.cid]) and entry.cid or false
+            else
+                map[id] = entry.cid or false
+            end
+            any = true
         end
-        any = true
     end
     d.projection.reserved = any and map or nil
 end
@@ -242,8 +245,10 @@ local function release(org, contractId, reason)
     kit.save()
     rebuild()
     if entry.cid and entry.state == 'assigned' then tell(entry.cid, 'A contract assigned to you went on the open board.') end
-    -- The placer told it is on the open board now, never who had it.
-    if reason ~= 'ended' then
+    -- The placer told it is on the open board now, never who had it. A
+    -- territory hold (server/org/extras3.lua) says nothing: the placer never
+    -- learns it was held, which would say where the target was.
+    if reason ~= 'ended' and not entry.territory then
         local contract = deps().storage.readContract(contractId)
         if contract and contract.creator_cid then
             tell(contract.creator_cid, 'Your contract sent to an organisation is on the open board now.')
@@ -437,7 +442,7 @@ function Extras.approvalGate(org, member, actor, contractId, opts, gate)
         kept.shown = type(opts.shown) == 'table' and Util.copy(opts.shown) or nil
     end
     MessageSeq = MessageSeq + 1
-    Pending[k] = { id = ('ap%d_%d'):format(MessageSeq, math.random(1000, 9999)), contractId = contractId,
+    Pending[k] = { id = ('ap%d_%d'):format(MessageSeq, math.random(1000, 9999)), contractId = contractId, org = org.id,
         cid = actor.cid, anonymous = type(gate) == 'table' and gate.anonymous == true, opts = kept,
         worth = value(), probation = onProbation and true or nil, at = now(), expires = now() + wait * 60 }
     d.audit.action('org_accept_requested', actor.cid, contractId, { org = org.id, worth = value() })
@@ -603,7 +608,7 @@ local function retention() return minutes('ChannelRetentionDays', 7, 365) * 8640
 
 --- The channel's rows, read once (with the switch on), the old ones gone.
 local function messages(org)
-    if Messages then return Messages end
+    if Messages[org.id] then return Messages[org.id] end
     local rows = {}
     local ok, read = pcall(deps().storage.readOrgRows, 'messages', org.id)
     local oldest = now() - retention()
@@ -619,8 +624,8 @@ local function messages(org)
         return tostring(a.id) < tostring(b.id)
     end)
     while #rows > KEEP do table.remove(rows, 1) end
-    Messages = rows
-    return Messages
+    Messages[org.id] = rows
+    return rows
 end
 
 local function muteOf(org, cid)
@@ -998,13 +1003,25 @@ end
 --- the open board, those that ended are forgotten, approvals run out, the
 --- duty of players gone is ended, and the channel's old messages go.
 ---@param at integer|nil os.time()
+local tickOne
+
 function Org.extrasTick(at)
     if not Feature.on('Organisation') then return end
     at = at or now()
     if at - LastTick < 30 then return end
     LastTick = at
-    local org = O.current()
-    if not org then return end
+    if not O.current() then return end
+    -- Each organisation in turn (SeveralOrganisations), then the channel's
+    -- pruning clock once for all.
+    local prune = on('Channel') and at - LastPrune >= 3600
+    for _, org in ipairs(O.all()) do O.within(org, tickOne, org, at, prune) end
+    if prune then
+        LastPrune = at
+        Sent.sweep(at)
+    end
+end
+
+tickOne = function(org, at, prune)
     local d = deps()
     if next(org.settings.orgContracts) then
         if not on('OrgContracts') then
@@ -1033,7 +1050,7 @@ function Org.extrasTick(at)
         end
     end
     for k, p in pairs(Pending) do
-        if p.expires <= at or not on('AcceptApproval') then
+        if (p.org == nil or p.org == org.id) and (p.expires <= at or not on('AcceptApproval')) then
             Pending[k] = nil
             d.audit.action('org_accept_expired', p.cid, p.contractId, { org = org.id })
             tell(p.cid, 'Nobody approved your accept in time. Nothing was taken.')
@@ -1041,20 +1058,24 @@ function Org.extrasTick(at)
     end
     local changed = false
     for cid in pairs(OnDuty) do
-        if not on('Duty') or not org.members[cid] or not d.identity.byCitizenId(cid) then
+        -- A member of another organisation is that one's to keep.
+        local theirs = O.orgOf(cid)
+        if (theirs == nil or theirs == org)
+            and (not on('Duty') or not org.members[cid] or not d.identity.byCitizenId(cid)) then
             OnDuty[cid] = nil
             changed = true
         end
     end
     if changed then rebuild() end
-    if on('Channel') and Messages and at - LastPrune >= 3600 then
-        LastPrune = at
+    -- Organisation extras 3: drops, garage vehicles, requests.
+    O.Extras3.tick(org, at)
+    local rows = Messages[org.id]
+    if prune and rows then
         local oldest = at - retention()
-        while Messages[1] and (tonumber(Messages[1].created_at) or 0) < oldest do
-            pcall(d.storage.deleteOrgRow, 'messages', Messages[1].id)
-            table.remove(Messages, 1)
+        while rows[1] and (tonumber(rows[1].created_at) or 0) < oldest do
+            pcall(d.storage.deleteOrgRow, 'messages', rows[1].id)
+            table.remove(rows, 1)
         end
-        Sent.sweep(at)
     end
 end
 
@@ -1068,6 +1089,13 @@ local function boardSettings(settings)
     local org = O.current()
     if not org then return end
     settings.orgContracts = { label = org.label, minutes = minutes('AssignMinutes', 30, 1440) }
+    -- Several organisations: the placer picks which one (their labels and
+    -- ids, the ids being the qbx_core job names every player sees anyway).
+    if O.severalOn() and #O.all() > 1 then
+        local list = {}
+        for _, o in ipairs(O.all()) do list[#list + 1] = { id = o.id, label = o.label } end
+        settings.orgContracts.orgs = list
+    end
 end
 
 --- Wire into the organisation (server/org/init.lua): `k` is its own
@@ -1079,7 +1107,7 @@ end
 
 --- A fresh start (Org.init).
 function Extras.init(d)
-    Pending, Approved, OnDuty, Messages, MessageSeq = {}, {}, {}, nil, 0
+    Pending, Approved, OnDuty, Messages, MessageSeq = {}, {}, {}, {}, 0
     LastTick, LastPrune = 0, 0
     Sent.reset()
     if d.projection then
@@ -1094,7 +1122,7 @@ end
 
 --- The organisation (re)loaded: the board's filter from what it holds.
 function Extras.loaded()
-    Messages = nil
+    Messages = {}
     rebuild()
 end
 

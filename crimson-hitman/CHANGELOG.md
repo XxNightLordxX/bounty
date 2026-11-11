@@ -5,6 +5,31 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)
+- **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`):
+  staff add rival organisations in Hitman organisation, Setup; each is its
+  own qbx_core job with its own roles, members, funds, places, Boss
+  permissions and log; a citizen is in one at most. Staff ops take `org`; a
+  member's phone works on their own; outsiders and placers pick one.
+- **Reputation and tiers** (`Reputation`, `RepTiers`): from members'
+  completions and failures, less their heat; a tier caps what a member may
+  accept. Staff adjust it.
+- **Dead drops** (`DeadDrops`): with P4, payouts wait in escrow at a staff-set
+  dead drop until collected; unclaimed, paid or refunded (`DeadDropUnclaimed`).
+- **Territory** (`Territory`, needs `OrgContracts`): staff zones give the
+  organisation a short first refusal on a contract on somebody there, only
+  while a member stands near them; nobody is told why or where.
+- **Garage** (`Garage`, `GarageVehicles`): staff-approved vehicles at the
+  garage spot, through the new garage adapter (`Config.Integrations.Garage`,
+  `onesync` or `none`).
+- **Internal contracts** (`InternalContracts`): K8 asks for a contract on a
+  rogue member; only staff approve it; placed by the boss with every limit.
+- **Handler** (`Handler`): NPC spots brief members and hand out waiting
+  contracts. **Activity log** (`ActivityLog`): M12 reads what members did.
+- Four new Boss permissions rows (P4, V1, K8, M12), off until staff allow
+  them; staff do all of it from Hitman organisation, Reputation, drops &
+  garage, and Locations (Dead drops, Garage, Territory).
+
 **Organisation extras 2** (each its own switch under `Config.Organisation`, off as shipped)
 - **Armory** (`Armory`, `ArmoryItems`): an ox_inventory stash only the app
   reaches; members put in the items staff allow and take out their role's

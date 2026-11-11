@@ -14,7 +14,10 @@
 ---   * 'disposal' (server/disposal.lua, Config.Disposal): a verified kill's
 ---     baseline waits for the body to be dropped off;
 ---   * 'intent' (server/rp_intent.lua, Config.Roleplay.ProofOfIntent): a
----     payout waits until the hitman showed intent, at most HoldMaxMinutes.
+---     payout waits until the hitman showed intent, at most HoldMaxMinutes;
+---   * 'deaddrop' (server/org/extras3.lua, Config.Organisation.DeadDrops): an
+---     organisation member's payout waits at its dead drop until collected,
+---     at most DeadDropMinutes.
 --- Each check is a table of any of:
 ---   holds(recipientCid, line) -> boolean    the give waits
 ---   releasesAt(recipientCid, line) -> int?  when it is released anyway
@@ -31,7 +34,7 @@ local Log = CrimsonBoot.requireShared('log')
 local Payout = {}
 
 --- The order the checks are asked in.
-Payout.ORDER = { 'disposal', 'intent' }
+Payout.ORDER = { 'disposal', 'intent', 'deaddrop' }
 
 --- [name] = check
 local checks = {}

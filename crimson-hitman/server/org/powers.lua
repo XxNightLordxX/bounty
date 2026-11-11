@@ -43,6 +43,8 @@ Powers.LIST = {
       about = 'See every member\'s completions, failures, earnings and reliability.' },
     { code = 'M11', area = 'members', label = 'Issue strikes', feature = 'Discipline', limits = { 'StrikesPerDay' },
       about = 'Give a member below you a strike or a written warning, with a reason.' },
+    { code = 'M12', area = 'members', label = 'View org log', feature = 'ActivityLog',
+      about = 'Read what members and bosses did: accepts, outcomes, money moves, grants and hires.' },
     -- Roles
     { code = 'R1', area = 'roles', label = 'Create roles', office = true, limits = { 'MaxRoles', 'PayMax' },
       about = 'Add a role below your rank.' },
@@ -59,6 +61,8 @@ Powers.LIST = {
       about = 'Pay a member a one-off bonus from the funds, with a reason.' },
     { code = 'P3', area = 'pay', label = 'Set salaries', feature = 'Payroll', limits = { 'SalaryMax' },
       about = 'Set the salary each role below you is paid from the funds every pay day.' },
+    { code = 'P4', area = 'pay', label = 'Choose payout method', feature = 'DeadDrops',
+      about = 'Have members\' payouts handed over as always, or left at the organisation\'s dead drop.' },
     -- Money and cuts
     { code = 'C1', area = 'money', label = 'Organisation cut', office = true, limits = { 'CutMaxPercent', 'TotalCutCapPercent' },
       about = 'Set the share of each member payout that goes to the funds.' },
@@ -88,6 +92,8 @@ Powers.LIST = {
       about = 'Approve or refuse a member\'s accept that waits for approval.' },
     { code = 'K7', area = 'contracts', label = 'Write dossiers', feature = 'Dossiers',
       about = 'Attach notes, a meeting spot and the rules of engagement to an assigned organisation contract.' },
+    { code = 'K8', area = 'contracts', label = 'Request internal contract', feature = 'InternalContracts',
+      about = 'Ask staff for a contract on a member below you who went rogue; only staff approve it.' },
     -- Locations
     { code = 'L1', area = 'locations', label = 'Move the boss office', limits = { 'OfficeMoveMetres', 'LocationCooldownMinutes' },
       about = 'Move the office to where you stand, near the staff point.' },
@@ -108,6 +114,9 @@ Powers.LIST = {
       about = 'Read the armory\'s log, and take out more than your role\'s limit a day.' },
     { code = 'A2', area = 'armory', label = 'Set armory limits', feature = 'Armory', limits = { 'ArmoryWithdrawMax' },
       about = 'Set how much each member of a role below you takes out of the armory a day.' },
+    -- Garage
+    { code = 'V1', area = 'garage', label = 'Manage garage', feature = 'Garage',
+      about = 'Choose which of the staff-approved vehicles the organisation offers its members.' },
     -- Settings
     { code = 'S1', area = 'settings', label = 'Organisation label', limits = { 'RenameCooldownMinutes' },
       about = 'Rename the organisation\'s display label (never the job name).' },
@@ -128,8 +137,8 @@ Powers.TAKE = 'TAKE'
 --- Plan names that are another code.
 Powers.ALIAS = { D1 = 'R4' }
 
-Powers.AREAS = { 'members', 'roles', 'pay', 'money', 'contracts', 'locations', 'notices', 'armory', 'settings',
-    'delegation' }
+Powers.AREAS = { 'members', 'roles', 'pay', 'money', 'contracts', 'locations', 'notices', 'armory', 'garage',
+    'settings', 'delegation' }
 
 Powers.BY_CODE = {}
 for i = 1, #Powers.LIST do Powers.BY_CODE[Powers.LIST[i].code] = Powers.LIST[i] end

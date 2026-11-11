@@ -51,6 +51,7 @@ Config.Integrations = {
     Banking     = 'auto',  -- 'auto' | 'Renewed-Banking' | 'none' (organisation funds)
     Phone       = 'auto',  -- 'auto' | 'lb-phone' | 'none' (the phone app)
     Keys        = 'auto',  -- 'auto' | 'qbx_vehiclekeys' | 'none' (disposal vehicle)
+    Garage      = 'auto',  -- 'auto' | 'onesync' | 'none' (organisation garage vehicles)
     Mugshot     = 'auto',  -- 'auto' | 'MugShotBase64' | 'none' (target headshots)
     Clothing    = 'auto',  -- 'auto' | a clothing adapter's name | 'none'
     Progression = 'auto',  -- 'auto' | 'sc-blackmarket' | 'none' (trust per kill)
@@ -785,6 +786,33 @@ Config.Organisation = {
     RecruitNoteMax     = 500,                    -- characters in an interview note
     RecruitCooldownHours = 24,                   -- hours a declined applicant waits to apply again
     RecruitPerHour     = 10,                     -- applications the organisation takes an hour
+    -- Organisation extras 3 (README, Organisation extras), each its own switch, off.
+    SeveralOrganisations = false,                -- staff may add more organisations, each its own job
+    MaxOrganisations   = 3,                      -- organisations at most, the first included (1-10)
+    Reputation         = false,                  -- reputation, in tiers that unlock bigger contracts
+    RepCompletion      = 10,                     -- points a member's completion earns
+    RepFailure         = 15,                     -- points a member's failure costs
+    RepHeat            = 2,                      -- points off for each point of heat members carry now
+    RepTiers           = { -- 'points, label, most an accept is worth ($; 0 = no cap)'
+        '0, Unknown, 25000', '100, Known, 75000', '300, Trusted, 200000', '700, Elite, 0',
+    },
+    DeadDrops          = false,                  -- payouts may wait at a staff-set dead drop
+    DeadDropMinutes    = 60,                     -- minutes a member has to collect it
+    DeadDropUnclaimed  = 'pay',                  -- 'pay' (handed over as always) | 'refund' (to the placer)
+    Territory          = false,                  -- staff zones give first refusal (needs OrgContracts)
+    TerritoryMinutes   = 5,                      -- minutes the contract is held for it first
+    TerritorySightMetres = 75.0,                 -- a member must stand this near the target (metres)
+    Garage             = false,                  -- staff-approved vehicles at the garage spot
+    GarageVehicles     = {},                     -- the models staff approve; empty = none
+    GarageMaxOut       = 3,                      -- vehicles out at once for the organisation
+    GarageKeepMinutes  = 60,                     -- minutes before a vehicle out is taken away
+    GarageReturnMetres = 15.0,                   -- how near the garage spot a vehicle is returned
+    InternalContracts  = false,                  -- a boss may ask staff for a contract on a rogue member
+    InternalExpireHours = 24,                    -- hours a request waits for staff
+    Handler            = false,                  -- the organisation's NPC spots brief members
+    HandlerAssigns     = true,                   -- and hand out the oldest contract waiting
+    ActivityLog        = false,                  -- an organisation-only log of members' actions
+    ActivityKeep       = 200,                    -- entries kept
     Roles              = { -- the roles made with it: 'grade, name, label, pay, boss'
         '0, recruit, Recruit, 0, no',
         '1, operative, Operative, 0, no',

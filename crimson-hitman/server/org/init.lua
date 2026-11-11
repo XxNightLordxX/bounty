@@ -30,6 +30,7 @@ local Places = CrimsonBoot.require('server.places')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local Extras = CrimsonBoot.require('server.org.extras')
 local Extras2 = CrimsonBoot.require('server.org.extras2')
+local Extras3 = CrimsonBoot.require('server.org.extras3')
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
@@ -37,6 +38,7 @@ local function Framework() return Integrations.get('framework') end
 local Org = {}
 
 Org.Powers, Org.Engine, Org.Jobs, Org.Funds, Org.Extras, Org.Extras2 = Powers, Engine, Jobs, Funds, Extras, Extras2
+Org.Extras3 = Extras3
 
 local deps
 
@@ -46,7 +48,26 @@ local deps
 ---   ceiling = { role = { [grade] = { [code] = 'allow' } },
 ---               member = { [cid] = { [code] = 'allow' | 'deny' } } },
 ---   locations = { [id] = location }, applications = { [id] = row } }
-local State = nil
+---
+--- Several organisations (Config.Organisation.SeveralOrganisations, off as
+--- shipped): every one loaded is kept here by its id, the first (the
+--- config.lua one, Config.Organisation.JobName) first. Off, only that one.
+local Orgs, Order = {}, {}
+
+--- The organisation each running request works on: [coroutine] = org.
+--- Set by Org.within at every way in (a player's request: their own
+--- organisation; a staff op: the one it names; a tick: each in turn), so
+--- the functions below keep reading "the" organisation as they always did.
+--- Keyed by coroutine, because a request that waits (the store, a bank)
+--- lets another run meanwhile. With none set, the first organisation.
+local Ctx = setmetatable({}, { __mode = 'k' })
+
+local function Cur()
+    local org = Ctx[coroutine.running()]
+    if org then return org end
+    local first = Order[1]
+    return first and Orgs[first] or nil
+end
 
 --- The cut frozen on each contract a member took: [contract:cid] = row.
 local Splits = {}
@@ -79,7 +100,7 @@ local Invites = {}
 --- When each player last loaded (Org.playerLoaded), against when the job
 --- was registered this process (Jobs.register), by a sequence: a player
 --- who loaded after it is one qbx_core could show the job to.
-local LoadedSeq, RegisteredSeq, Seq = {}, nil, 0
+local LoadedSeq, RegisteredSeq, Seq = {}, {}, 0
 
 --- Member handles given to each viewer: [viewerCid] = { [ref] = { cid, at } }
 local Refs, RefSeq = {}, 0
@@ -97,6 +118,7 @@ Org.ERR = {
     NOT_HELD = 'org_not_held', BANK_DOWN = 'org_bank_down', INVALID = CH.ERR.INVALID_INPUT,
     NAME_TAKEN = 'org_name_taken', NAME_BLOCKED = 'org_name_blocked', FEATURE_OFF = 'org_feature_off',
     RESERVED = 'org_reserved', APPROVAL = 'org_approval', PROBATION = 'org_probation',
+    OTHER_ORG = 'org_other_org', TIER = 'org_tier',
 }
 local ERR = Org.ERR
 
@@ -128,6 +150,8 @@ local MESSAGES = {
     org_reserved = 'That contract is held for the organisation.',
     org_approval = 'Sent to a boss for approval. Nothing is taken until it is approved; you are told the answer.',
     org_probation = 'On probation you may not take that contract yet.',
+    org_other_org = 'They are a member of another organisation already.',
+    org_tier = 'The organisation\'s reputation does not unlock contracts worth that much yet.',
     invalid_input = 'Check what was entered.',
 }
 
@@ -147,7 +171,63 @@ end
 ---@return table|nil
 function Org.current()
     if not Feature.on('Organisation') then return nil end
-    return State
+    return Cur()
+end
+
+--- Run fn with `org` as the organisation every function here works on, in
+--- this coroutine only; put back after, whatever fn did.
+---@param org table
+---@param fn function
+function Org.within(org, fn, ...)
+    local co = coroutine.running()
+    local before = Ctx[co]
+    Ctx[co] = org
+    local res = table.pack(pcall(fn, ...))
+    Ctx[co] = before
+    if not res[1] then error(res[2], 0) end
+    return table.unpack(res, 2, res.n)
+end
+
+--- Whether staff may keep more than one organisation.
+---@return boolean
+function Org.severalOn()
+    return Feature.on('Organisation') and Config.Organisation.SeveralOrganisations == true
+end
+
+--- One organisation loaded, by its id, or nil.
+---@param id any
+---@return table|nil
+function Org.byId(id)
+    if not Feature.on('Organisation') or type(id) ~= 'string' or #id > 32 then return nil end
+    return Orgs[id]
+end
+
+--- Every organisation loaded, the first first.
+---@return table[]
+function Org.all()
+    local out = {}
+    if not Feature.on('Organisation') then return out end
+    for _, id in ipairs(Order) do if Orgs[id] then out[#out + 1] = Orgs[id] end end
+    return out
+end
+
+--- The organisation a citizen is a member of, or nil. A citizen is a
+--- member of one at most (Org.hire refuses a second).
+---@param cid any
+---@return table|nil
+function Org.orgOf(cid)
+    if type(cid) ~= 'string' then return nil end
+    for _, id in ipairs(Order) do
+        local org = Orgs[id]
+        if org and org.members[cid] then return org end
+    end
+    return nil
+end
+
+--- A member of another organisation than `org`.
+local function memberElsewhere(cid, org)
+    local other = Org.orgOf(cid)
+    return other ~= nil and other ~= org
 end
 
 --- The identity module the organisation was wired with.
@@ -166,12 +246,13 @@ local function parseRole(text)
         pay = tonumber(pay), is_boss = boss:lower() == 'yes' or boss:lower() == 'true' }
 end
 
-local function roleId(grade) return State.id .. ':' .. tostring(grade) end
-local function memberId(cid) return State.id .. ':' .. cid end
+local function roleId(grade) return Cur().id .. ':' .. tostring(grade) end
+local function memberId(cid) return Cur().id .. ':' .. cid end
 
-local function saveOrgRow()
-    deps.storage.writeOrgRow('orgs', { id = State.id, job = State.job, label = State.label,
-        job_type = State.jobType, settings = State.settings, created_at = State.created_at,
+local function saveOrgRow(org)
+    org = org or Cur()
+    deps.storage.writeOrgRow('orgs', { id = org.id, job = org.job, label = org.label,
+        job_type = org.jobType, settings = org.settings, created_at = org.created_at,
         updated_at = now() })
 end
 
@@ -226,27 +307,52 @@ local function settingsOf(raw)
     s.recruit.questions = type(s.recruit.questions) == 'table' and s.recruit.questions or {}
     s.recruit.cooldowns = type(s.recruit.cooldowns) == 'table' and s.recruit.cooldowns or {}
     s.recruit.notes = type(s.recruit.notes) == 'table' and s.recruit.notes or {}
+    -- Several organisations (the first one's row only): the ids of the
+    -- others staff made, in the order they were made.
+    s.others = type(s.others) == 'table' and s.others or {}
+    -- Organisation extras 3 (server/org/extras3.lua): reputation, dead drops
+    -- waiting, the garage's models a boss took off, internal contract
+    -- requests and the activity log.
+    s.rep = type(s.rep) == 'table' and s.rep or {}
+    s.drops = type(s.drops) == 'table' and s.drops or {}
+    s.garage = type(s.garage) == 'table' and s.garage or {}
+    s.garage.off = type(s.garage.off) == 'table' and s.garage.off or {}
+    s.internal = type(s.internal) == 'table' and s.internal or {}
+    s.activity = type(s.activity) == 'table' and s.activity or {}
+    if s.payoutMethod ~= 'deaddrop' then s.payoutMethod = nil end
     return s
 end
 
 --- Read the organisation from the store, making it from config.lua the
 --- first time (its roles from Config.Organisation.Roles).
-local function load()
-    local id = orgId()
+local fill
+
+---@param id string|nil the organisation's id (nil: the first, from config.lua)
+---@param spec table|nil a new one's { job, label, jobType } (Org.create)
+local function load(id, spec)
+    id = id or orgId()
     local storage = deps.storage
     local row = storage.readOrgRow('orgs', id)
     local created = false
     if not row then
-        row = { id = id, job = id, label = Config.Organisation.JobLabel or id,
-            job_type = Config.Organisation.JobType or 'hitman', settings = {}, created_at = now() }
+        if spec == nil and id ~= orgId() then return nil end
+        spec = spec or {}
+        row = { id = id, job = spec.job or id, label = spec.label or Config.Organisation.JobLabel or id,
+            job_type = spec.jobType or Config.Organisation.JobType or 'hitman', settings = {}, created_at = now() }
         storage.writeOrgRow('orgs', row)
         created = true
     end
-    State = {
+    local State = {
         id = row.id, job = row.job or id, label = row.label, jobType = row.job_type,
         settings = settingsOf(row.settings), created_at = row.created_at,
         roles = {}, members = {}, ceiling = { role = {}, member = {} }, locations = {}, applications = {},
     }
+    Org.within(State, fill, State, id, created)
+    return State
+end
+
+fill = function(State, id, created)
+    local storage = deps.storage
     for _, r in ipairs(storage.readOrgRows('roles', id) or {}) do
         local grade = math.floor(tonumber(r.grade) or -1)
         if grade >= 0 then
@@ -296,7 +402,6 @@ local function load()
     if created then
         deps.audit.staff('org_created', nil, nil, { org = id, roles = #(Config.Organisation.Roles or {}) })
     end
-    return State
 end
 
 local registerSpots -- LOCATIONS, below
@@ -305,16 +410,26 @@ function Org.init(d)
     deps = d
     -- A member's codename where a hitman's name is shown (Org.shownName).
     Util.shownHitmanName = function(cid, name, contractId) return Org.shownName(cid, name, contractId) end
-    State, Splits, LastAccept, LastFire, Refs, RefSeq = nil, {}, {}, {}, {}, 0
+    Orgs, Order, Splits, LastAccept, LastFire, Refs, RefSeq = {}, {}, {}, {}, {}, {}, 0
+    Ctx = setmetatable({}, { __mode = 'k' })
     Promotions.reset()
     NoSplit, NoSplitCount = {}, 0
-    Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, nil, 0
+    Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, {}, 0
     Paying, PaidHere = {}, {}
     Jobs.reset()
     Funds.init({ storage = d.storage, audit = d.audit, review = d.review })
     Extras.init(d)
     Extras2.init(d)
+    Extras3.init(d)
     Places.attach(d.storage)
+    -- The panel's Locations ops on the organisation data.org names.
+    Places.scope = function(data, fn)
+        local wanted = type(data) == 'table' and data.org or nil
+        if wanted == nil then return fn() end
+        local org = Org.byId(wanted)
+        if not org then return false, ERR.NOT_FOUND, 'No such organisation: refresh the page.' end
+        return Org.within(org, fn)
+    end
     registerSpots()
     -- The money path's two hooks, which read one switch while it is off.
     if d.escrow then
@@ -329,7 +444,17 @@ function Org.init(d)
     end
     if d.settings and d.settings.watch then
         d.settings.watch('Organisation.Enabled', function() Org.boot(true) end)
+        d.settings.watch('Organisation.SeveralOrganisations', function() Org.boot(true) end)
     end
+end
+
+--- Register one organisation's job and make sure of its funds account.
+local function bring(org)
+    if Jobs.register(org) then
+        Seq = Seq + 1
+        RegisteredSeq[org.id] = Seq
+    end
+    Funds.ensureAccount(org)
 end
 
 --- Start the organisation, where it is on: read it, register the job,
@@ -340,27 +465,41 @@ end
 ---@param live boolean|nil turned on or off from the panel
 function Org.boot(live)
     if not Feature.on('Organisation') then
-        if live and State then
-            State = nil
+        if live and Order[1] then
+            Orgs, Order = {}, {}
             Extras.rebuild()
             Org.pushSpotsAll()
         end
         return false
     end
-    local ok, err = pcall(load)
-    if not ok then
+    local ok, first = pcall(load)
+    if not ok or not first then
         Log.always(('the hitman organisation could not be read: %s; it stays off until the next start')
-            :format(Util.dbError and Util.dbError(err) or tostring(err)))
-        State = nil
+            :format(Util.dbError and Util.dbError(first) or tostring(first)))
+        Orgs, Order = {}, {}
         return false
     end
-    Jobs.checkConvars()
-    if Jobs.register(State) then
-        Seq = Seq + 1
-        RegisteredSeq = Seq
+    Orgs, Order = { [first.id] = first }, { first.id }
+    -- The others staff made (SeveralOrganisations), each read the same way;
+    -- one that cannot be read stays out until the next start, and is said.
+    if Org.severalOn() then
+        for _, id in ipairs(first.settings.others) do
+            if type(id) == 'string' and not Orgs[id] then
+                local okO, other = pcall(load, id)
+                if okO and other then
+                    Orgs[id] = other
+                    Order[#Order + 1] = id
+                else
+                    Log.always(('the hitman organisation %s could not be read: %s; it stays out until the next start')
+                        :format(id, tostring(other)))
+                end
+            end
+        end
     end
-    Funds.ensureAccount(State)
+    Jobs.checkConvars()
+    for _, id in ipairs(Order) do bring(Orgs[id]) end
     Extras.loaded()
+    Extras3.loaded()
     Org.resync()
     Org.pushSpotsAll()
     return true
@@ -407,6 +546,8 @@ function Org.validate(warn)
     if type(cfg.NpcModel) ~= 'string' or not cfg.NpcModel:match('^[%w_]+$') then back('NpcModel', 'must be a ped model name') end
     Extras.validate(warn)
     Extras2.validate(warn)
+    Extras3.validate(warn)
+    Feature.check('Organisation', Org.CHECKS, warn)
     if type(cfg.Limits) ~= 'table' then
         back('Limits', 'must be a table')
     else
@@ -487,6 +628,8 @@ function Org.external(actor, grade)
     if (member and member.grade == grade) or (not member and grade == nil) then return end
     local adopt = Config.Organisation.ExternalChanges ~= 'revert'
     if adopt and grade ~= nil and not org.roles[grade] then adopt = false end
+    -- A member of another organisation is never adopted into this one too.
+    if adopt and grade ~= nil and memberElsewhere(actor.cid, org) then adopt = false end
     if adopt then
         if grade == nil then
             org.members[actor.cid] = nil
@@ -535,7 +678,9 @@ end
 ---@return boolean
 function Org.loadedSinceRegister(src)
     local at = LoadedSeq[tonumber(src) or -1]
-    return RegisteredSeq ~= nil and at ~= nil and at > RegisteredSeq
+    local org = Cur()
+    local registered = org and RegisteredSeq[org.id]
+    return registered ~= nil and at ~= nil and at > registered
 end
 
 --- A character in, or a job change (QBCore:Server:OnJobUpdate).
@@ -599,13 +744,16 @@ end
 
 local function record(action, who, detail, contract)
     detail = detail or {}
-    detail.org = State and State.id or nil
+    local cur = Cur()
+    detail.org = cur and cur.id or nil
     detail.by = who.staff and 'staff' or 'boss'
     if who.staff then
         deps.audit.staff(action, who.cid, contract, detail)
     else
         deps.audit.action(action, who.cid, contract, detail)
     end
+    -- The organisation's own activity log (Config.Organisation.ActivityLog).
+    Extras3.logAction(action, who, detail)
 end
 Org.record = record
 
@@ -673,6 +821,7 @@ end
 
 --- Make a citizen a member at a grade, told to qbx_core.
 local function enrol(org, target, grade, primary)
+    if memberElsewhere(target.cid, org) then return nil, 'other_org' end
     local member = { id = memberId(target.cid), org_id = org.id, cid = target.cid, name = target.name,
         grade = grade, grants = {}, denies = {}, limits = {}, locked = false, joined_at = now(),
         last_seen = target.source and now() or nil }
@@ -727,6 +876,7 @@ function Org.hire(who, target, grade)
     if err then return fail(err) end
     if type(target) ~= 'table' or type(target.cid) ~= 'string' then return fail(ERR.INVALID) end
     if org.members[target.cid] then return fail(ERR.ALREADY) end
+    if memberElsewhere(target.cid, org) then return fail(ERR.OTHER_ORG) end
     if grade == nil then
         for g in pairs(org.roles) do if grade == nil or g < grade then grade = g end end
     end
@@ -734,6 +884,7 @@ function Org.hire(who, target, grade)
     if not org.roles[grade] then return fail(ERR.NOT_FOUND) end
     if who.staff then
         local member, code = enrol(org, target, grade, false)
+        if not member and code == 'other_org' then return fail(ERR.OTHER_ORG) end
         if not member then return fail(ERR.REFUSED, { qbx = code }) end
         record('org_member_hired', who, { member = target.cid, grade = grade })
         if target.source then Org.pushSpots(target.source) end
@@ -754,7 +905,7 @@ function Org.hire(who, target, grade)
     local minutes = Powers.limit(org, 'InviteMinutes')
     RefSeq = RefSeq + 1
     local invite = { id = ('inv%d_%d'):format(RefSeq, math.random(1000, 9999)), cid = target.cid, grade = grade,
-        by = who.cid, at = now(), expires = now() + minutes * 60 }
+        by = who.cid, at = now(), expires = now() + minutes * 60, org = org.id }
     Invites[target.cid] = invite
     record('org_member_invited', who, { member = target.cid, grade = grade })
     -- The organisation and the role, never who asked.
@@ -801,6 +952,7 @@ function Org.answerInvite(actor, id, accept)
         return true, nil, { accepted = false }
     end
     if org.members[actor.cid] then return fail(ERR.ALREADY) end
+    if memberElsewhere(actor.cid, org) then return fail(ERR.OTHER_ORG) end
     local why = bossMayHire(org, invite.by, actor.cid, invite.grade)
     if why then return fail(why == ERR.LIMIT and ERR.LIMIT or ERR.RULE) end
     local member, code = enrol(org, { cid = actor.cid, name = actor.name, source = actor.source }, invite.grade,
@@ -1204,7 +1356,7 @@ end
 function Org.shownName(cid, name, contractId)
     if name == nil or type(cid) ~= 'string' or not Feature.on('Organisation') then return name end
     if contractId ~= nil then
-        local split = State and shownSplit(contractId, cid)
+        local split = Cur() and shownSplit(contractId, cid)
         if split then
             return type(split.shown_name) == 'string' and split.shown_name ~= '' and split.shown_name or name
         end
@@ -1212,7 +1364,7 @@ function Org.shownName(cid, name, contractId)
         return name
     end
     if not Org.codenamesOn() then return name end
-    local member = State and State.members[cid]
+    local member = Cur() and Cur().members[cid]
     return member and type(member.codename) == 'string' and Org.codenameLabel(member.codename) or name
 end
 
@@ -1606,6 +1758,7 @@ function Org.afterAccept(actor, contractId, gate)
     if not org or type(actor) ~= 'table' then return end
     -- An organisation contract taken (Config.Organisation.OrgContracts).
     Extras.afterAccept(org, actor, contractId)
+    Extras3.accepted(org, actor)
     LastAccept[actor.cid] = now()
     local terms
     if type(gate) == 'table' then
@@ -1651,13 +1804,16 @@ function Org.cutFor(recipientCid, line)
     if type(line) ~= 'table' or type(line.id) ~= 'string' then return 0 end
     local taken = Funds.taken(line.id)
     if taken > 0 or not Feature.on('Organisation') then return taken end
-    local org = State
-    if not org then return 0 end
+    if not Cur() then return 0 end
     if (tonumber(line.deliver_arrived) or 0) > 0 then return 0 end
     local amount = math.floor(tonumber(line.amount) or 0)
     if amount <= 0 then return 0 end
     local split = splitOf(line.contract_id, recipientCid)
     if not split then return 0 end
+    -- The organisation the member was in as they took it (the split says),
+    -- while it is still kept; otherwise nothing is cut.
+    local org = Orgs[split.org_id or ''] or (split.org_id == nil and Cur()) or nil
+    if not org then return 0 end
     local pct, kind = 0, nil
     if line.id:sub(1, 5) == 'prem:' then
         pct, kind = tonumber(split.buyout_pct) or 0, 'buyout'
@@ -1703,7 +1859,7 @@ end
 ---@return table|nil data
 function Org.acceptGate(actor, contractId, opts, out)
     if not Feature.on('Organisation') then return nil end
-    local org = State
+    local org = Cur()
     if not org or type(actor) ~= 'table' then return nil end
     -- Held for the organisation (OrgContracts): only its assigned member.
     local held, heldData = Extras.reservedRefusal(org, actor, contractId, opts)
@@ -1767,6 +1923,9 @@ function Org.acceptGate(actor, contractId, opts, out)
     end
     -- Last, once every other rule passed: an accept that waits for a boss
     -- (Config.Organisation.AcceptApproval). Nothing is taken while it does.
+    -- The organisation's reputation tier (Config.Organisation.Reputation).
+    local tiered, tierData = Extras3.tierGate(org, member, contractId)
+    if tiered then return tiered, tierData end
     local waits, waitData = Extras.approvalGate(org, member, actor, contractId, opts, out)
     if waits then return waits, waitData end
     if type(out) == 'table' then out.terms = terms end
@@ -2139,7 +2298,7 @@ end
 
 local function tell(cid, text)
     if deps.notify and deps.notify.toCitizen and deps.identity.byCitizenId(cid) then
-        pcall(deps.notify.toCitizen, cid, (State and State.label) or 'Organisation', text)
+        pcall(deps.notify.toCitizen, cid, (Cur() and Cur().label) or 'Organisation', text)
     end
 end
 
@@ -2277,7 +2436,7 @@ end
 ---@return table|nil what happened { paid, skipped, failed, unconfirmed, total } when it ran
 function Org.payrollTick(at)
     if not Org.payrollOn() then return nil end
-    local org = State
+    local org = Cur()
     if not org then return nil end
     local ts = at or now()
     local pay = org.settings.payroll
@@ -2380,8 +2539,16 @@ Org.SPOTS = {
         label = 'NPC spots', one = 'NPC spot', icon = 'user-tie' },
     place = { power = nil, max = function() return 50 end, everyone = false,
         label = 'Other organisation places', one = 'place', icon = 'location-dot' },
+    -- Organisation extras 3 (server/org/extras3.lua): staff only. A
+    -- territory is never sent to any game (hidden).
+    deaddrop = { power = nil, max = function() return 3 end, everyone = false,
+        label = 'Dead drops', one = 'dead drop', icon = 'box-archive' },
+    garage = { power = nil, max = function() return 1 end, everyone = false,
+        label = 'Garage', one = 'garage spot', icon = 'warehouse' },
+    territory = { power = nil, max = function() return 10 end, everyone = false, hidden = true,
+        label = 'Territory', one = 'territory', icon = 'map', radius = { min = 10, max = 1000, default = 150 } },
 }
-Org.SPOT_ORDER = { 'office', 'signup', 'meeting', 'npc', 'place' }
+Org.SPOT_ORDER = { 'office', 'signup', 'meeting', 'npc', 'place', 'deaddrop', 'garage', 'territory' }
 
 --- The server's own position for a player: coords and heading.
 ---@return table|nil { x, y, z, h }
@@ -2423,8 +2590,9 @@ registerSpots = function()
         Places.kind(kind, {
             group = 'org', label = def.label, one = def.one, icon = def.icon,
             fields = { label = true, radius = true, blip = true, enabled = true }, labelMax = 64,
-            defaultLabel = kind, single = kind == 'office', radius = { min = 0.5, max = 50, default = 2.0 },
-            owner = function() return State and Org.current() and State.id or nil end,
+            defaultLabel = kind, single = kind == 'office' or kind == 'garage',
+            radius = def.radius or { min = 0.5, max = 50, default = 2.0 },
+            owner = function() return Org.current() and Cur().id or nil end,
             ready = function()
                 if Org.current() then return nil end
                 if Feature.on('Organisation') then
@@ -2436,25 +2604,25 @@ registerSpots = function()
             allow = function(who)
                 if who.staff then return nil end
                 if not def.power then return ERR.NO_POWER end
-                return Org.authorize(State, who, def.power)
+                return Org.authorize(Cur(), who, def.power)
             end,
             max = function(who)
-                if who.staff then return math.max(def.max(State), kind == 'office' and 1 or 20) end
-                return def.max(State)
+                if who.staff then return math.max(def.max(Cur()), kind == 'office' and 1 or 20) end
+                return def.max(Cur())
             end,
             rules = function(who, at, existing)
                 if who.staff then return nil end
                 if inSafeZone(at.x, at.y) then
                     return ERR.RULE, { message = 'Not here: this is a safe zone staff keep clear of organisation spots.' }
                 end
-                local moved = State.settings.moves[kind .. ':' .. who.cid]
-                if moved and now() - moved < Powers.limit(State, 'LocationCooldownMinutes') * 60 then
+                local moved = Cur().settings.moves[kind .. ':' .. who.cid]
+                if moved and now() - moved < Powers.limit(Cur(), 'LocationCooldownMinutes') * 60 then
                     return ERR.COOLDOWN
                 end
                 if kind == 'office' then
                     local anchor = existing and existing.anchor
                     if type(anchor) ~= 'table' then return ERR.LOCKED end
-                    local reach = Powers.limit(State, 'OfficeMoveMetres')
+                    local reach = Powers.limit(Cur(), 'OfficeMoveMetres')
                     if (at.x - anchor.x) ^ 2 + (at.y - anchor.y) ^ 2 > reach * reach then return ERR.BOUNDS end
                 end
             end,
@@ -2463,7 +2631,7 @@ registerSpots = function()
             end,
             after = function(who, row, existing)
                 if not who.staff then
-                    State.settings.moves[kind .. ':' .. who.cid] = now()
+                    Cur().settings.moves[kind .. ':' .. who.cid] = now()
                     saveOrgRow()
                 end
                 record('org_location_set', who, { kind = kind, id = row.id, x = row.x, y = row.y, z = row.z,
@@ -2473,7 +2641,7 @@ registerSpots = function()
             mayRemove = function(who)
                 if who.staff then return nil end
                 if not def.power or kind == 'office' then return ERR.NO_POWER end
-                return Org.authorize(State, who, def.power)
+                return Org.authorize(Cur(), who, def.power)
             end,
             removed = function(who, rows)
                 for _, row in ipairs(rows) do record('org_location_removed', who, { kind = kind, id = row.id }) end
@@ -2525,7 +2693,7 @@ function Org.spotsFor(cid)
     local out = {}
     for _, l in pairs(org.locations) do
         local def = Org.SPOTS[l.kind]
-        if l.enabled ~= false and def and (def.everyone or member) then
+        if l.enabled ~= false and def and not def.hidden and (def.everyone or member) then
             out[#out + 1] = { id = l.id, kind = l.kind, label = l.label, x = l.x, y = l.y, z = l.z,
                 h = l.h or 0, radius = l.radius or 2.0, blip = l.blip == true or nil }
         end
@@ -2563,6 +2731,8 @@ function Org.useSpot(src, id)
     local at = Org.positionOf(src)
     if not at or not Geo.near(at, loc, (loc.radius or 2.0) + 2.0) then return end
     local member = org.members[actor.cid]
+    -- The dead drop, the garage and the handler (server/org/extras3.lua).
+    if Extras3.useSpot(org, actor, loc) then return end
     local text
     if loc.kind == 'signup' then
         text = member and 'You are already a member.' or 'Apply in the app\'s Organisation tab while you stand here.'
@@ -2624,6 +2794,9 @@ function Org.apply(actor, text, answers)
     local org = Org.current()
     if not org then return fail(ERR.OFF) end
     if org.members[actor.cid] then return fail(ERR.ALREADY) end
+    if memberElsewhere(actor.cid, org) then
+        return fail(ERR.OTHER_ORG, { message = 'You are a member of another organisation already.' })
+    end
     for _, a in pairs(org.applications) do if a.cid == actor.cid then return fail(ERR.ALREADY) end end
     if text ~= nil and type(text) ~= 'string' then return fail(ERR.INVALID) end
     text = text and Util.toValidUtf8(text):gsub('%c', ' '):sub(1, 255) or nil
@@ -2692,6 +2865,7 @@ function Org.decide(who, id, accept)
         -- Config says so, as an invite they accept is.
         local member, code = enrol(org, { cid = row.cid, name = row.name }, lowest,
             Config.Organisation.SetPrimaryOnHire ~= false)
+        if not member and code == 'other_org' then return fail(ERR.OTHER_ORG) end
         if not member then return fail(ERR.REFUSED, { qbx = code }) end
     end
     row.state, row.decided_by, row.decided_at = accept and 'accepted' or 'rejected', who.cid, now()
@@ -2846,6 +3020,8 @@ function Org.mine(actor)
         local open = false
         for _, a in pairs(org.applications) do if a.cid == actor.cid then open = true end end
         local outside = { enabled = true, member = false, label = org.label, applied = open or nil,
+            -- Several organisations: which this is, and the others to pick from.
+            id = #Order > 1 and org.id or nil, choices = Org.choices(),
             invite = Org.inviteFor(actor.cid),
             -- Where they may apply from: anywhere, or only at a sign-up spot
             -- (and whether they stand at one now, by the server's own look).
@@ -2892,6 +3068,9 @@ function Org.mine(actor)
     -- The record and leaderboard, discipline, the armory and recruitment,
     -- each only while its switch is on (server/org/extras2.lua).
     Extras2.mine(org, member, out)
+    -- Reputation, dead drops, the garage, internal contracts, the activity
+    -- log and the handler, each only while on (server/org/extras3.lua).
+    Extras3.mine(org, member, out)
     return out
 end
 
@@ -2950,7 +3129,7 @@ function Org.staffView(viewer)
     if not Feature.on('Organisation') then
         return { enabled = false, job = orgId() }
     end
-    local org = State
+    local org = Cur()
     if not org then return { enabled = true, loaded = false, job = orgId() } end
     local _, _, members = Org.members({ staff = true, cid = viewer })
     local _, _, roles = Org.roles({ staff = true, cid = viewer })
@@ -2978,9 +3157,23 @@ function Org.staffView(viewer)
             paySuspended = Config.Organisation.PaySuspended == true,
             perDayMax = Powers.limit(org, 'PayrollPerDayMax') } or nil,
     }
+    -- Several organisations: which this is, and every one staff may pick.
+    view.id = org.id
+    if Org.severalOn() then
+        view.several = true
+        view.maxOrgs = Org.maxOrgs()
+        view.orgs = {}
+        for i, o in ipairs(Org.all()) do
+            local n = 0
+            for _ in pairs(o.members) do n = n + 1 end
+            view.orgs[#view.orgs + 1] = { id = o.id, label = o.label, job = o.job, members = n,
+                first = i == 1 or nil }
+        end
+    end
     -- Organisation extras (server/org/extras.lua), each only while on.
     Extras.staffView(org, viewer, view)
     Extras2.staffView(org, viewer, view)
+    Extras3.staffView(org, viewer, view)
     return view
 end
 
@@ -3008,5 +3201,288 @@ Extras2.attach(Org, {
     fail = fail, record = record, save = function() saveOrgRow() end, deps = function() return deps end,
     saveMember = saveMember, setGrade = setGrade,
 })
+
+Extras3.attach(Org, {
+    fail = fail, record = record, save = function() saveOrgRow() end, deps = function() return deps end,
+})
+
+-- ============================================================================
+--                              SEVERAL ORGANISATIONS
+-- ============================================================================
+
+--- The start-up check of these settings (Feature.check).
+Org.CHECKS = {
+    SeveralOrganisations = { kind = 'switch' },
+    MaxOrganisations = { kind = 'number', integer = true, min = 1, max = 10 },
+}
+
+--- The most organisations staff may keep (Config.Organisation.MaxOrganisations).
+---@return integer
+function Org.maxOrgs()
+    return math.max(1, math.min(10, math.floor(tonumber(Config.Organisation.MaxOrganisations) or 3)))
+end
+
+--- Add an organisation (staff only, SeveralOrganisations on): its own qbx_core
+--- job (`job`, lower case, never another's), label, roles (Config.Organisation.
+--- Roles), funds account, places, Boss permissions and settings, all kept by
+--- its id (the job name). A job name used before brings that one back as it
+--- was left. Audited org_added.
+---@param who table staff
+---@param spec table { job, label }
+function Org.create(who, spec)
+    if not Feature.on('Organisation') then return fail(ERR.OFF) end
+    if type(who) ~= 'table' or not who.staff then return fail(ERR.NO_POWER) end
+    if not Org.severalOn() then return fail(ERR.FEATURE_OFF) end
+    local first = Order[1] and Orgs[Order[1]]
+    if not first then return fail(ERR.OFF) end
+    if type(spec) ~= 'table' then return fail(ERR.INVALID) end
+    local job = type(spec.job) == 'string' and spec.job:lower() or nil
+    if not job or #job < 2 or #job > 32 or not job:match('^[a-z][a-z0-9_]+$') then
+        return fail(ERR.INVALID, { message = 'A job name: 2-32 lower-case letters, digits or _, starting with a letter.' })
+    end
+    local label = cleanName(spec.label, 64)
+    if not label then return fail(ERR.INVALID, { message = 'A label of 1-64 characters, no < or >.' }) end
+    if #Order >= Org.maxOrgs() then
+        return fail(ERR.LIMIT, { message = ('At the most organisations staff set (%d, Config.Organisation.'
+            .. 'MaxOrganisations).'):format(Org.maxOrgs()) })
+    end
+    for _, o in pairs(Orgs) do
+        if o.id == job or o.job == job then
+            return fail(ERR.ALREADY, { message = 'Another organisation already uses that job name.' })
+        end
+    end
+    local ok, org = pcall(load, job, { job = job, label = label, jobType = Config.Organisation.JobType })
+    if not ok or not org then
+        return fail(ERR.REFUSED, { message = 'The store would not take it; nothing was added.' })
+    end
+    if org.job ~= job then
+        return fail(ERR.ALREADY, { message = 'That id is kept for another job; pick another job name.' })
+    end
+    Orgs[job] = org
+    Order[#Order + 1] = job
+    local listed = false
+    for _, id in ipairs(first.settings.others) do if id == job then listed = true end end
+    if not listed then first.settings.others[#first.settings.others + 1] = job end
+    saveOrgRow(first)
+    bring(org)
+    Org.within(org, record, 'org_added', who, { job = job, label = org.label })
+    Extras.rebuild()
+    return true, nil, { id = job, label = org.label }
+end
+
+--- Take an organisation off the list (staff only): never the first, and only
+--- with no member, nothing in its funds and no contract held for it. Its rows
+--- stay (the record keeps them); its qbx_core job stays registered until the
+--- next start. Adding its job name again brings it back.
+function Org.removeOrg(who, id)
+    if not Feature.on('Organisation') then return fail(ERR.OFF) end
+    if type(who) ~= 'table' or not who.staff then return fail(ERR.NO_POWER) end
+    if not Org.severalOn() then return fail(ERR.FEATURE_OFF) end
+    local org = Org.byId(id)
+    if not org then return fail(ERR.NOT_FOUND) end
+    if org.id == Order[1] then return fail(ERR.RULE, { message = 'The first organisation (config.lua) stays.' }) end
+    if next(org.members) then return fail(ERR.RULE, { message = 'It still has members: fire them first.' }) end
+    if Funds.balance(org) ~= 0 then return fail(ERR.RULE, { message = 'Its funds are not empty: withdraw them first.' }) end
+    if next(org.settings.orgContracts) then
+        return fail(ERR.RULE, { message = 'A contract is still held for it: release it first.' })
+    end
+    local first = Orgs[Order[1]]
+    for i = #first.settings.others, 1, -1 do
+        if first.settings.others[i] == org.id then table.remove(first.settings.others, i) end
+    end
+    saveOrgRow(first)
+    for i = #Order, 1, -1 do if Order[i] == org.id then table.remove(Order, i) end end
+    Orgs[org.id] = nil
+    Org.within(org, record, 'org_removed', who, { job = org.job })
+    Extras.rebuild()
+    Org.pushSpotsAll()
+    return true
+end
+
+--- Whose a request is, when its sender is no member (several organisations):
+--- the one the payload names (`wanted`), or the one whose invite waits for
+--- them, whose application is open, or at whose sign-up spot they stand.
+--- nil: the first. The second answer is true when `wanted` names none.
+---@return table|nil org
+---@return boolean|nil unknown
+function Org.contextFor(actor, wanted)
+    if type(actor) ~= 'table' then return nil end
+    local mine = Org.orgOf(actor.cid)
+    if mine then return mine end
+    if #Order < 2 then return nil end
+    if wanted ~= nil then
+        local org = Org.byId(wanted)
+        if not org then return nil, true end
+        return org
+    end
+    local invite = inviteOf(actor.cid)
+    if invite and Orgs[invite.org or ''] then return Orgs[invite.org] end
+    for _, id in ipairs(Order) do
+        for _, a in pairs(Orgs[id].applications) do if a.cid == actor.cid then return Orgs[id] end end
+    end
+    if actor.source then
+        for _, id in ipairs(Order) do
+            if Org.within(Orgs[id], atSignup, Orgs[id], actor.source) then return Orgs[id] end
+        end
+    end
+    return nil
+end
+
+--- The organisations a player outside them may apply to, for the tab.
+---@return table[]|nil
+function Org.choices()
+    if #Order < 2 then return nil end
+    local out = {}
+    for _, id in ipairs(Order) do out[#out + 1] = { id = id, label = Orgs[id].label } end
+    return out
+end
+
+-- The ways in from outside this file, each run on the organisation it is
+-- about. With one organisation every one of them is the first, as before.
+
+local function wrapBy(name, pick)
+    local raw = Org[name]
+    Org[name] = function(...)
+        local org = pick(...)
+        if not org then return raw(...) end
+        return Org.within(org, raw, ...)
+    end
+end
+
+local function byCid(cid) return Org.orgOf(cid) end
+local function bySrc(src)
+    local actor = deps and deps.identity.resolve(tonumber(src))
+    return actor and Org.orgOf(actor.cid) or nil
+end
+
+wrapBy('termsFor', byCid)
+wrapBy('shownName', byCid)
+wrapBy('playerLoaded', bySrc)
+wrapBy('inviteFor', function(cid)
+    if Org.orgOf(cid) then return Org.orgOf(cid) end
+    local invite = inviteOf(cid)
+    return invite and Orgs[invite.org or ''] or nil
+end)
+wrapBy('answerInvite', function(actor)
+    local invite = type(actor) == 'table' and inviteOf(actor.cid)
+    return invite and Orgs[invite.org or ''] or nil
+end)
+wrapBy('onGroupUpdate', function(_, groupName)
+    for _, id in ipairs(Order) do
+        if Orgs[id].job == groupName then return Orgs[id] end
+    end
+    return nil
+end)
+wrapBy('useSpot', function(_, id)
+    if type(id) ~= 'string' then return nil end
+    for _, oid in ipairs(Order) do
+        if Orgs[oid].locations[id:sub(1, 48)] then return Orgs[oid] end
+    end
+    return nil
+end)
+wrapBy('sendRefusal', function(orgId) return Org.byId(orgId) end)
+wrapBy('garageView', function(who) return type(who) == 'table' and Org.orgOf(who.cid) or nil end)
+wrapBy('receiveContract', function(_, _, orgId) return Org.byId(orgId) end)
+
+do
+    -- In every organisation: each keeps its own members and job.
+    local rawReconcile = Org.reconcile
+    Org.reconcile = function(src)
+        if #Order < 2 then return rawReconcile(src) end
+        for _, id in ipairs(Order) do
+            if Orgs[id] then Org.within(Orgs[id], rawReconcile, src) end
+        end
+    end
+
+    local rawSpots = Org.spotsFor
+    Org.spotsFor = function(cid)
+        if #Order < 2 then return rawSpots(cid) end
+        local out = {}
+        for _, id in ipairs(Order) do
+            for _, row in ipairs(Org.within(Orgs[id], rawSpots, cid)) do out[#out + 1] = row end
+        end
+        table.sort(out, function(a, b) return a.id < b.id end)
+        return out
+    end
+
+    local rawTab = Org.tabFor
+    Org.tabFor = function(cid, src)
+        if #Order < 2 then return rawTab(cid, src) end
+        local mine = Org.orgOf(cid)
+        if mine then return Org.within(mine, rawTab, cid, src) end
+        for _, id in ipairs(Order) do
+            local tab = Org.within(Orgs[id], rawTab, cid, src)
+            if tab then return tab end
+        end
+        return nil
+    end
+
+    local rawPayroll = Org.payrollTick
+    Org.payrollTick = function(at)
+        if #Order < 2 then return rawPayroll(at) end
+        local firstOut
+        for i, id in ipairs(Order) do
+            local out = Orgs[id] and Org.within(Orgs[id], rawPayroll, at)
+            if i == 1 then firstOut = out end
+        end
+        return firstOut
+    end
+
+    -- Held for any organisation: only its assigned member, whoever asks.
+    local rawGate = Org.acceptGate
+    Org.acceptGate = function(actor, contractId, opts, out)
+        if #Order < 2 or type(actor) ~= 'table' or not Feature.on('Organisation') then
+            return rawGate(actor, contractId, opts, out)
+        end
+        local home = Org.orgOf(actor.cid) or Orgs[Order[1]]
+        for _, id in ipairs(Order) do
+            local org = Orgs[id]
+            if org ~= home then
+                local held, data = Org.within(org, Extras.reservedRefusal, org, actor, contractId, opts)
+                if held then return held, data end
+            end
+        end
+        return Org.within(home, rawGate, actor, contractId, opts, out)
+    end
+
+    local rawAfter = Org.afterAccept
+    Org.afterAccept = function(actor, contractId, gate)
+        if #Order < 2 or type(actor) ~= 'table' or not Feature.on('Organisation') then
+            return rawAfter(actor, contractId, gate)
+        end
+        local home = Org.orgOf(actor.cid) or Orgs[Order[1]]
+        for _, id in ipairs(Order) do
+            local org = Orgs[id]
+            if org ~= home and org.settings.orgContracts[contractId] then
+                Org.within(org, Extras.afterAccept, org, actor, contractId)
+            end
+        end
+        return Org.within(home, rawAfter, actor, contractId, gate)
+    end
+
+    -- The record's outcomes: the stats (extras 2), reputation and the
+    -- activity log (extras 3), on the member's own organisation.
+    -- Kept on the module the first time: this file may be read again
+    -- (a fresh stack in the tests), and Extras2 is not.
+    Extras2.rawObserve = Extras2.rawObserve or Extras2.observe
+    local rawObserve = Extras2.rawObserve
+    local function both(kind, cid, info)
+        rawObserve(kind, cid, info)
+        Extras3.observe(kind, cid, info)
+    end
+    Extras2.observe = function(kind, cid, info)
+        local org = Org.orgOf(cid)
+        if not org then return both(kind, cid, info) end
+        return Org.within(org, both, kind, cid, info)
+    end
+
+    Extras.rawFrameworkDuty = Extras.rawFrameworkDuty or Extras.frameworkDuty
+    local rawDuty = Extras.rawFrameworkDuty
+    Extras.frameworkDuty = function(src, value)
+        local org = bySrc(src)
+        if not org then return rawDuty(src, value) end
+        return Org.within(org, rawDuty, src, value)
+    end
+end
 
 return Org

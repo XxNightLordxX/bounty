@@ -2578,7 +2578,7 @@ async function main() {
       rules: 'Areas', presets: 'Presets', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
       orgaccess: 'Contract access', orgnotices: 'Notices', orgwork: 'Work & channel', orgarmory: 'Armory',
-      orgrecord: 'Record & discipline', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
+      orgrecord: 'Record & discipline', orgturf: 'Reputation, drops & garage', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
       bplimits: 'Limits', bpoffice: 'Delegation & office', 'logs:grants': 'Grant history', locations: 'Map points',
       'logs:targets': 'Audit log', logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
       tools: 'Test tools', help: 'How it works', howto: 'How do I…', permissions: 'Who can do what' };
@@ -3190,7 +3190,7 @@ async function main() {
         sweep(app, 'the tools, run');
         // The new sections too: the organisation, Boss permissions and Locations.
         for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork',
-          'orgarmory', 'orgrecord', 'logs:org',
+          'orgarmory', 'orgrecord', 'orgturf', 'logs:org',
           'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'howto']) {
           app.nav(view);
           await settled();
@@ -6080,6 +6080,66 @@ async function main() {
     return server;
   }
 
+  /* ---- several organisations (Organisation.SeveralOrganisations) ---- */
+  await (async function () {
+    const several = { several: true, id: 'hitman', maxOrgs: 3, orgs: [
+      { id: 'hitman', label: 'Crimson Contractors', job: 'hitman', members: 2, first: true },
+      { id: 'syndicate', label: 'The Syndicate ' + XSS, job: 'syndicate', members: 0 }] };
+    const server = orgServer({ orgGet: function (data) {
+      const view = orgOn(several);
+      if (data && data.org === 'syndicate') { view.data.id = 'syndicate'; view.data.label = 'The Syndicate'; }
+      return view;
+    }, orgCreate: { ok: true, message: 'orgCreate done.' }, orgRemove: { ok: true, message: 'orgRemove done.' } });
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    app.nav('orgsetup');
+    await settled();
+    const found = [];
+    markupFrom(app, 'org several', found);
+    it('ORG EXTRAS 3: Setup lists the organisations, escaped, and which one is worked on', function () {
+      eq(found, []);
+      has(app.main(), 'Organisations');
+      has(app.main(), 'The Syndicate ' + XSS);
+      has(app.main(), 'Working on this one');
+    });
+    app.click(app.button('Work on this'));
+    await settled();
+    it('ORG EXTRAS 3: picking one sends its id with every organisation op after', function () {
+      eq(app.last('orgGet').data.org, 'syndicate');
+    });
+    app.click(app.button('Create / sync job'));
+    app.click(app.button('Create / sync job'));
+    await settled();
+    it('ORG EXTRAS 3: a write goes to the one picked', function () {
+      eq(app.last('orgSetup').data.org, 'syndicate');
+    });
+    app.click(app.button('Work on this'));
+    await settled();
+    it('ORG EXTRAS 3: picking the first again sends no id', function () {
+      eq(app.last('orgGet').data.org, undefined);
+    });
+    app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'org.new.job'; })[0], 'cartel');
+    app.type(app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'org.new.label'; })[0], 'Cartel');
+    const add = app.button('Add');
+    app.click(add);
+    it('ORG EXTRAS 3: Add takes two clicks, naming what it adds', function () {
+      eq(app.requests('orgCreate').length, 0);
+      has(app.text(add), 'Click again: add Cartel (cartel)');
+    });
+    app.click(app.button('Add'));
+    await settled();
+    it('workflow screen:admin.org.several \u2014 adds one with its job and label, unscoped', function () {
+      eq(app.last('orgCreate').data, { job: 'cartel', label: 'Cartel' });
+    });
+    app.click(app.button('Take off'));
+    app.click(app.button('Take off'));
+    await settled();
+    it('ORG EXTRAS 3: Take off takes two clicks and names the one', function () {
+      eq(app.last('orgRemove').data, { id: 'syndicate' });
+    });
+  })();
+
   /* ---- the header search ---- */
   await (async function () {
     const app = boot(standardServer());
@@ -6993,6 +7053,93 @@ async function main() {
     });
   })();
 
+  /* ---- Reputation, drops & garage: the organisation extras 3 ---- */
+  await (async function () {
+    const off = boot(orgServer());
+    off.open(FULL);
+    await settled();
+    off.nav('orgturf');
+    await settled();
+    it('EXTRAS 3: the view says it is off while orgGet carries none', function () {
+      has(off.main(), 'Reputation, dead drops and the garage is switched off');
+    });
+    const extras3 = { Reputation: true, DeadDrops: true, Territory: true, Garage: true, InternalContracts: true,
+      Handler: true, ActivityLog: true,
+      reputation: { points: 120, earned: 130, heat: 10, completed: 13, failed: 0, tier: { label: 'Known ' + XSS,
+        points: 100, max: 75000 }, next: { label: 'Trusted', points: 300 }, tiers: [{ points: 0, label: 'Unknown',
+        max: 25000 }, { points: 100, label: 'Known ' + XSS, max: 75000 }] },
+      deadDrops: { method: 'bank', spot: true, unclaimed: 'pay', rows: [{ key: 'ct1:HIT', name: XSS, at: NOW - 60,
+        expires: NOW + 600 }] },
+      territory: { zones: 2 },
+      garage: { ready: true, hasSpot: true, max: 3, all: [{ model: 'sultan', offered: true }, { model: 'baller' }],
+        out: [{ name: XSS, model: 'sultan', at: NOW - 120, ref: 'm1_1111' }] },
+      internal: [{ id: 'ic1_1', name: XSS, by: 'Kai', reason: 'Sold us out ' + XSS, amount: 2000, state: 'pending',
+        at: NOW - 30 }],
+      activity: [{ at: NOW - 10, what: 'Contract accepted', by: XSS, action: 'accepted' }] };
+    const app = boot(orgServer({ orgGet: orgOn({ extras3: extras3 }), orgRepAdjust: { ok: true, message: 'Adjusted.' },
+      orgPayoutMethod: { ok: true, message: 'Set.' }, orgDropSettle: { ok: true, message: 'Settled.' },
+      orgGarageOffer: { ok: true, message: 'Saved.' }, orgGarageRemove: { ok: true, message: 'Taken away.' },
+      orgInternalDecide: { ok: true, message: 'Placed.' } }));
+    app.open(FULL);
+    await settled();
+    app.nav('orgturf');
+    await settled();
+    const text = app.main();
+    const found = [];
+    markupFrom(app, 'org turf', found);
+    const byAct = function (act, attr, value) {
+      return app.$$('[data-act="' + act + '"]').filter(function (b) {
+        return !attr || b.getAttribute(attr) === value;
+      })[0];
+    };
+    const bind = function (b) {
+      return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0];
+    };
+    app.type(bind('org.rep.points'), '-15');
+    app.type(bind('org.rep.reason'), 'Sloppy work');
+    app.click(byAct('org-rep-adjust'));
+    const repAfterOne = app.requests('orgRepAdjust').length;
+    app.click(byAct('org-rep-adjust'));
+    await settled();
+    const rep = app.last('orgRepAdjust');
+    app.click(byAct('org-pay-method'));
+    app.click(byAct('org-pay-method'));
+    await settled();
+    const method = app.last('orgPayoutMethod');
+    app.click(byAct('org-drop-settle', 'data-value', 'refund'));
+    app.click(byAct('org-drop-settle', 'data-value', 'refund'));
+    await settled();
+    const settled1 = app.last('orgDropSettle');
+    app.click(byAct('org-garage-toggle', 'data-value', 'baller'));
+    app.click(byAct('org-garage-offer'));
+    app.click(byAct('org-garage-offer'));
+    await settled();
+    const offer = app.last('orgGarageOffer');
+    app.click(byAct('org-garage-remove', 'data-ref', 'm1_1111'));
+    app.click(byAct('org-garage-remove', 'data-ref', 'm1_1111'));
+    await settled();
+    const removed = app.last('orgGarageRemove');
+    app.click(byAct('org-internal', 'data-value', 'yes'));
+    const icAfterOne = app.requests('orgInternalDecide').length;
+    app.click(byAct('org-internal', 'data-value', 'yes'));
+    await settled();
+    it('workflow screen:admin.view:orgturf — reputation, a drop, the garage and an internal contract, two clicks each', function () {
+      eq(found, []);
+      has(text, 'Known ' + XSS);
+      has(text, 'Sold us out ' + XSS);
+      has(text, '2 zone(s)');
+      eq(app.$$('img').length, 0);
+      eq(repAfterOne, 0);
+      eq(rep.data, { points: -15, reason: 'Sloppy work' });
+      eq(method.data, { method: 'deaddrop' });
+      eq(settled1.data, { key: 'ct1:HIT', how: 'refund' });
+      eq(offer.data, { models: ['sultan', 'baller'] });
+      eq(removed.data, { member: 'm1_1111' });
+      eq(icAfterOne, 0);
+      eq(app.last('orgInternalDecide').data, { id: 'ic1_1', approve: true });
+    });
+  })();
+
   /* ---- Armory, Record & discipline, the form: the organisation extras 2 ---- */
   await (async function () {
     const off = boot(orgServer());
@@ -7117,7 +7264,7 @@ async function main() {
     await settled();
     const writes = [];
     for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork',
-      'orgarmory', 'orgrecord', 'bpmatrix', 'bplimits', 'bpoffice', 'locations']) {
+      'orgarmory', 'orgrecord', 'orgturf', 'bpmatrix', 'bplimits', 'bpoffice', 'locations']) {
       app.nav(view);
       await settled();
       app.$$('[data-gate]').forEach(function (b) {
@@ -7854,7 +8001,7 @@ async function main() {
     await settled();
     const single = [];
     for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices',
-      'orgwork', 'orgarmory', 'orgrecord', 'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures',
+      'orgwork', 'orgarmory', 'orgrecord', 'orgturf', 'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures',
       'inbox', 'changed']) {
       app.nav(view);
       await settled();

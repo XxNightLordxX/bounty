@@ -32,11 +32,11 @@ describe('the powers as constants', function()
         for _, code in ipairs({ 'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2',
             'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
             'S1', 'S2', 'S3', 'D2', 'D3', 'M7', 'P3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3',
-            'A1', 'A2', 'M10', 'M11', 'N4' }) do
+            'A1', 'A2', 'M10', 'M11', 'N4', 'M12', 'P4', 'K8', 'V1' }) do
             truthy(codes[code], code)
         end
-        eq(#Powers.LIST, 47, 'the 31 area powers, D2, D3 (D1 is R4), M7, P3 (codenames, payroll), the '
-            .. 'extras K4-K7, M8, M9, N3, and the extras 2 A1, A2, M10, M11, N4')
+        eq(#Powers.LIST, 51, 'the 31 area powers, D2, D3 (D1 is R4), M7, P3 (codenames, payroll), the '
+            .. 'extras K4-K7, M8, M9, N3, the extras 2 A1, A2, M10, M11, N4, and the extras 3 M12, P4, K8, V1')
         eq(Powers.resolve('D1'), 'R4')
         eq(Powers.resolve('TAKE'), nil, 'TAKE is no boss power')
         eq(Powers.resolve('TAKE', true), 'TAKE')
@@ -397,6 +397,12 @@ describe('every phone request, through its net event', function()
                 Config.Organisation[key] = true
             end
             Config.Organisation.ArmoryItems = { 'lockpick' }
+            -- And the extras 3 (server/org/extras3.lua).
+            for _, key in ipairs({ 'Reputation', 'DeadDrops', 'Garage', 'InternalContracts', 'ActivityLog',
+                'Handler' }) do
+                Config.Organisation[key] = true
+            end
+            Config.Organisation.GarageVehicles = { 'sultan' }
         end })
         Env.players[11]._inventory = { { name = 'lockpick', count = 5, slot = 1 } }
         for _, p in ipairs(require('server.org.powers').LIST) do W.allow(s, 3, p.code) end
@@ -500,6 +506,18 @@ describe('every phone request, through its net event', function()
         local rookie
         for _, m in ipairs(ok('orgMembers', {}).rows) do if m.probation then rookie = m.ref end end
         ok('orgProbationEnd', { member = rookie })
+        -- The extras 3: the payout method, the garage, an internal
+        -- contract request and the activity log.
+        for _, kind in ipairs({ 'deaddrop', 'garage' }) do
+            truthy(s.org.placeSpot({ staff = true, cid = 'ADMIN001', source = 6 }, { kind = kind, here = true }))
+        end
+        ok('orgPayoutMethod', { method = 'deaddrop' })
+        ok('orgGarage', {})
+        ok('orgGarageOffer', { models = { 'sultan' } })
+        ok('orgGarageTake', { model = 'sultan' })
+        ok('orgGarageReturn', {})
+        ok('orgInternalRequest', { member = ref(2), reason = 'Went rogue', amount = 1000 })
+        ok('orgActivity', {})
         local missing = {}
         for _, entry in ipairs(require('server.org.boss_ops').LIST) do
             if not okd[entry.name] then missing[#missing + 1] = entry.name end
