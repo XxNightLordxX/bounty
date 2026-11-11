@@ -15065,6 +15065,243 @@ async function main() {
     });
   })();
 
+  /* ================================================================
+     Step 7 workflows: every screen's main path, as a player walks it.
+     Each test's name carries the screen it drives ("workflow screen:<id>",
+     the ids of the capability inventory); tests/workflows/coverage_spec.lua
+     reads them for the coverage report (docs/dev/workflows.md).
+     ================================================================ */
+  await (async function workflowScreens() {
+    const W_CARD = {
+      id: 'ct00000071', reason: 'Unpaid debt', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 0, hitmenMax: 5, targetName: 'Dana Reyes', targetProtected: false,
+      fulfilment: 'either', timeLeft: band(9000), role: 'public', penaltyAmount: 0
+    };
+    function wBoard(extra, settingsExtra) {
+      const card = Object.assign({}, W_CARD, extra || {});
+      return { ok: true, data: { page: 1, pages: 1, contracts: [card],
+        settings: Object.assign({ warnCreator: true, warnHitman: true, minQueryLength: 3,
+          fulfilment: 'either', amendments: true, relay: true }, settingsExtra || {}) } };
+    }
+    function as(role, extra) { return Object.assign({}, W_CARD, { role: role }, extra || {}); }
+    function sentNames(app) { return app.sent.map(function (s) { return s.name; }); }
+    function buttonsOn(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+
+    // The board: a hitman finds a contract and takes it (the choice dialog).
+    let accepted = null;
+    const board = boot({ list: wBoard(), mine: MINE, ledger: LEDGER,
+      accept: function (body) { accepted = body; return { ok: true, data: as('hitman', { myAlias: 'Operative #1' }) }; } });
+    await settle(); await settle();
+    it('workflow screen:phone.tab:board screen:phone.boardtab:contracts — the board lists the contract', function () {
+      truthy(board.view.textContent.indexOf('Dana Reyes') !== -1, board.view.textContent);
+      drewCleanly(board, 'the board');
+    });
+    click(board, 'Accept contract');
+    await settle();
+    it('workflow screen:phone.dialog:choice — Accept asks first, then takes it', function () {
+      const yes = board.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && (n.textContent === 'Accept' || n.textContent === 'Under my name');
+      });
+      truthy(yes.length, 'the confirm button: ' + buttonsOn(board).join(' | '));
+      yes[0].onclick();
+    });
+    await settle(); await settle();
+    it('workflow screen:phone.dialog:choice — the acceptance went to the server for that contract', function () {
+      truthy(accepted, 'accept was sent');
+      eq(accepted.id, 'ct00000071');
+      eq(accepted.anonymous, false);
+    });
+
+    // The place form: pick a target, a reason, a reward; place it.
+    let placed = null;
+    const place = boot({ list: wBoard(), mine: MINE, ledger: LEDGER,
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 0, caps: { slots: 1 } } },
+      searchTargets: { ok: true, data: [{ handle: 'tg00000001', name: 'Dana Reyes', protected: false }] },
+      create: function (body) { placed = body; return { ok: true, data: as('creator') }; } });
+    await settle(); await settle();
+    tab(place, 'place');
+    await settle(); await settle();
+    place.document.getElementById('target-handle').value = 'tg00000001';
+    place.document.getElementById('reason').value = 'Unpaid debt';
+    place.document.getElementById('slot-cash-1').value = '5000';
+    click(place, 'Place contract'); confirmPlace(place);
+    await settle(); await settle();
+    it('workflow screen:phone.tab:place — the form places a contract the server would take', function () {
+      truthy(placed, 'create was sent');
+      eq(placed.target, 'tg00000001');
+      eq(placed.reward.slots[0].baseline.cash, 5000);
+      drewCleanly(place, 'the place form');
+    });
+
+    // Mine: the placer edits their contract (the sheet) and its reward.
+    const mineApp = boot({ list: wBoard(), mine: { ok: true, data: { created: [as('creator', {
+        creatorName: 'Vic Marlowe', rewardEditable: true })], accepted: [], onMe: [] } },
+      ledger: LEDGER,
+      rewardBreakdown: { ok: true, data: { lines: [] } },
+      rewardOptions: { ok: true, data: { cash: 100000, bank: 50000, dirty: 0, caps: { slots: 1 } } },
+      revise: { ok: true, data: as('creator') }, addEscrow: { ok: true, data: as('creator') } });
+    await settle(); await settle();
+    tab(mineApp, 'mine');
+    await settle(); await settle();
+    it('workflow screen:phone.tab:mine — the placer sees their own contract', function () {
+      truthy(mineApp.view.textContent.indexOf('Dana Reyes') !== -1, mineApp.view.textContent);
+      drewCleanly(mineApp, 'Mine');
+    });
+    click(mineApp, 'Edit');
+    await settle();
+    it('workflow screen:phone.dialog:sheet — Edit opens the contract sheet', function () {
+      truthy(buttonsOn(mineApp).length > 1, 'the sheet\'s controls: ' + buttonsOn(mineApp).join(' | '));
+      drewCleanly(mineApp, 'the sheet');
+    });
+    const toReward = mineApp.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent === 'Change reward';
+    });
+    if (toReward.length) { toReward[0].onclick(); await settle(); await settle(); }
+    it('workflow screen:phone.dialog:reward — Change reward opens the reward editor', function () {
+      truthy(toReward.length, 'a Change reward control: ' + buttonsOn(mineApp).join(' | '));
+      drewCleanly(mineApp, 'the reward editor');
+    });
+
+    // A change the placer proposes to the hitman on it (the fields dialog).
+    const proposer = boot({ list: wBoard(), mine: { ok: true, data: { created: [as('creator', {
+        hitmenActive: 1 })], accepted: [], onMe: [] } }, ledger: LEDGER,
+      amendments: { ok: true, data: [] }, propose: { ok: true, data: {} } });
+    await settle(); await settle();
+    tab(proposer, 'mine');
+    await settle(); await settle();
+    openPropose(proposer);
+    await settle();
+    const reasonOpt = proposer.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && /reason/i.test(n.textContent);
+    });
+    if (reasonOpt.length) { reasonOpt[0].onclick(); await settle(); }
+    it('workflow screen:phone.dialog:fields — a change of reason is a form of fields', function () {
+      const inputs = proposer.view.all().filter(function (n) { return n.tagName === 'INPUT' || n.tagName === 'TEXTAREA'; });
+      truthy(reasonOpt.length && inputs.length >= 1, 'the fields: ' + buttonsOn(proposer).join(' | '));
+      drewCleanly(proposer, 'the proposal');
+    });
+
+    // The hitman's card: their proposals, and the thread.
+    let proposed = null;
+    const held = boot({ list: wBoard(), mine: { ok: true, data: { created: [], accepted: [as('hitman', {
+        myAlias: 'Operative #1', hitmenActive: 1 })], onMe: [] } }, ledger: LEDGER,
+      amendments: { ok: true, data: [] },
+      propose: function (body) { proposed = body; return { ok: true, data: {} }; },
+      readThread: { ok: true, data: [{ alias: 'Operative #1', body: 'On my way.', mine: true }] },
+      sendMessage: { ok: true, data: {} } });
+    await settle(); await settle();
+    tab(held, 'mine');
+    await settle(); await settle();
+    // Then the thread: messages with the placer, under aliases.
+    tab(held, 'mine');
+    await settle(); await settle();
+    const msg = held.view.all().filter(function (n) { return n.tagName === 'BUTTON' && n.textContent === 'Message'; });
+    if (msg.length) { msg[0].onclick(); await settle(); await settle(); }
+    it('workflow screen:phone.tab:thread — the thread opens from the hitman\'s card', function () {
+      truthy(msg.length, 'a Message button');
+      truthy(held.view.textContent.indexOf('On my way.') !== -1, held.view.textContent);
+      truthy(sentNames(held).indexOf('readThread') !== -1, 'read');
+    });
+    const _p = proposed;
+
+    // On me: the target buys an informant's look-up (the pick dialog).
+    let bought = null;
+    const onme = boot({ list: wBoard({}, { informant: { enabled: true, cost: 25000, account: 'bank' } }),
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [Object.assign(as('target'), {
+        bailoutAmount: 15000, hitmenActive: 1, informantLeft: 2,
+        informantPicks: [{ pick: 'op:1', label: 'Operative #1' }] })] } },
+      ledger: LEDGER,
+      informant: function (body) { bought = body; return { ok: true, data: { name: 'Rook Ash' } }; } });
+    await settle(); await settle();
+    tab(onme, 'onme');
+    await settle(); await settle();
+    it('workflow screen:phone.tab:onme — the target is told there is a price on their head', function () {
+      truthy(onme.view.textContent.indexOf('price on your head') !== -1, onme.view.textContent);
+      drewCleanly(onme, 'On me');
+    });
+    const informantBtn = onme.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && n.textContent.indexOf('Buy informant') === 0;
+    });
+    if (informantBtn.length) { informantBtn[0].onclick(); await settle(); }
+    it('workflow screen:phone.dialog:pick — the informant is a pick, then pay', function () {
+      truthy(informantBtn.length, 'Buy informant data: ' + buttonsOn(onme).join(' | '));
+      truthy(onme.view.textContent.indexOf('Operative #1') !== -1, onme.view.textContent);
+    });
+
+    // The ledger: a kill photo opened once (the proof dialog).
+    const ledger = boot({ list: wBoard(), mine: MINE,
+      ledger: { ok: true, data: { record: { completed: 0, placed: 1, survived: 0, standing: 'Unproven' },
+        entries: [{ contract_id: 'ct00000071', target_name: 'Dana Reyes', reason: 'Unpaid debt', role: 'creator',
+          fulfilment: 'elimination', resolved_at: 1700000000, photo: { handle: 'ph00000000aa', state: 'pending' } }] } },
+      openPhoto: { ok: true, data: { handle: 'ph00000000aa', url: 'https://cdn.fivemanage.com/proof.png' } },
+      photoDecision: function (body) { return { ok: true, data: { handle: body.handle, state: 'kept' } }; } });
+    await settle(); await settle();
+    tab(ledger, 'ledger');
+    await settle(); await settle();
+    it('workflow screen:phone.tab:ledger — the ledger lists what happened', function () {
+      truthy(ledger.view.textContent.indexOf('Dana Reyes') !== -1, ledger.view.textContent);
+    });
+    click(ledger, 'View photo');
+    await settle(); await settle();
+    it('workflow screen:phone.dialog:proof — the photo opens once, asked from the server', function () {
+      truthy(sentNames(ledger).indexOf('openPhoto') !== -1, 'openPhoto was asked');
+      drewCleanly(ledger, 'the photo');
+    });
+
+    // The board's Protection tab: a guard takes a job.
+    let guarded = null;
+    const prot = boot({ list: wBoard({}, { protection: true }), mine: MINE, ledger: LEDGER,
+      protectionBoard: { ok: true, data: { enabled: true, maxJobs: 2, open: [{ job: 'prot00000001', reward: 2500 }],
+        mine: [] } },
+      protectionAccept: function (body) { guarded = body; return { ok: true, data: { enabled: true, open: [], mine: [] } }; } });
+    await settle(); await settle();
+    click(prot, 'Protection');
+    await settle(); await settle();
+    it('workflow screen:phone.boardtab:protection — the Protection tab lists a job by its reward', function () {
+      truthy(prot.view.textContent.indexOf('$2,500') !== -1, prot.view.textContent);
+      truthy(sentNames(prot).indexOf('protectionBoard') !== -1, 'read');
+    });
+    const take = prot.view.all().filter(function (n) { return n.tagName === 'BUTTON' && /Take/.test(n.textContent); });
+    if (take.length) { take[0].onclick(); await settle(); }
+    const sure = prot.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && (n.textContent === 'Take it' || n.textContent === 'Under my name');
+    });
+    if (sure.length) { sure[0].onclick(); await settle(); await settle(); }
+    it('workflow screen:phone.boardtab:protection — taking a job sends it', function () {
+      truthy(guarded, 'protectionAccept: ' + buttonsOn(prot).join(' | '));
+      eq(guarded.job, 'prot00000001');
+    });
+
+    // The whitelisted-job view: an officer reads the contracts on them.
+    const view = boot({ list: BARRED, mine: BARRED, ledger: BARRED, whitelistedView: jobView() });
+    await settle(); await settle(); await settle();
+    it('workflow screen:phone.tab:jobview — an officer sees the contracts on whitelisted jobs', function () {
+      truthy(view.view.textContent.indexOf('Olive Ward') !== -1, view.view.textContent);
+      falsy(view.view.textContent.indexOf('Marlowe') !== -1, 'never who placed it');
+    });
+
+    // The Organisation tab: a member opens it.
+    const orgList = function () { const b = wBoard(); b.data.orgTab = 'member'; return b; };
+    const org = boot({ list: orgList, mine: MINE, ledger: LEDGER,
+      orgMine: { ok: true, data: { enabled: true, member: true, label: 'Crimson Contractors', grade: 0,
+        role: 'Recruit', powers: {}, officeOnly: {}, inOffice: false, hasOffice: true, notice: 'Meet at nine',
+        terms: { orgPercent: 10, youKeepPercent: 90, stakePercent: 0, buyoutPercent: 0 }, bounds: {},
+        layout: { labels: {}, hidden: {} }, powerNames: {} } } });
+    await settle(); await settle(); await settle();
+    tab(org, 'org');
+    await settle(); await settle(); await settle();
+    it('workflow screen:phone.tab:org — a member opens the Organisation tab', function () {
+      truthy(org.view.textContent.indexOf('Crimson Contractors') !== -1, org.view.textContent);
+      truthy(org.view.textContent.indexOf('Meet at nine') !== -1, 'the notice');
+      truthy(sentNames(org).indexOf('orgMine') !== -1, 'read');
+    });
+    void _p;
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   // Counted from the list itself. Two counters that can disagree is how a

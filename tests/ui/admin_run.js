@@ -7634,6 +7634,104 @@ async function main() {
     clean(app, 'two clicks everywhere');
   })();
 
+  /* ================================================================
+     Step 7 workflows: every staff panel screen's main path. Each test's
+     name carries the screens it drives ("workflow screen:<id>", the ids of
+     the capability inventory); tests/workflows/coverage_spec.lua reads them
+     for the coverage report (docs/dev/workflows.md).
+     ================================================================ */
+  await (async function workflowScreens() {
+    const server = orgServer(Object.assign({}, tlServer(), disposalServer(), staffPlayerServer(), {
+      settings: orgSettings(true), orgGet: orgOn()
+    }));
+    const app = boot(server);
+    app.open(FULL);
+    await settled();
+    const GROUP_VIEWS = {
+      home: ['overview', 'inbox', 'announce'],
+      players: ['players', 'pmeasures', 'pmoney', 'pplaytime', 'phistory', 'pdiag', 'measures'],
+      contracts: ['contracts'],
+      targets: ['tldefaults', 'tljobs', 'tlplayer'],
+      rules: ['rules', 'presets', 'changed'],
+      org: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices'],
+      bossperms: ['bpmatrix', 'bplimits', 'bpoffice'],
+      locations: ['locations'],
+      logs: ['logs', 'alerts'],
+      developer: ['health', 'devsettings', 'console', 'tools', 'setup'],
+      help: ['help', 'howto', 'permissions']
+    };
+    for (const group of Object.keys(GROUP_VIEWS)) {
+      // Help is the header's (?) button, not a sidebar section.
+      let groupOk = true;
+      if (group !== 'help') {
+        try { app.group(group); } catch (err) { groupOk = err.message; }
+      }
+      await settled();
+      const drawn = [];
+      for (const view of GROUP_VIEWS[group]) {
+        let err = null;
+        const before = app.sent ? app.sent.length : 0;
+        try { app.nav(view); } catch (e) { err = e.message; }
+        await settled();
+        drawn.push({ view: view, err: err, text: app.main(), asked: (app.sent ? app.sent.length : 0) - before });
+      }
+      it('workflow screen:admin.group:' + group + ' ' + GROUP_VIEWS[group].map(function (v) {
+        return 'screen:admin.view:' + v;
+      }).join(' ') + ' — the section opens and every view in it draws', function () {
+        eq(groupOk, true, 'the sidebar opens ' + group);
+        drawn.forEach(function (d) {
+          eq(d.err, null, d.view + ' opened');
+          truthy(d.text && d.text.length > 0, d.view + ' drew something');
+        });
+      });
+    }
+    clean(app, 'every section');
+
+    // The inbox's filters.
+    for (const filter of ['all', 'reviews', 'stuck', 'alerts']) {
+      let err = null;
+      try { app.nav('inbox:' + filter); } catch (e) { err = e.message; }
+      await settled();
+      it('workflow screen:admin.inbox:' + filter + ' — the inbox shows ' + filter, function () {
+        eq(err, null, 'opened');
+        truthy(app.main().length > 0, 'drew');
+      });
+    }
+
+    // The contract drawer: every tab, and Void from More.
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    for (const id of ['summary', 'money', 'people', 'notes', 'record']) {
+      let err = null;
+      try { app.tab(id); } catch (e) { err = e.message; }
+      await settled();
+      it('workflow screen:admin.drawer:' + id + ' — the contract drawer\'s ' + id + ' tab', function () {
+        eq(err, null, 'opened');
+        truthy(app.drawer().textContent.length > 0, 'drew');
+      });
+    }
+    clean(app, 'the drawer');
+
+    // Announce: the main path sends one notice.
+    app.nav('announce');
+    await settled();
+    let sentAnnounce = false;
+    try {
+      app.type(app.byId('an-text'), 'The docks are hot tonight.');
+      const send = app.button('Send');
+      app.click(send);
+      await settled();
+      app.click(send);
+      await settled();
+      sentAnnounce = app.requests('announce').length > 0;
+    } catch (e) { sentAnnounce = e.message; }
+    it('workflow screen:admin.view:announce — staff send an announcement', function () {
+      eq(sentAnnounce, true, 'announce was sent');
+    });
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');
