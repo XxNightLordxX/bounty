@@ -1955,7 +1955,7 @@ async function main() {
   function orgStub() {
     const all = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7', 'D2', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2', 'P3',
       'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
-      'S1', 'S2', 'S3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3'];
+      'S1', 'S2', 'S3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3', 'A1', 'A2', 'M10', 'M11', 'N4'];
     const held = {};
     const names = { TAKE: { label: 'Take contracts' } };
     all.forEach(function (c) { held[c] = true; names[c] = { label: 'A power with a long name ' + c }; });
@@ -1974,6 +1974,15 @@ async function main() {
         dutyOn: true, duty: { on: true, atOffice: true }, probationOn: true,
         probation: { done: 2, need: 3, maxReward: 10000, noStake: true }, orgContracts: true, dossiers: true,
         approval: true, channel: true, waiting: [{ contractId: 'ct00000099', expiresIn: 840 }],
+        // And the extras 2, every one on, with their longest words.
+        statsOn: true, stats: { completed: 1234, failed: 56, earned: 123456789, rate: 95, band: '30 min to 2 h',
+          rank: 12, of: 40, leaderboard: true },
+        discipline: { strikes: 2, warnings: 3, decayDays: 30, rows: [{ id: 'dc1', kind: 'strike', at: 1, active: true,
+          reason: 'Turned up to the meeting at the docks an hour late and with three strangers in the car',
+          consequence: 'suspended 48 h, demoted', by: 'A boss' }, { id: 'dc2', kind: 'warning', at: 1,
+          reason: 'Loud in public', overturned: true, by: 'Staff' }] },
+        armory: true, armoryReady: true, recruitment: true,
+        recruitForm: ['Who vouches for you, and how long have they known you?', 'Why us?'], recruitMax: 5,
         assigned: [{ id: 'ct00000098', state: 'assigned', targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
           expiresIn: 1700, dossier: { notes: 'Wait until the last ferry has gone, then go in through the loading bay.',
             rulesText: 'Discreet: no witnesses, nothing in public', spot: { label: 'Under the pier, by the third pylon' } } }],
@@ -1983,7 +1992,7 @@ async function main() {
         layout: { labels: {}, hidden: {} } } },
       orgMembers: { ok: true, data: { rows: [
         { ref: 'm1_1', name: 'Maximilian Featherstonehaugh-Cholmondeley', grade: 0, role: 'Recruit', online: true,
-          suspendedUntil: 9999999999, locked: true },
+          suspendedUntil: 9999999999, locked: true, strikes: 12 },
         { ref: 'm2_2', name: 'Kestrel', grade: 2, role: 'Lieutenant', online: false, boss: true }] } },
       orgRoles: { ok: true, data: { rows: [
         { grade: 3, name: 'boss', label: 'Boss', pay: 0, boss: true, members: 1, powers: {} },
@@ -1995,7 +2004,19 @@ async function main() {
         { kind: 'cut', amount: 1250, reason: 'payout' }] } },
       orgSpots: { ok: true, data: { rows: [{ id: 's1', kind: 'meeting', label: 'Under the pier, by the third pylon' },
         { id: 's2', kind: 'office', label: 'Office' }] } },
-      orgApplications: { ok: true, data: { rows: [{ id: 'a1', name: 'Ada Quill', body: 'Steady hands, quiet mouth.' }] } },
+      orgApplications: { ok: true, data: { rows: [{ id: 'a1', name: 'Ada Quill', body: 'Steady hands, quiet mouth.',
+        form: [{ q: 'Who vouches for you, and how long have they known you?',
+          a: 'Kestrel, for six years now, since the business with the boat at the marina that went wrong.' }],
+        note: { text: 'Calm under questioning, knows the docks and the people who work them.' } }] } },
+      orgArmory: { ok: true, data: { items: [{ slot: 1, name: 'weapon_carbinerifle_mk2',
+        label: 'Carbine Rifle Mk II (with the long suppressor)', count: 1000 }],
+        own: [{ slot: 4, name: 'bandage', label: 'Field dressing, sterile, large', count: 250 }],
+        limits: { '0': 10, '2': 1000 }, left: 1000, manageLeft: 1000, withdrawMax: 1000, atOffice: true, here: false,
+        log: [{ at: 1, dir: 'out', item: 'weapon_carbinerifle_mk2', count: 1000,
+          who: 'Maximilian Featherstonehaugh-Cholmondeley' }] } },
+      orgStats: { ok: true, data: { full: true, rows: [{ rank: 1, name: 'Maximilian Featherstonehaugh-Cholmondeley',
+        role: 'Lieutenant of the Outer Docks', completed: 1234, failed: 56, earned: 123456789, rate: 95,
+        band: '30 min to 2 h' }, { rank: 2, name: 'Nightjar', completed: 0, failed: 0, earned: 0, mine: true }] } },
       orgWork: { ok: true, data: {
         contracts: [{ id: 'ct00000097', state: 'waiting', targetName: 'Maximilian Featherstonehaugh-Cholmondeley',
           worth: 1250000, expiresIn: 1700, staked: true },
@@ -2049,7 +2070,7 @@ async function main() {
   await op.waitForTimeout(250);
   await orgMeasure('home');
   for (const screen of ['Members', 'Roles', 'Money', 'Contracts', 'Assignments', 'Places', 'Notices', 'Applications',
-    'Settings', 'Open channel']) {
+    'Settings', 'Open channel', 'Open armory', 'Leaderboard', 'Application form']) {
     await op.evaluate(function (label) {
       const b = Array.prototype.slice.call(document.querySelectorAll('main button'))
         .filter(function (n) { return n.textContent === label; })[0];
@@ -2077,7 +2098,7 @@ async function main() {
     atLeast(orgBar.smallest, 44, 'the smallest tab');
   });
   it('the Organisation tab at 390px: the member page and every boss screen fit, nothing sideways', function () {
-    truthy(orgShots.length === 11, 'every screen measured: ' + orgShots.map(function (s) { return s.name; }).join(','));
+    truthy(orgShots.length === 14, 'every screen measured: ' + orgShots.map(function (s) { return s.name; }).join(','));
     const bad = orgShots.filter(function (s) { return s.escaped.length || s.sideways || s.small.length; });
     truthy(bad.length === 0, JSON.stringify(bad).slice(0, 1500));
   });

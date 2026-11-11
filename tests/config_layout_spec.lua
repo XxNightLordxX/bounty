@@ -233,6 +233,12 @@ local ADDED = {
         ProbationCompletions = 3, ProbationMaxReward = 10000, ProbationNoStake = true, Duty = false,
         DutyAtOffice = false, Channel = false, ChannelRetentionDays = 7, ChannelMaxLength = 300,
         ChannelPerMinute = 6, Dossiers = false, DossierMaxLength = 600,
+        -- Organisation extras 2 (plan R9, R11-R13), each its own switch, off.
+        Armory = false, ArmoryItems = {}, ArmoryAtOffice = true, ArmorySlots = 50, ArmoryWeight = 100000,
+        Stats = false, StatsLeaderboard = true, StatsMinForRate = 3, StatsBandShort = 30, StatsBandMid = 120,
+        StatsBandLong = 480, Discipline = false, StrikeDecayDays = 30, StrikeSuspendAt = 3, StrikeSuspendHours = 48,
+        StrikeDemoteAt = 0, Recruitment = false, RecruitQuestions = 5, RecruitAnswerMax = 300, RecruitNoteMax = 500,
+        RecruitCooldownHours = 24, RecruitPerHour = 10,
         Roles = { '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no',
             '2, lieutenant, Lieutenant, 0, no', '3, boss, Boss, 0, yes' },
         Limits = {
@@ -243,7 +249,7 @@ local ADDED = {
             BuyoutCutMaxPercent = 25, OfficeMoveMetres = 150.0, LocationCooldownMinutes = 60,
             MaxSignupSpots = 2, MaxMeetingSpots = 5, NoticeMaxLength = 500, RenameCooldownMinutes = 1440,
             InviteMinutes = 10, SalaryMax = 1000, CodenameCooldownMinutes = 1440, PayrollPerDayMax = 0,
-            ChannelMuteMaxHours = 24,
+            ChannelMuteMaxHours = 24, ArmoryWithdrawMax = 10, ArmoryManagePerDay = 20, StrikesPerDay = 5,
         },
     },
     ['Cooldowns.org'] = { per = 10, burst = 20 },
@@ -569,7 +575,9 @@ describe('the configuration as one short file', function()
         -- are gone.
         -- And the organisation extras 1 (step R2-R8): their one comment line,
         -- nineteen settings and one staff bound.
-        truthy(lines < 925, 'config.lua is ' .. lines .. ' lines')
+        -- And the organisation extras 2 (R9, R11-R13): their one comment
+        -- line, twenty-one settings and three staff bounds.
+        truthy(lines < 950, 'config.lua is ' .. lines .. ' lines')
         local at = 0
         -- The admin panel's order: Features' core switches first, then
         -- Anonymity, the Informants, the Advisory, Staff, Roleplay and

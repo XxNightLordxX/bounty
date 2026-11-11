@@ -863,6 +863,63 @@ character that loaded before the job was registered (a late start).
     member reads it, in the tab. It has no field about the target, and notes
     holding a citizen id of the target or the placer are refused: a dossier
     never tells the hitman more about who the target is than the card does.
+- **Organisation extras 2** (server/org/extras2.lua). Four more switches under
+  `Config.Organisation`, each off as shipped and each needing the organisation
+  on, as the extras above: every boss side is its own row in Boss permissions,
+  off until staff allow it; staff do all of it from the panel (Hitman
+  organisation, **Armory**, **Record & discipline** and **Applications**);
+  every write takes two clicks or taps and is on the record. Nothing here
+  shows a placer or a target.
+  - **Armory** (`Armory`). An ox_inventory stash of the organisation's
+    (`ArmorySlots`, `ArmoryWeight`), reached only through the Organisation
+    tab: it is registered under a group nobody holds, so ox_inventory's own
+    screen never opens it and every move goes through the limits here.
+    Members put in the items staff allow (`ArmoryItems`; empty, nothing goes
+    in) and take out up to their role's limit a day; a boss holding **A2 Set
+    armory limits** sets a role's limit below their own rank, up to
+    `Config.Organisation.Limits.ArmoryWithdrawMax`, and one holding **A1 Manage
+    armory** reads the armory's log and takes out up to
+    `Config.Organisation.Limits.ArmoryManagePerDay` more a day. Items go in and
+    out only at the boss office with `ArmoryAtOffice`; a member suspended from
+    contracts takes nothing out. An item is taken from one side before it is
+    given to the other, and given back where the other side refuses it, so
+    nothing is made or lost; a give-back that fails is on the record
+    (`org_armory_refund_failed`). Staff stock it with an allowed item, take
+    items out (for good) and set any role's limit. With
+    `Config.Integrations.Inventory` set to `none`, or no inventory script
+    started, the armory is off and the console says so in one line. The
+    limits a day are kept in memory: a restart starts the day again.
+  - **Record and leaderboard** (`Stats`). Each member's completions, failures,
+    earnings and reliability in the organisation (completions out of
+    completions and failures, once `StatsMinForRate` are in), counted from the
+    record's own outcomes from when it is on, and a leaderboard by
+    completions. It fills the tab's **Your record** card. Players see how long
+    a member usually takes as a band (under `StatsBandShort` minutes, up to
+    `StatsBandMid`, up to `StatsBandLong`, over it), never the exact time, and
+    no other member's money; a boss holding **M10 View member stats** sees
+    every member's failures and earnings; staff see the average minutes too,
+    and may reset one member's counts or everybody's. `StatsLeaderboard` off
+    shows the leaderboard only to M10 holders and staff.
+  - **Discipline** (`Discipline`). A boss holding **M11 Issue strikes** gives a
+    member below them a strike or a written warning with a reason (up to
+    `Config.Organisation.Limits.StrikesPerDay` a day); the member is told and
+    sees it on their record, never which boss gave it. A strike counts for
+    `StrikeDecayDays`; at `StrikeSuspendAt` standing strikes the member is
+    barred from contracts for `StrikeSuspendHours` (the same bar as Suspend),
+    and at `StrikeDemoteAt` they move one role down (never the last top boss);
+    0 turns either off. Suspension and demotion by hand stay **M5** and
+    **M4**. Only staff overturn a strike or warning: it stays on the record,
+    marked, no longer counts, and a bar the strikes made is lifted once they
+    fall below the mark (a demotion stays: staff move them back with Set
+    role); the member is told.
+  - **Recruitment** (`Recruitment`). A boss holding **N4 Edit application
+    form** sets the questions an applicant answers (up to `RecruitQuestions`,
+    each answer up to `RecruitAnswerMax` characters, plain text). A boss
+    holding **N2 Applications** reads the answers, writes an interview note
+    (up to `RecruitNoteMax`), and hires or declines as with any application;
+    the applicant is told. Against spam, a declined applicant waits
+    `RecruitCooldownHours` before they apply again, and the organisation takes
+    at most `RecruitPerHour` applications an hour.
 
 **server.cfg.** Keep `set qbx:cleanPlayerGroups false` (true deletes the
 organisation's members at every qbx_core start) and `set
@@ -906,6 +963,15 @@ clicks, naming what it sets.
 | `orgDutyOff` | write | Send a member off duty |
 | `orgChannelPost`, `orgChannelRemove`, `orgChannelMute` | write | Post as Staff, remove a message, mute a member (`hours`, 0 lifts it) |
 | `orgDossier` | write | A dossier on an assigned organisation contract (`notes`, `spot`, `rules`), or `clear` |
+| `orgArmoryGet` | read | The armory: what it holds, the allow-list, each role's limit a day and its log; `orgGet` carries it under `extras2` |
+| `orgArmoryLimit` | write | A role's armory limit a day (`grade`, `count`; 0 is none) |
+| `orgArmoryStock` | write | Stock the armory with an allowed item (`item`, `count`), or take items out of a slot for good (`remove`, `slot`, `count`) |
+| `orgStatsGet` | read | The leaderboard with every number, the average minutes included |
+| `orgStatsReset` | write | Reset one member's counts (`member`), or everybody's (`all`) |
+| `orgStrike` | write | A strike or a written warning (`kind`) with a `reason` |
+| `orgOverturn` | write | Overturn a strike or warning (`id`) with a `reason`; the member is told |
+| `orgRecruitForm` | write | The application form's `questions` (a list; empty clears it) |
+| `orgInterviewNote` | write | An interview note on an open application (`id`, `text`), or `clear` |
 
 #### Organisation requests (phone)
 
@@ -939,7 +1005,10 @@ and Decline (`orgInviteAnswer`), and says whether the tab is for this player
 | `orgApprove` | K6 | `orgDossier` | K7 |
 | `orgProbationEnd` | M8 | `orgForceOff` | M9 |
 | `orgDuty` | a member's own | `orgChannel`, `orgChannelPost` | a member |
-| `orgChannelRemove`, `orgChannelMute` | N3 | | |
+| `orgChannelRemove`, `orgChannelMute` | N3 | `orgArmory`, `orgArmoryPut`, `orgArmoryTake` | a member (A1 to take beyond the role's limit) |
+| `orgArmoryLimit` | A2 | `orgStats` | a member (M10 for every number) |
+| `orgStrike` | M11 | `orgDisciplineRecord` | a member's own; M11 or M5 for another's |
+| `orgRecruitForm` | N4 | `orgInterviewNote` | N2 |
 
 ### Mission steps
 
@@ -1535,6 +1604,28 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.ChannelPerMinute` | `6` | messages one member may send a minute |
 | `Config.Organisation.Dossiers` | `false` | a boss attaches notes, a meeting spot and the rules of engagement to an assigned organisation contract |
 | `Config.Organisation.DossierMaxLength` | `600` | characters in a dossier's notes |
+| `Config.Organisation.Armory` | `false` | an ox_inventory stash of the organisation's, reached only through the app |
+| `Config.Organisation.ArmoryItems` | `{}` | the item names allowed in it; empty = none |
+| `Config.Organisation.ArmoryAtOffice` | `true` | items go in and out only at the boss office |
+| `Config.Organisation.ArmorySlots` | `50` | slots in the stash |
+| `Config.Organisation.ArmoryWeight` | `100000` | most weight the stash holds (grams) |
+| `Config.Organisation.Stats` | `false` | each member's record in the organisation, and a leaderboard |
+| `Config.Organisation.StatsLeaderboard` | `true` | every member sees the leaderboard; off, only bosses holding View member stats |
+| `Config.Organisation.StatsMinForRate` | `3` | completions and failures before a reliability is shown |
+| `Config.Organisation.StatsBandShort` | `30` | the time bands players see: the first edge (minutes) |
+| `Config.Organisation.StatsBandMid` | `120` | the second edge (minutes) |
+| `Config.Organisation.StatsBandLong` | `480` | the last edge (minutes); over it is the last band |
+| `Config.Organisation.Discipline` | `false` | strikes and written warnings |
+| `Config.Organisation.StrikeDecayDays` | `30` | days a strike counts |
+| `Config.Organisation.StrikeSuspendAt` | `3` | standing strikes that bar a member from contracts (0 = never) |
+| `Config.Organisation.StrikeSuspendHours` | `48` | hours that bar lasts |
+| `Config.Organisation.StrikeDemoteAt` | `0` | standing strikes that move a member one role down (0 = never) |
+| `Config.Organisation.Recruitment` | `false` | an application form with a boss's questions, and interview notes |
+| `Config.Organisation.RecruitQuestions` | `5` | questions on the form at most |
+| `Config.Organisation.RecruitAnswerMax` | `300` | characters in one answer (longer is refused, never cut) |
+| `Config.Organisation.RecruitNoteMax` | `500` | characters in an interview note |
+| `Config.Organisation.RecruitCooldownHours` | `24` | hours a declined applicant waits to apply again |
+| `Config.Organisation.RecruitPerHour` | `10` | applications the organisation takes an hour |
 | `Config.Organisation.Roles` | `{ '0, recruit, Recruit, 0, no', '1, operative, Operative, 0, no', '2, lieutenant, Lieutenant, 0, no', … 4 in all }` | the roles made with it: 'grade, name, label, pay, boss' |
 | `Config.Organisation.Limits.MaxMembers` | `20` | members at most |
 | `Config.Organisation.Limits.HireRadius` | `5.0` | metres a hire stands from the boss |
@@ -1565,6 +1656,9 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.PayrollPerDayMax` | `0` | most paid in salaries in all on one pay day ($); members past it are skipped and told; 0 = no cap beyond each role's |
 | `Config.Organisation.Limits.CodenameCooldownMinutes` | `1440` | minutes between two changes a member makes to their own codename |
 | `Config.Organisation.Limits.ChannelMuteMaxHours` | `24` | longest a boss mutes a member in the organisation channel (hours) |
+| `Config.Organisation.Limits.ArmoryWithdrawMax` | `10` | most a boss lets each member of a role take out of the armory a day (items) |
+| `Config.Organisation.Limits.ArmoryManagePerDay` | `20` | most a boss holding Manage armory takes out beyond their role's limit a day (items) |
+| `Config.Organisation.Limits.StrikesPerDay` | `5` | strikes and written warnings one boss gives a day |
 
 ### Mission steps
 
@@ -1772,6 +1866,8 @@ The audit log records every money movement and every refused attempt:
 ## What's New
 
 **1.2.0, other scripts optional, first-start setup (newest)**
+
+- **Organisation extras 2**, each off as shipped: the **armory**, each member's **record and the leaderboard**, **discipline** (strikes and warnings) and **recruitment** (the boss's application form). See Optional features, Organisation extras 2.
 
 - Every script besides Qbox is optional, behind an adapter chosen by `Config.Integrations` ('auto' picks what is started, so nothing changes on a server that has them all); one missing turns off only what needs it, in one console line. `ox_inventory` is no longer a manifest dependency. Add your own adapter: `docs/dev/adapters.md`.
 - The **first-start setup** in the admin panel; **Install in 5 minutes** at the top of this file; `CHANGELOG.md`; editable files left out of escrow.

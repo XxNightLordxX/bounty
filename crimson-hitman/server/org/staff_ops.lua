@@ -45,6 +45,9 @@ StaffOps.ACTIONS = {
     'org_accept_requested', 'org_accept_approved', 'org_accept_refused', 'org_accept_expired',
     'org_probation', 'org_probation_passed', 'org_duty', 'org_duty_forced', 'org_channel_post',
     'org_channel_removed', 'org_channel_mute', 'org_dossier',
+    'org_armory_deposit', 'org_armory_withdraw', 'org_armory_limit', 'org_armory_stocked', 'org_armory_removed',
+    'org_armory_refund_failed', 'org_stats_reset', 'org_strike', 'org_warning', 'org_discipline_overturned',
+    'org_recruit_form', 'org_interview_note',
 }
 
 local function staff(src)
@@ -403,6 +406,67 @@ OPS.orgDossier = { 'write', function(src, data)
     return said(Org.writeDossier(staff(src), id, { notes = notes,
         spot = data.spot ~= nil and (Text.field(data.spot, 48) or 0) or nil,
         rules = data.rules ~= nil and (Text.field(data.rules, 16) or 0) or nil }))
+end }
+
+-- Organisation extras 2 (server/org/extras2.lua) --------------------------------
+
+--- The armory: contents, role limits and its log (orgGet carries it too).
+OPS.orgArmoryGet = { 'read', function(src)
+    return said(Org.armoryView(staff(src)))
+end }
+
+--- A role's armory limit a day (data.grade, data.count; 0 is none).
+OPS.orgArmoryLimit = { 'write', function(src, data)
+    return said(Org.armoryLimit(staff(src), tonumber(data.grade), data.count))
+end }
+
+--- Stock the armory with an allowed item (data.item, data.count), or take
+--- items out of a slot (data.slot, data.count, data.remove = true).
+OPS.orgArmoryStock = { 'write', function(src, data)
+    if data.remove == true then
+        return said(Org.armoryStaff(staff(src), 'out', { slot = tonumber(data.slot), count = data.count }))
+    end
+    return said(Org.armoryStaff(staff(src), 'in', { item = Text.field(data.item, 64), count = data.count }))
+end }
+
+--- The leaderboard with every number (orgGet carries it too).
+OPS.orgStatsGet = { 'read', function(src)
+    return said(Org.leaderboard(staff(src)))
+end }
+
+--- Reset the organisation's counts: one member's, or (data.all) everybody's.
+OPS.orgStatsReset = { 'write', function(src, data)
+    if data.all == true then return said(Org.statsReset(staff(src), nil)) end
+    local cid = memberCid(src, data)
+    if not cid then return false, Org.ERR.NOT_FOUND, Org.message(Org.ERR.NOT_FOUND) end
+    return said(Org.statsReset(staff(src), cid))
+end }
+
+--- A strike or a written warning (data.kind), with a reason.
+OPS.orgStrike = { 'write', function(src, data)
+    return said(Org.discipline(staff(src), memberCid(src, data), Text.field(data.kind, 8),
+        Text.field(data.reason, 800)))
+end }
+
+--- Overturn a strike or a warning (data.id), with a reason.
+OPS.orgOverturn = { 'write', function(src, data)
+    return said(Org.overturn(staff(src), memberCid(src, data), Text.field(data.id, 24), Text.field(data.reason, 800)))
+end }
+
+--- The application form's questions (data.questions, a list).
+OPS.orgRecruitForm = { 'write', function(src, data)
+    if type(data.questions) ~= 'table' then return false, Org.ERR.INVALID, Org.message(Org.ERR.INVALID) end
+    local list = {}
+    for i = 1, math.min(#data.questions, 21) do list[i] = Text.field(data.questions[i], 800) or '' end
+    return said(Org.recruitForm(staff(src), list))
+end }
+
+--- An interview note on an open application (data.id; data.clear).
+OPS.orgInterviewNote = { 'write', function(src, data)
+    local text = false
+    if data.clear ~= true then text = Text.field(data.text, 8000) end
+    if text == nil then return false, Org.ERR.INVALID, Org.message(Org.ERR.INVALID) end
+    return said(Org.interviewNote(staff(src), Text.field(data.id, 48), text))
 end }
 
 -- Applications ------------------------------------------------------------------

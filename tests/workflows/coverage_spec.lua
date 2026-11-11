@@ -126,6 +126,7 @@ local function report(items, screens)
         '| `tests/workflows/phone_spec.lua` | Every phone request through the real page callbacks and the real client |',
         '| `tests/workflows/org_phone_spec.lua` | The Organisation tab, boss and member, through the page |',
         '| `tests/workflows/org_extras_spec.lua` | The organisation extras: contracts to it, approval, probation, duty, the channel, dossiers |',
+        '| `tests/workflows/org_extras2_spec.lua` | The organisation extras 2: the armory, the record and leaderboard, discipline, recruitment |',
         '| `tests/workflows/panel_spec.lua` | Every admin panel op through the panel page (adminRequest) |',
         '| `tests/workflows/surface_spec.lua` | Commands, server and client net events, engine and framework events, tick jobs, every switch |',
         '| `tests/ui/run.js`, `tests/ui/admin_run.js` | Every phone and panel screen\'s main path (tests named `workflow screen:<id>`) |',

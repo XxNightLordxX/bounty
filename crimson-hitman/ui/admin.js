@@ -286,7 +286,8 @@
       logs: ['logs:settings', 'Change history'] },
     // The hitman organisation (server/org/), off as shipped.
     { id: 'org', head: 'Setup', label: 'Hitman organisation', icon: 'people-group',
-      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork'],
+      views: ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork',
+        'orgarmory', 'orgrecord'],
       logs: ['logs:org', 'Org audit'] },
     { id: 'bossperms', head: 'Setup', label: 'Boss permissions', icon: 'key',
       views: ['bpmatrix', 'bplimits', 'bpoffice'], logs: ['logs:grants', 'Grant history'] },
@@ -309,7 +310,8 @@
     orgsetup: ['Setup', 'gear'], orgroles: ['Roles & pay', 'id-badge'], orgmembers: ['Members', 'users'],
     orgapps: ['Applications', 'envelope-open-text'], orgfunds: ['Funds & cuts', 'vault'],
     orgaccess: ['Contract access', 'door-open'], orgnotices: ['Notices', 'thumbtack'],
-    orgwork: ['Work & channel', 'briefcase'],
+    orgwork: ['Work & channel', 'briefcase'], orgarmory: ['Armory', 'box-open'],
+    orgrecord: ['Record & discipline', 'ranking-star'],
     bpmatrix: ['Matrix', 'table-cells'], bplimits: ['Limits', 'sliders'], bpoffice: ['Delegation & office', 'building'],
     locations: ['Map points', 'location-dot'],
     logs: ['Logs', 'list-ul'], alerts: ['Alerts', 'bell'],
@@ -344,6 +346,8 @@
     orgaccess: 'Which contracts the organisation\'s members may take.',
     orgnotices: 'Notices pinned for the organisation\'s members.',
     orgwork: 'Contracts sent to the organisation, accepts waiting, probation, duty, the channel and dossiers.',
+    orgarmory: 'The organisation\'s armory: what it holds, the limits a day by role, and every move.',
+    orgrecord: 'Each member\'s record and the leaderboard; strikes and written warnings, and overturning them.',
     bpmatrix: 'What each boss role, and each boss, may do in the organisation.',
     bplimits: 'The limits on each boss power.',
     bpoffice: 'Which powers bosses may hand down, and which need the boss office.',
@@ -368,7 +372,7 @@
   var PLAYER_VIEWS = { players: true, pmeasures: true, pmoney: true, pplaytime: true,
                        phistory: true, pdiag: true };
   var ORG_VIEWS = { orgsetup: true, orgroles: true, orgmembers: true, orgapps: true, orgfunds: true,
-                    orgaccess: true, orgnotices: true, orgwork: true };
+                    orgaccess: true, orgnotices: true, orgwork: true, orgarmory: true, orgrecord: true };
   var BP_VIEWS = { bpmatrix: true, bplimits: true, bpoffice: true };
   var SECTIONS = [];
   GROUPS.forEach(function (g) { SECTIONS = SECTIONS.concat(g.views); });
@@ -4489,7 +4493,7 @@
     tljobs: { view: 'tldefaults' }, tlplayer: { view: 'tldefaults' },
     orgroles: { view: 'orgsetup' }, orgmembers: { view: 'orgsetup' }, orgapps: { view: 'orgsetup' },
     orgfunds: { view: 'orgsetup' }, orgaccess: { view: 'orgsetup' }, orgnotices: { view: 'orgsetup' },
-    orgwork: { view: 'orgsetup' },
+    orgwork: { view: 'orgsetup' }, orgarmory: { view: 'orgsetup' }, orgrecord: { view: 'orgsetup' },
     bpmatrix: { view: 'bplimits' }, bpoffice: { view: 'bplimits' },
     logs: { areas: ['staff'] }, alerts: { areas: ['staff'] },
     health: { view: 'devsettings' }, console: { view: 'devsettings' }, tools: { view: 'devsettings' }
@@ -8103,7 +8107,7 @@
      section is one card saying so, with its switch. */
 
   function orgReset() {
-    S.org = { work: { member: {}, spot: {}, rules: {} }, data: null, error: null, answers: {}, funds: null, fundsError: null, audit: null, auditError: null,
+    S.org = { work: { member: {}, spot: {}, rules: {} }, x2: { member: '', kind: 'strike' }, data: null, error: null, answers: {}, funds: null, fundsError: null, audit: null, auditError: null,
       auditAction: '', member: null, role: null, nonce: null, dir: 'deposit', bonusTo: '', newGrade: null,
       layout: null, hire: null, history: null, historyError: null,
       bp: { pending: {}, cols: [], area: '', granted: false, col: '', add: '' },
@@ -8113,7 +8117,7 @@
 
   var ORG_TABS = ['members', 'roles', 'pay', 'funds', 'contracts', 'locations', 'notices', 'settings', 'log'];
   var AREA_NAMES = { members: 'Members', roles: 'Roles', pay: 'Pay', money: 'Money & cuts', contracts: 'Contracts',
-    locations: 'Locations', notices: 'Notices', settings: 'Settings', delegation: 'Delegation' };
+    locations: 'Locations', notices: 'Notices', armory: 'Armory', settings: 'Settings', delegation: 'Delegation' };
   var ORG_ACTIONS = ['org_created', 'org_member_hired', 'org_member_fired', 'org_member_role', 'org_member_suspended',
     'org_member_limits', 'org_member_grant', 'org_member_staff', 'org_role_created', 'org_role_edited',
     'org_role_deleted', 'org_role_power', 'org_role_pay', 'org_grant', 'org_limits', 'org_office_rule',
@@ -8124,7 +8128,10 @@
     'org_contract_received', 'org_contract_assigned', 'org_contract_reassigned', 'org_contract_released',
     'org_accept_requested', 'org_accept_approved', 'org_accept_refused', 'org_accept_expired',
     'org_probation', 'org_probation_passed', 'org_duty', 'org_duty_forced', 'org_channel_post',
-    'org_channel_removed', 'org_channel_mute', 'org_dossier'];
+    'org_channel_removed', 'org_channel_mute', 'org_dossier',
+    'org_armory_deposit', 'org_armory_withdraw', 'org_armory_limit', 'org_armory_stocked', 'org_armory_removed',
+    'org_armory_refund_failed', 'org_stats_reset', 'org_strike', 'org_warning', 'org_discipline_overturned',
+    'org_recruit_form', 'org_interview_note'];
 
   function loadOrg() {
     return ask('orgGet', {}, 'orgGet').then(function (reply) {
@@ -8213,6 +8220,8 @@
       case 'orgaccess': return orgAccessBody(d);
       case 'orgnotices': return orgNoticesBody(d);
       case 'orgwork': return orgWorkBody(d);
+      case 'orgarmory': return orgArmoryBody(d);
+      case 'orgrecord': return orgRecordBody(d);
       case 'bpmatrix': return bpMatrixBody(d);
       case 'bplimits': return bpLimitsBody(d);
       case 'bpoffice': return bpOfficeBody(d);
@@ -8503,11 +8512,40 @@
 
   function orgAppsBody(d) {
     var apps = asList(d.applications);
-    return card('Applications', apps.length ? h('div.stack', apps.map(function (a) {
+    var x = d.extras2 || {};
+    var form = null;
+    if (x.Recruitment) {
+      var qs = asList(x.form);
+      var most = Number(x.formMax) || 0;
+      var rows = [];
+      for (var i = 0; i < most; i += 1) {
+        rows.push(h('div.toolbar', field('org.form.q' + i, { class: 'is-grow', maxlength: '200',
+          value: qs[i] !== undefined ? String(qs[i]) : '', placeholder: 'Question ' + (i + 1) + ' (empty: none)',
+          'aria-label': 'Question ' + (i + 1) })));
+      }
+      form = card('Application form', frag(
+        h('p.about', 'The questions an applicant answers, up to ' + most + '. Bosses holding Edit application form '
+          + 'set them too.'),
+        rows.length ? h('div.stack', rows) : empty('Questions on the form at most is 0 in Setup.'),
+        h('div.btn-row', writeBtn('.primary', 'org-form-save', { 'data-count': String(most) }, 'Save the form',
+          'Click again: save these questions', 'check')),
+        orgAnswer('form')));
+    }
+    return frag(form, card('Applications', apps.length ? h('div.stack', apps.map(function (a) {
       var id = String(a.id);
       return h('article.card.org-app',
         h('header.card-head', h('h3', String(a.name || 'Applicant')), h('span.sub', a.at ? ago(a.at) : '')),
         h('p.al-text', String(a.body || '')),
+        asList(a.form).length ? h('div.stack', asList(a.form).map(function (f) {
+          return h('div.org-answer', h('p.sub', String(f.q || '')), h('blockquote.org-notice', String(f.a || '')));
+        })) : null,
+        x.Recruitment ? frag(
+          a.note ? h('p.sub', 'Interview note (' + String(a.note.by || 'Staff') + '): ' + String(a.note.text || '')) : null,
+          h('div.toolbar', field('org.note.' + id, { class: 'is-grow', maxlength: '2000',
+            placeholder: 'Interview note', 'aria-label': 'Interview note' }),
+            writeBtn('.ghost', 'org-note-save', { 'data-id': id }, 'Save note', 'Click again: save the note', 'pen'),
+            a.note ? writeBtn('.ghost', 'org-note-clear', { 'data-id': id }, 'Clear', 'Click again: clear the note',
+              'eraser') : null)) : null,
         h('div.btn-row',
           writeBtn('.primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, 'Accept',
             'Click again: hire ' + String(a.name || 'them') + ' into the lowest role', 'check'),
@@ -8515,7 +8553,7 @@
             'Click again: reject ' + String(a.name || 'them'), 'xmark')),
         orgAnswer('app:' + id));
     })) : empty('No open applications. Players apply from the app (at a sign-up spot, when that is the rule).'),
-    '', h('span.sub', num(apps.length)));
+    '', h('span.sub', num(apps.length))));
   }
 
   /* -- Funds & cuts -- */
@@ -8870,6 +8908,136 @@
         orgAnswer('chan')), '', h('span.sub', num(msgs.length))));
     }
     return h('div.stack', parts.length ? parts : [empty('Turn a switch on in Setup.')]);
+  }
+
+  /* -- Armory, Record & discipline: the organisation extras 2
+     (server/org/extras2.lua) -- */
+
+  DD['org-x2-member'] = {
+    prefix: 'Member',
+    options: function () {
+      return [{ value: '', label: 'Pick a member' }].concat(asList((S.org.data || {}).members).map(function (m) {
+        return { value: String(m.ref), label: String(m.name || 'member') + ' · ' + String(m.role || '') };
+      }));
+    },
+    value: function () { return S.org.x2.member || ''; },
+    pick: function (v) { disarm(); S.org.x2.member = v; }
+  };
+
+  function x2Off(name, what) {
+    return card(name + ' is switched off', h('p.about', what + ' It is a switch in Setup, off as shipped; each boss '
+      + 'power it adds is its own row in Boss permissions, off until you allow it.'), '.is-warn');
+  }
+
+  function orgArmoryBody(d) {
+    var x = d.extras2 || {};
+    if (!x.Armory) {
+      return x2Off('The armory', 'An ox_inventory stash of the organisation\'s, reached only through the app.');
+    }
+    var a = x.armory || {};
+    if (a.error) { return card('The armory cannot be read', h('p.about', String(a.error)), '.is-warn'); }
+    var items = asList(a.items);
+    var log = asList(a.log);
+    var allowed = asList(a.allowed);
+    return frag(
+      card('In the armory', items.length ? h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th', 'Item'), h('th.num', 'Count'), h('th', 'Take out (removed for good)'))),
+        h('tbody', items.map(function (it) {
+          var slot = String(it.slot);
+          return h('tr', h('td', String(it.label || it.name) + ' ', h('span.mono.sub', String(it.name))),
+            h('td.num', num(it.count)),
+            h('td', h('div.toolbar', field('org.arm.out.' + slot, { type: 'number', min: '1', max: '1000', value: '1',
+              class: 'is-short', 'aria-label': 'How many' }),
+              writeBtn('.danger', 'org-arm-remove', { 'data-id': slot }, 'Remove', 'Click again: remove them for good',
+                'trash')), orgAnswer('arm:' + slot)));
+        })))) : empty('Empty. Members put in what the allow-list lets them; you can stock it below.'),
+        '', h('span.sub', num(items.length))),
+      card('Stock it', frag(
+        h('p.about', allowed.length ? 'Allowed: ' + allowed.join(', ') + '. Change the list in Setup (Items allowed '
+          + 'in the armory).' : 'Nothing is allowed yet: add item names in Setup (Items allowed in the armory).'),
+        h('div.toolbar', field('org.arm.item', { class: 'is-mid', maxlength: '64', placeholder: 'item name',
+          'aria-label': 'Item' }), field('org.arm.count', { type: 'number', min: '1', max: '1000', value: '1',
+          class: 'is-short', 'aria-label': 'How many' }),
+          writeBtn('.primary', 'org-arm-stock', {}, 'Stock', 'Click again: add them to the armory', 'plus')),
+        orgAnswer('arm:stock'))),
+      card('Limits a day, by role', frag(
+        h('p.about', 'Items each member of a role takes out a day; 0 is none. Bosses holding Set armory limits set '
+          + 'roles below them, up to ' + num(a.withdrawMax) + '.'),
+        h('div.stack', asList(d.roles).map(function (r) {
+          var g = String(r.grade);
+          return h('div.toolbar', h('span.is-grow', roleName(d, r.grade) + ' · now ' + num((a.limits || {})[g] || 0)),
+            field('org.arm.lim.' + g, { type: 'number', min: '0', max: '1000', class: 'is-short',
+              value: String((a.limits || {})[g] || 0), 'aria-label': 'Limit for ' + roleName(d, r.grade) }),
+            writeBtn('.ghost', 'org-arm-limit', { 'data-id': g }, 'Set', 'Click again: set the limit', 'check'),
+            orgAnswer('arm:lim:' + g));
+        })))),
+      card('Log', log.length ? h('div.stack', log.slice(0, 50).map(function (e) {
+        return h('p.sub', (e.dir === 'in' ? 'In: ' : 'Out: ') + String(e.item) + ' × ' + num(e.count) + ' · '
+          + String(e.who || 'a member') + (e.at ? ' · ' + ago(e.at) : ''));
+      })) : empty('Nothing moved yet. Every move is in the Org audit too.'), '', h('span.sub', num(log.length))));
+  }
+
+  function orgRecordBody(d) {
+    var x = d.extras2 || {};
+    var parts = [];
+    if (x.Stats) {
+      var rows = asList(x.leaderboard);
+      parts.push(card('Leaderboard', rows.length ? frag(h('div.table-wrap', h('table.grid',
+        h('thead', h('tr', h('th.num', '#'), h('th', 'Member'), h('th.num', 'Done'), h('th.num', 'Failed'),
+          h('th.num', 'Earned'), h('th.num', 'Reliable'), h('th', 'Average'), h('th', ''))),
+        h('tbody', rows.map(function (r) {
+          var ref = String(r.ref || '');
+          return h('tr', h('td.num', num(r.rank)), h('td', String(r.name || 'member')), h('td.num', num(r.completed)),
+            h('td.num', num(r.failed)), h('td.num', money(r.earned)),
+            h('td.num', r.rate != null ? r.rate + '%' : '—'),
+            h('td', r.avgMinutes != null ? num(r.avgMinutes) + ' min (' + String(r.band || '') + ')' : '—'),
+            h('td', ref ? writeBtn('.ghost', 'org-stats-reset', { 'data-ref': ref }, 'Reset',
+              'Click again: reset their counts', 'rotate-left') : null, orgAnswer('stats:' + ref)));
+        })))),
+        h('div.btn-row', writeBtn('.danger', 'org-stats-reset', { 'data-ref': '' }, 'Reset everybody',
+          'Click again: reset every member\'s counts', 'rotate-left')), orgAnswer('stats:'))
+        : empty('Nobody is counted yet: completions and failures count from when the record is on.'),
+        '', h('span.sub', 'players see bands, never these minutes')));
+    }
+    if (x.Discipline) {
+      var rules = x.disciplineRules || {};
+      var recs = asList(x.discipline);
+      parts.push(card('Give a strike or a warning', frag(
+        h('p.about', 'A strike counts for ' + num(rules.decayDays) + ' days. ' + (Number(rules.suspendAt) > 0
+          ? num(rules.suspendAt) + ' standing bar the member from contracts for ' + num(rules.suspendHours) + ' h. '
+          : '') + (Number(rules.demoteAt) > 0 ? num(rules.demoteAt) + ' move them one role down. ' : '')
+          + 'The member is told.'),
+        h('div.toolbar', dropdown('org-x2-member'),
+          segmented('org-x2-kind', [{ value: 'strike', label: 'Strike' }, { value: 'warning', label: 'Warning' }],
+            S.org.x2.kind || 'strike')),
+        h('div.toolbar', field('org.disc.reason', { class: 'is-grow', maxlength: '200', placeholder: 'Reason',
+          'aria-label': 'Reason' }), writeBtn('.primary', 'org-disc-give', {}, 'Give', 'Click again: give it', 'gavel')),
+        orgAnswer('disc'))));
+      parts.push(card('Records', recs.length ? h('div.stack', recs.map(function (rec) {
+        var ref = String(rec.ref);
+        return h('article.card',
+          h('header.card-head', h('h3', String(rec.name || 'member')), h('span.sub', num(rec.strikes) + ' standing')),
+          h('div.stack', asList(rec.rows).map(function (e) {
+            var id = String(e.id);
+            return h('div.org-discipline',
+              h('p.sub', (e.kind === 'strike' ? 'Strike' : 'Warning') + ' · ' + (e.at ? ago(e.at) : '') + ' · '
+                + String(e.by || '') + (e.overturned ? ' · overturned: ' + String(e.overturnReason || '')
+                  : e.kind === 'strike' && !e.active ? ' · no longer counts' : '')
+                + (e.consequence ? ' · then ' + String(e.consequence) : '')),
+              h('blockquote.org-notice', String(e.reason || '')),
+              e.overturned ? null : h('div.toolbar', field('org.over.' + id, { class: 'is-grow', maxlength: '200',
+                placeholder: 'Why it is overturned', 'aria-label': 'Why it is overturned' }),
+                writeBtn('.ghost', 'org-disc-over', { 'data-ref': ref, 'data-id': id }, 'Overturn',
+                  'Click again: overturn it; the member is told', 'rotate-left')),
+              orgAnswer('over:' + id));
+          })));
+      })) : empty('No strikes or warnings on anybody\'s record.'), '', h('span.sub', num(recs.length))));
+    }
+    if (!parts.length) {
+      return x2Off('The record and discipline', 'Each member\'s record and the leaderboard, and strikes and warnings, '
+        + 'are two switches.');
+    }
+    return h('div.stack', parts);
   }
 
   /* -- Org audit -- */
@@ -9796,6 +9964,85 @@
     var id = node.getAttribute('data-id');
     if (!armed(node)) return;
     orgWrite('orgApplication', { id: id, accept: node.getAttribute('data-value') === 'yes' }, 'app:' + id, node);
+  };
+
+  /* The organisation extras 2's clicks (Armory, Record & discipline, the form). */
+  ACTIONS['org-arm-remove'] = function (node) {
+    var slot = node.getAttribute('data-id');
+    var raw = trim(S.forms['org.arm.out.' + slot] == null ? '1' : S.forms['org.arm.out.' + slot]);
+    if (!/^\d+$/.test(raw) || raw === '0') { orgRefuse('arm:' + slot, 'How many: a whole number from 1.'); return; }
+    if (!armed(node, null, ['org.arm.out.' + slot])) return;
+    orgWrite('orgArmoryStock', { remove: true, slot: parseInt(slot, 10), count: parseInt(raw, 10) }, 'arm:' + slot,
+      node);
+  };
+  ACTIONS['org-arm-stock'] = function (node) {
+    var item = trim(S.forms['org.arm.item']);
+    var raw = trim(S.forms['org.arm.count'] == null ? '1' : S.forms['org.arm.count']);
+    if (!item) { orgRefuse('arm:stock', 'Write the item name.'); return; }
+    if (!/^\d+$/.test(raw) || raw === '0') { orgRefuse('arm:stock', 'How many: a whole number from 1.'); return; }
+    if (!armed(node, null, ['org.arm.item', 'org.arm.count'])) return;
+    orgWrite('orgArmoryStock', { item: item, count: parseInt(raw, 10) }, 'arm:stock', node);
+  };
+  ACTIONS['org-arm-limit'] = function (node) {
+    var g = node.getAttribute('data-id');
+    var raw = trim(S.forms['org.arm.lim.' + g] == null ? '' : S.forms['org.arm.lim.' + g]);
+    if (!/^\d+$/.test(raw)) { orgRefuse('arm:lim:' + g, 'A whole number, 0 for none.'); return; }
+    if (!armed(node, null, ['org.arm.lim.' + g])) return;
+    orgWrite('orgArmoryLimit', { grade: parseInt(g, 10), count: parseInt(raw, 10) }, 'arm:lim:' + g, node);
+  };
+  ACTIONS['org-stats-reset'] = function (node) {
+    var ref = node.getAttribute('data-ref');
+    if (!armed(node)) return;
+    orgWrite('orgStatsReset', ref ? { member: ref } : { all: true }, 'stats:' + ref, node);
+  };
+  ACTIONS['org-x2-kind'] = function (node) {
+    disarm();
+    S.org.x2.kind = node.getAttribute('data-value');
+    drawOrg();
+  };
+  ACTIONS['org-disc-give'] = function (node) {
+    var reason = trim(S.forms['org.disc.reason']);
+    if (!S.org.x2.member) { orgRefuse('disc', 'Pick the member first.'); return; }
+    if (!reason) { orgRefuse('disc', 'Give a reason.'); return; }
+    if (!armed(node, null, ['org.disc.reason'])) return;
+    orgWrite('orgStrike', { member: S.org.x2.member, kind: S.org.x2.kind || 'strike', reason: reason }, 'disc', node,
+      function () { delete S.forms['org.disc.reason']; });
+  };
+  ACTIONS['org-disc-over'] = function (node) {
+    var id = node.getAttribute('data-id');
+    var reason = trim(S.forms['org.over.' + id]);
+    if (!reason) { orgRefuse('over:' + id, 'Say why it is overturned.'); return; }
+    if (!armed(node, null, ['org.over.' + id])) return;
+    orgWrite('orgOverturn', { member: node.getAttribute('data-ref'), id: id, reason: reason }, 'over:' + id, node);
+  };
+  ACTIONS['org-form-save'] = function (node) {
+    var most = parseInt(node.getAttribute('data-count'), 10) || 0;
+    var x = (S.org.data || {}).extras2 || {};
+    var current = asList(x.form);
+    var list = [];
+    var binds = [];
+    for (var i = 0; i < most; i += 1) {
+      var key = 'org.form.q' + i;
+      binds.push(key);
+      var q = trim(S.forms[key] == null ? (current[i] !== undefined ? String(current[i]) : '') : S.forms[key]);
+      if (q) list.push(q);
+    }
+    if (!armed(node, null, binds)) return;
+    orgWrite('orgRecruitForm', { questions: list }, 'form', node);
+  };
+  ACTIONS['org-note-save'] = function (node) {
+    var id = node.getAttribute('data-id');
+    var text = trim(S.forms['org.note.' + id]);
+    if (!text) { orgRefuse('app:' + id, 'Write the note.'); return; }
+    if (!armed(node, null, ['org.note.' + id])) return;
+    orgWrite('orgInterviewNote', { id: id, text: text }, 'app:' + id, node, function () {
+      delete S.forms['org.note.' + id];
+    });
+  };
+  ACTIONS['org-note-clear'] = function (node) {
+    var id = node.getAttribute('data-id');
+    if (!armed(node)) return;
+    orgWrite('orgInterviewNote', { id: id, clear: true }, 'app:' + id, node);
   };
 
   /* The organisation extras' clicks (Work & channel). */

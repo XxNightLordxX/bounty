@@ -42,7 +42,19 @@ function W.world(opts)
     if opts.configure then opts.configure(s, f) end
     s.bridges.install(s)
     s.org.boot()
+    W.stack = s
     return s, f
+end
+
+--- The audit rows of one action the last stack wrote (at most 200).
+function W.audit(action)
+    local s = W.stack
+    if s.audit and s.audit.flush then pcall(s.audit.flush) end
+    local out = {}
+    for _, row in ipairs(s.storage.readAudit() or {}) do
+        if row.action == action then out[#out + 1] = row end
+    end
+    return out
 end
 
 --- Hire the three: the boss at 3, the lieutenant at 2, the recruit at 0,

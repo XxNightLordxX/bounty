@@ -1748,3 +1748,7 @@ button.ghost.org-row { width: 100%; justify-content: flex-start; text-align: lef
 .org-assigned:last-child, .org-message:last-child { border-bottom: none; }
 .org-dossier { margin-top: 0.4rem; padding-left: 0.6rem; border-left: 2px solid var(--line-strong); }
 .org-message.is-mine .org-notice { color: var(--ink-dim); }
+.org-rank, .org-discipline { padding: 0.4rem 0; border-bottom: 1px solid var(--line-soft); }
+.org-rank:last-child, .org-discipline:last-child { border-bottom: none; }
+.org-rank.is-mine .target { color: var(--crimson-bright); }
+.org-discipline.is-overturned .target { text-decoration: line-through; color: var(--ink-dim); }

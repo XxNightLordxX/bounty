@@ -15,6 +15,10 @@
 ---   RemoveItem(inv, item, count, metadata, slot)       -> success, response
 ---   CanCarryItem(inv, item, count, metadata)           -> boolean | nil
 ---   GetInventoryItems(inv), GetInventory(inv)
+---   RegisterStash(name, label, slots, maxWeight, owner, groups, coords)
+---                                           (modules/inventory/server.lua
+---                                           registerStash; the organisation's
+---                                           armory, Config.Organisation.Armory)
 --- They may raise: the callers keep their pcall.
 
 local Adapter = { resource = 'ox_inventory', label = 'ox_inventory' }
@@ -27,5 +31,6 @@ function Adapter.RemoveItem(...) return exports.ox_inventory:RemoveItem(...) end
 function Adapter.CanCarryItem(...) return exports.ox_inventory:CanCarryItem(...) end
 function Adapter.GetInventoryItems(...) return exports.ox_inventory:GetInventoryItems(...) end
 function Adapter.GetInventory(...) return exports.ox_inventory:GetInventory(...) end
+function Adapter.RegisterStash(...) return exports.ox_inventory:RegisterStash(...) end
 
 return Adapter

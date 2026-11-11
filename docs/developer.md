@@ -148,6 +148,32 @@ framework adapter's optional `SetJobDuty` where the job is the primary one, and
 `orgContracts` entry. One tick job, `org.extras` (its own 30 s gate), expires and
 prunes; with every switch off it compares one value.
 
+Organisation extras 2 (`server/org/extras2.lua`, each its own switch under
+`Config.Organisation`, off as shipped), copied onto `Org` the same way
+(`Extras2.attach`, with `saveMember` and `setGrade` in its kit). The armory is
+an ox_inventory stash (`crimson_armory_<org id>`) registered through the
+inventory adapter's `RegisterStash` before every read and move (so an
+inventory restart is taken in), under the group `crimson_armory_locked`, which
+nobody holds, so only the server moves items. A move reads the slot from the
+server's own inventory read (`GetInventoryItems`), never the client's word,
+asks `CanCarryItem` of the side receiving, removes from one side, adds to the
+other, and gives back on a refusal; one move at a time (`Busy`). The limits a
+day are `Window`s of one entry per unit (`Taken`, `Managed`), in memory; the
+role limits and the last 100 moves are in `settings.armory`. The record is
+`settings.stats[cid]` (`c`, `f`, `e`, `t`, `n`, `since`), fed by
+`Record.observer(kind, cid, info)` (server/record/init.lua, asked in a pcall
+from `onCompleted` and `onFailed`; the claim passes `{ contractId, earned,
+seconds }`), which compares one switch while Stats is off. Bands are from
+`StatsBandShort/Mid/Long`. Discipline is `settings.discipline[cid]` (the last
+50 entries, `strike` or `warning`), counted at read time against
+`StrikeDecayDays`; a suspension the strikes made is in
+`settings.strikeSuspended` so an overturn lifts only that one. Recruitment's
+questions, cooldowns and notes are in `settings.recruit`; the answers are kept
+in the application's own `body`, as `\2` followed by JSON (a control
+character no plain text can hold), read back by `Extras2.readBody`; the hourly
+cap is a `Window` by organisation. `Org.apply`, `Org.applications` and
+`Org.decide` ask `Extras2` only while Recruitment is on. There is no tick.
+
 Joining: a boss's `Org.hire` is an invite held in memory (`Invites`, expiring
 after `Limits.InviteMinutes`), shown to the player as the board's `orgInvite`
 and in `orgMine`, answered by `orgInviteAnswer` (`Org.answerInvite`, the hire

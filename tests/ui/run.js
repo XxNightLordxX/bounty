@@ -15095,6 +15095,171 @@ async function main() {
       drewCleanly(chat);
     });
 
+    // Organisation extras 2: the record and leaderboard, discipline, the
+    // armory and the application form (each only while on).
+    const extras2Off = await openOrg(memberMine(['M10', 'M11', 'A1', 'A2', 'N4'], { role: 'Recruit', grade: 0 }));
+    it('ORG EXTRAS 2: nothing of the extras 2 is drawn while their switches are off', function () {
+      const text = extras2Off.view.textContent;
+      ['Discipline', 'Open armory', 'Leaderboard', 'Application form', 'strike'].forEach(function (w) {
+        eq(text.indexOf(w), -1, w + ' not drawn');
+      });
+      truthy(text.indexOf('Your record') !== -1 && text.indexOf('Not kept yet.') !== -1, 'the record said off');
+      eq(buttons(extras2Off).indexOf('Application form'), -1, 'N4 with its switch off: no screen');
+    });
+    const STATS = { ok: true, data: { rows: [
+      { rank: 1, name: '<i>Kestrel</i>', completed: 4, rate: 80, band: '30 min to 2 h' },
+      { rank: 2, name: 'P11', completed: 1, band: 'over 8 h', mine: true }] } };
+    const ranked = await openOrg(memberMine([], { statsOn: true, stats: { completed: 1, failed: 0, earned: 5000,
+      rank: 2, of: 2, band: 'over 8 h', leaderboard: true }, discipline: { strikes: 1, warnings: 1, decayDays: 30,
+        rows: [{ id: 'dc1', kind: 'strike', reason: '<b>Late</b>', at: 1, active: true, by: 'A boss' },
+          { id: 'dc2', kind: 'warning', reason: 'Loud', at: 1, by: 'A boss', overturned: true }] } }),
+    { orgStats: STATS });
+    const recordText = ranked.view.textContent;
+    await screen(ranked, 'Leaderboard');
+    const boardText = ranked.view.textContent;
+    it('workflow screen:phone.org.stats — Your record is filled, and the leaderboard shows bands, never money', function () {
+      truthy(recordText.indexOf('1 completed · 0 failed') !== -1, recordText);
+      truthy(recordText.indexOf('Earned in the organisation: $5,000') !== -1
+        || recordText.indexOf('Earned in the organisation: $5000') !== -1, recordText);
+      truthy(recordText.indexOf('You usually finish in over 8 h') !== -1);
+      truthy(recordText.indexOf('Rank 2 of 2') !== -1);
+      truthy(recordText.indexOf('1 strike standing, 1 written warning') !== -1, 'the discipline card');
+      truthy(recordText.indexOf('<b>Late</b>') !== -1, 'a reason as text');
+      truthy(recordText.indexOf('overturned') !== -1);
+      truthy(boardText.indexOf('#1 <i>Kestrel</i>') !== -1, 'a name as text: ' + boardText);
+      eq(ranked.view.all().filter(function (n) { return n.tagName === 'I' || n.tagName === 'B'; }).length, 0);
+      truthy(boardText.indexOf('80% reliable') !== -1);
+      eq(boardText.indexOf('earned'), -1, 'no money for a player');
+      drewCleanly(ranked);
+    });
+    const disciplining = await openOrg(memberMine(['M1', 'M11'], { discipline: { strikes: 0, warnings: 0, rows: [] } }),
+      { orgMembers: { ok: true, data: { rows: [{ ref: 'm1_1111', name: 'Kestrel', grade: 0, role: 'Recruit',
+        online: true, strikes: 2 }] } }, orgStrike: function () {
+        return { ok: true, data: { id: 'dc9', strikes: 3, consequence: 'suspended 48 h' } };
+      } });
+    await screen(disciplining, 'Members');
+    const chips = disciplining.view.textContent;
+    click(disciplining, 'Kestrel · Recruit');
+    await settle();
+    click(disciplining, 'Strike');
+    await settle();
+    click(disciplining, 'Tap again: strike');
+    await settle(); await settle();
+    const noReason = disciplining.orgSent.filter(function (x) { return x.name === 'orgStrike'; }).length;
+    type(disciplining, 'dreason', 'Late to the meet');
+    click(disciplining, 'Strike');
+    await settle();
+    const strikeAfterOne = disciplining.orgSent.filter(function (x) { return x.name === 'orgStrike'; }).length;
+    click(disciplining, 'Tap again: strike');
+    await settle(); await settle(); await settle();
+    it('ORG EXTRAS 2: a boss holding Issue strikes gives one with a reason, two taps', function () {
+      truthy(chips.indexOf('2 strikes') !== -1, chips);
+      eq(noReason, 0, 'never without a reason');
+      eq(strikeAfterOne, 0, 'nothing on the first tap');
+      const sent = disciplining.orgSent.filter(function (x) { return x.name === 'orgStrike'; });
+      eq(sent.length, 1);
+      eq(JSON.stringify(sent[0].body), '{"member":"m1_1111","kind":"strike","reason":"Late to the meet"}');
+      drewCleanly(disciplining);
+    });
+    const ARMORY = { ok: true, data: { items: [{ slot: 3, name: 'lockpick', label: 'Lockpick', count: 4 }],
+      own: [{ slot: 7, name: 'bandage', label: '<u>Bandage</u>', count: 2 }], limits: { '0': 1 }, left: 1,
+      manageLeft: 5, withdrawMax: 10, log: [{ at: 1, dir: 'in', item: 'lockpick', count: 4, who: 'Kestrel' }],
+      atOffice: true, here: true } };
+    const armed = await openOrg(memberMine(['A1', 'A2'], { armory: true, armoryReady: true }), { orgArmory: ARMORY,
+      orgRoles: { ok: true, data: { rows: [{ grade: 0, name: 'recruit', label: 'Recruit', editable: true }] } },
+      orgArmoryTake: function () { return { ok: true, data: { item: 'lockpick', count: 2 } }; },
+      orgArmoryPut: function () { return { ok: true, data: { item: 'bandage', count: 1 } }; },
+      orgArmoryLimit: function () { return { ok: true, data: { grade: 0, limit: 3 } }; } });
+    click(armed, 'Open armory');
+    await settle(); await settle(); await settle();
+    const armoryText = armed.view.textContent;
+    type(armed, 'arm-out-3', '2');
+    click(armed, 'Take');
+    await settle();
+    const takeAfterOne = armed.orgSent.filter(function (x) { return x.name === 'orgArmoryTake'; }).length;
+    click(armed, 'Tap again to take it');
+    await settle(); await settle(); await settle();
+    click(armed, 'Put in');
+    await settle();
+    click(armed, 'Tap again to put it in');
+    await settle(); await settle(); await settle();
+    type(armed, 'arm-lim-0', '3');
+    click(armed, 'Set');
+    await settle();
+    click(armed, 'Tap again to set it');
+    await settle(); await settle(); await settle();
+    it('workflow screen:phone.org.armory — the armory takes, puts in and sets a limit, each with two taps', function () {
+      truthy(armoryText.indexOf('You may take 1 more today, and 5 beyond that as a boss') !== -1, armoryText);
+      truthy(armoryText.indexOf('<u>Bandage</u> × 2') !== -1, 'a label as text');
+      eq(armed.view.all().filter(function (n) { return n.tagName === 'U'; }).length, 0);
+      truthy(armoryText.indexOf('In: lockpick × 4 · Kestrel') !== -1, 'the log');
+      eq(takeAfterOne, 0);
+      const take = armed.orgSent.filter(function (x) { return x.name === 'orgArmoryTake'; });
+      eq(take.length, 1);
+      eq(JSON.stringify(take[0].body), '{"slot":3,"count":2}', 'a slot and a count, nothing else');
+      const put = armed.orgSent.filter(function (x) { return x.name === 'orgArmoryPut'; });
+      eq(JSON.stringify(put[0].body), '{"slot":7,"count":1}');
+      const lim = armed.orgSent.filter(function (x) { return x.name === 'orgArmoryLimit'; });
+      eq(JSON.stringify(lim[0].body), '{"grade":0,"count":3}');
+      drewCleanly(armed);
+    });
+    const former = await openOrg(memberMine(['N2', 'N4'], { recruitment: true, recruitForm: ['Why us?'], recruitMax: 2 }),
+      { orgApplications: { ok: true, data: { rows: [{ id: 'app:7', name: 'Ada', body: 'Hi',
+        form: [{ q: 'Why us?', a: '<script>x</script>The pay' }], note: { text: 'Calm' } }] } },
+      orgInterviewNote: function () { return { ok: true, data: { done: true } }; },
+      orgRecruitForm: function () { return { ok: true, data: { questions: ['Why us?', 'Who vouches?'] } }; } });
+    await screen(former, 'Applications');
+    const appsText = former.view.textContent;
+    type(former, 'app-7-note', 'Knows the docks');
+    click(former, 'Save note');
+    await settle();
+    click(former, 'Tap again to save the note');
+    await settle(); await settle(); await settle();
+    click(former, 'Back');
+    await settle();
+    await screen(former, 'Application form');
+    type(former, 'form-q1', 'Who vouches?');
+    click(former, 'Save the form');
+    await settle();
+    click(former, 'Tap again to save it');
+    await settle(); await settle(); await settle();
+    it('workflow screen:phone.org.recruiting — the answers and note read as text; the note and the form save', function () {
+      truthy(appsText.indexOf('<script>x</script>The pay') !== -1, appsText);
+      truthy(appsText.indexOf('Interview note: Calm') !== -1);
+      eq(former.view.all().filter(function (n) { return n.tagName === 'SCRIPT'; }).length, 0);
+      const note = former.orgSent.filter(function (x) { return x.name === 'orgInterviewNote'; });
+      eq(JSON.stringify(note[0].body), '{"id":"app:7","text":"Knows the docks"}');
+      const form = former.orgSent.filter(function (x) { return x.name === 'orgRecruitForm'; });
+      eq(form.length, 1);
+      eq(JSON.stringify(form[0].body), '{"questions":["Why us?","Who vouches?"]}');
+      drewCleanly(former);
+    });
+    const answers = [];
+    const applicant = boot({ list: listing('signup'), mine: MINE, ledger: LEDGER,
+      orgMine: { ok: true, data: { enabled: true, member: false, label: 'Crimson Contractors', form: ['Why us?'],
+        answerMax: 300 } },
+      orgApply: function (body) { answers.push(body); return { ok: true, data: { id: 'a2' } }; } });
+    await settle(); await settle(); await settle();
+    tab(applicant, 'org');
+    await settle(); await settle();
+    click(applicant, 'Apply');
+    await settle();
+    click(applicant, 'Tap again to apply');
+    await settle(); await settle();
+    const unanswered = answers.length;
+    type(applicant, 'apply-a0', 'The pay');
+    click(applicant, 'Apply');
+    await settle();
+    click(applicant, 'Tap again to apply');
+    await settle(); await settle(); await settle();
+    it('ORG EXTRAS 2: an applicant answers the boss\'s form before applying', function () {
+      truthy(applicant.view.textContent.indexOf('Why us?') !== -1);
+      eq(unanswered, 0, 'never with a question unanswered');
+      eq(answers.length, 1);
+      eq(JSON.stringify(answers[0].answers), '["The pay"]');
+      drewCleanly(applicant);
+    });
+
     it('ORG TAB: the page words every org_* refusal the server can send', function () {
       const lua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'init.lua'), 'utf8');
       const codes = {};

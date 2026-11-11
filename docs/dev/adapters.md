@@ -61,7 +61,7 @@ documents every function:
 | Kind | Functions |
 |---|---|
 | framework | `GetPlayer`, `GetPlayerByCitizenId`, `GetOfflinePlayer`, `GetMetadata`, `Save`, `GetMoney`, `AddMoney`, `RemoveMoney`, `GetJob`, `CreateJobs`, `UpsertJobData`, `UpsertJobGrade`, `RemoveJobGrade`, `AddPlayerToJob`, `SetPlayerPrimaryJob`, `RemovePlayerFromJob`, and optionally `SetJobDuty` (the organisation's Duty: without it, qbx duty is left as it is) |
-| inventory | `GetItem`, `GetItemCount`, `Search`, `AddItem`, `RemoveItem`, `CanCarryItem`, `GetInventoryItems`, `GetInventory` |
+| inventory | `GetItem`, `GetItemCount`, `Search`, `AddItem`, `RemoveItem`, `CanCarryItem`, `GetInventoryItems`, `GetInventory`, and `RegisterStash` (the organisation's armory: without it, the armory is off) |
 | dispatch | `AddNotification(alert)`, `ClearNotification(uniqueId, jobs)` |
 | ambulance | `deathState(source) -> dead, lastStand` (server; leave it out when the server cannot tell) |
 | banking | `installed()`, `CreateJobAccount`, `getAccountMoney`, `addAccountMoney`, `removeAccountMoney`, `handleTransaction` |

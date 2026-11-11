@@ -171,7 +171,14 @@ local REQUESTS = {
         return answer(Org.decide(who(actor), Text.field(p.id, 48), p.accept))
     end },
     { 'orgApply', 'orgWrite', 'any', function(actor, p)
-        return answer(Org.apply(actor, p.text ~= nil and Text.field(p.text, 600) or nil))
+        -- The form's answers (Config.Organisation.Recruitment), in order;
+        -- anything not a string is left empty, which the form refuses.
+        local answers = nil
+        if type(p.answers) == 'table' then
+            answers = {}
+            for i = 1, math.min(#p.answers, 21) do answers[i] = Text.field(p.answers[i], 8000) or '' end
+        end
+        return answer(Org.apply(actor, p.text ~= nil and Text.field(p.text, 600) or nil, answers))
     end },
     -- The invited player's own answer to a boss's hire (Org.answerInvite).
     { 'orgInviteAnswer', 'orgWrite', 'any', function(actor, p)
@@ -220,6 +227,46 @@ local REQUESTS = {
     end },
     { 'orgChannelMute', 'orgWrite', 'N3', function(actor, p)
         return answer(Org.channelMute(who(actor), memberOf(actor, p), p.hours))
+    end },
+    -- Organisation extras 2 (server/org/extras2.lua), each off as shipped -
+    { 'orgArmory', 'org', 'member', function(actor)
+        return answer(Org.armoryView(who(actor)))
+    end },
+    { 'orgArmoryPut', 'orgWrite', 'member', function(actor, p)
+        return answer(Org.armoryDeposit(who(actor), p.slot, p.count))
+    end },
+    { 'orgArmoryTake', 'orgWrite', 'member', function(actor, p)
+        return answer(Org.armoryWithdraw(who(actor), p.slot, p.count))
+    end },
+    { 'orgArmoryLimit', 'orgWrite', 'A2', function(actor, p)
+        return answer(Org.armoryLimit(who(actor), tonumber(p.grade), p.count))
+    end },
+    { 'orgStats', 'org', 'member', function(actor)
+        return answer(Org.leaderboard(who(actor)))
+    end },
+    { 'orgStrike', 'orgWrite', 'M11', function(actor, p)
+        return answer(Org.discipline(who(actor), memberOf(actor, p), Text.field(p.kind, 8),
+            Text.field(p.reason, 800)))
+    end },
+    { 'orgDisciplineRecord', 'org', 'member', function(actor, p)
+        local cid = nil
+        if p.member ~= nil then
+            cid = memberOf(actor, p)
+            if not cid then return answer(false, Org.ERR.NOT_FOUND) end
+        end
+        return answer(Org.disciplineRead(who(actor), cid))
+    end },
+    { 'orgRecruitForm', 'orgWrite', 'N4', function(actor, p)
+        if type(p.questions) ~= 'table' then return answer(false, Org.ERR.INVALID) end
+        local list = {}
+        for i = 1, math.min(#p.questions, 21) do list[i] = Text.field(p.questions[i], 800) or '' end
+        return answer(Org.recruitForm(who(actor), list))
+    end },
+    { 'orgInterviewNote', 'orgWrite', 'N2', function(actor, p)
+        local text = false
+        if p.clear ~= true then text = Text.field(p.text, 8000) end
+        if text == nil then return answer(false, Org.ERR.INVALID) end
+        return answer(Org.interviewNote(who(actor), Text.field(p.id, 48), text))
     end },
     -- Settings ----------------------------------------------------------
     { 'orgRename', 'orgWrite', 'S1', function(actor, p)

@@ -455,7 +455,8 @@ function serverStub() {
     notice: { text: REASON + ' ' + REASON, at: NOW - 120 },
     access: { 1: { maxReward: 2000000000, rule: 'alive', maxAtOnce: 50, cooldownMinutes: 10080 } },
     balance: 1234567890, bank: true,
-    applications: [{ id: 'hitman:app:1', name: LONG, body: REASON + ' ' + REASON, at: NOW - 300 }],
+    applications: [{ id: 'hitman:app:1', name: LONG, body: REASON + ' ' + REASON, at: NOW - 300,
+      form: [{ q: REASON.slice(0, 200), a: REASON + ' ' + REASON }], note: { text: REASON, by: 'Staff' } }],
     powers: POWERS, warnings: ['qbx:max_jobs_per_player is 1: members lose their other job when hired.'],
     layout: { labels: { members: 'Crew' }, hidden: { funds: [1] } },
     // The organisation extras, every one on, at their longest.
@@ -468,7 +469,21 @@ function serverStub() {
         approvals: [{ id: 'ap1_1000', contractId: 'ct10000003', worth: 2000000000, expiresIn: 900, probation: true,
           member: { ref: 'm0_1000', name: LONG } }],
         spots: [{ id: 'hitman:meeting:1', label: LONG }] },
-      channel: [{ id: 'msg:1', from: LONG, body: REASON + ' ' + REASON, at: NOW - 60, member: 'm0_1000' }] } } };
+      channel: [{ id: 'msg:1', from: LONG, body: REASON + ' ' + REASON, at: NOW - 60, member: 'm0_1000' }] },
+    // And the extras 2, every one on, at their longest.
+    extras2: { Armory: true, Stats: true, Discipline: true, Recruitment: true,
+      armory: { items: [{ slot: 1, name: 'weapon_carbinerifle_mk2', label: LONG, count: 1000 }],
+        allowed: ['weapon_carbinerifle_mk2', 'bandage', 'lockpick', 'armour_heavy_plate_vest'],
+        limits: { '1': 1000, '3': 1000 }, withdrawMax: 1000,
+        log: [{ at: NOW - 60, dir: 'out', item: 'weapon_carbinerifle_mk2', count: 1000, who: LONG }] },
+      leaderboard: [{ rank: 1, name: LONG, ref: 'm0_1000', completed: 123456, failed: 12345, earned: 2000000000,
+        rate: 100, avgMinutes: 123456, band: 'over 8 h' }],
+      discipline: [{ ref: 'm0_1000', name: LONG, strikes: 99, rows: [{ id: 'dc1_1000', kind: 'strike',
+        reason: REASON, at: NOW - 60, active: true, by: 'A boss', consequence: 'suspended 720 h, demoted' },
+        { id: 'dc2_1000', kind: 'warning', reason: REASON, at: NOW - 60, by: 'Staff', overturned: NOW - 30,
+          overturnReason: REASON }] }],
+      disciplineRules: { decayDays: 3650, suspendAt: 100, suspendHours: 720, demoteAt: 100 },
+      form: [REASON.slice(0, 200), REASON.slice(0, 200)], formMax: 5 } } };
   answers.orgFunds = { ok: true, data: { balance: 1234567890, bank: true, rows: (function () {
     const out = [];
     for (let i = 0; i < 15; i++) {
@@ -736,7 +751,8 @@ async function main() {
   const sections = ['inbox', 'overview', 'announce', 'players', 'pmeasures', 'pmoney', 'pplaytime',
     'phistory', 'pdiag', 'their-contracts', 'measures', 'contracts', 'tldefaults', 'tljobs', 'tlplayer',
     'contracts:bytarget', 'gear:contracts', 'gear:tljobs', 'rules', 'presets', 'changed', 'logs:settings', 'rules:timer', 'rules:money', 'rules:limit', 'rules:list', 'rules:switch',
-    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'logs:org',
+    'orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'orgarmory',
+    'orgrecord', 'logs:org',
     'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'logs:audit', 'alerts', 'health', 'devsettings',
     'console', 'tools', 'help', 'howto', 'permissions'];
 

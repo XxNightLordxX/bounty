@@ -31,11 +31,12 @@ describe('the powers as constants', function()
         end
         for _, code in ipairs({ 'M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'R1', 'R2', 'R3', 'R4', 'P1', 'P2',
             'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7', 'C8', 'K1', 'K2', 'K3', 'L1', 'L2', 'L3', 'N1', 'N2',
-            'S1', 'S2', 'S3', 'D2', 'D3', 'M7', 'P3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3' }) do
+            'S1', 'S2', 'S3', 'D2', 'D3', 'M7', 'P3', 'K4', 'K5', 'K6', 'K7', 'M8', 'M9', 'N3',
+            'A1', 'A2', 'M10', 'M11', 'N4' }) do
             truthy(codes[code], code)
         end
-        eq(#Powers.LIST, 42, 'the 31 area powers, D2, D3 (D1 is R4), M7, P3 (codenames, payroll), and the '
-            .. 'extras K4-K7, M8, M9, N3')
+        eq(#Powers.LIST, 47, 'the 31 area powers, D2, D3 (D1 is R4), M7, P3 (codenames, payroll), the '
+            .. 'extras K4-K7, M8, M9, N3, and the extras 2 A1, A2, M10, M11, N4')
         eq(Powers.resolve('D1'), 'R4')
         eq(Powers.resolve('TAKE'), nil, 'TAKE is no boss power')
         eq(Powers.resolve('TAKE', true), 'TAKE')
@@ -391,7 +392,13 @@ describe('every phone request, through its net event', function()
             end
             Config.Organisation.ApprovalAbove = 0
             Config.Organisation.ProbationMaxGrade = -1 + 0
+            -- And the extras 2 (server/org/extras2.lua).
+            for _, key in ipairs({ 'Armory', 'Stats', 'Discipline', 'Recruitment' }) do
+                Config.Organisation[key] = true
+            end
+            Config.Organisation.ArmoryItems = { 'lockpick' }
         end })
+        Env.players[11]._inventory = { { name = 'lockpick', count = 5, slot = 1 } }
         for _, p in ipairs(require('server.org.powers').LIST) do W.allow(s, 3, p.code) end
         truthy(s.org.setLimits(W.STAFF, { LocationCooldownMinutes = 0 }))
         W.office(s)
@@ -451,7 +458,17 @@ describe('every phone request, through its net event', function()
         eq(applied.ok, true, tostring(applied.err))
         okd.orgApply = true
         local apps = ok('orgApplications', {})
+        ok('orgInterviewNote', { id = apps.rows[1].id, text = 'Seemed keen.' })
         ok('orgDecide', { id = apps.rows[1].id, accept = false })
+        ok('orgRecruitForm', { questions = { 'Why us?' } })
+        -- The extras 2: the armory, the record, discipline.
+        ok('orgArmory', {})
+        ok('orgArmoryPut', { slot = 1, count = 2 })
+        ok('orgArmoryLimit', { grade = 0, count = 1 })
+        ok('orgArmoryTake', { slot = ok('orgArmory', {}).items[1].slot, count = 1 })
+        ok('orgStats', {})
+        ok('orgStrike', { member = ref(2), kind = 'warning', reason = 'Late to the meet' })
+        ok('orgDisciplineRecord', { member = ref(2) })
         -- The extras: duty, a contract sent to the organisation assigned,
         -- moved and released, a dossier, an accept approved, the channel.
         ok('orgDuty', { on = true })

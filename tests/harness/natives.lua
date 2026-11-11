@@ -876,9 +876,27 @@ function Natives.exportsProxy()
         end,
     }
 
+    --- An inventory as ox_inventory names it: a player by server id, or a
+    --- stash registered by name (RegisterStash), which holds what it is
+    --- given in slots numbered from 1 and refuses more than its slots.
+    local function invOf(inv)
+        if type(inv) == 'string' then return Env.stashes[inv] end
+        return Env.players[tonumber(inv)]
+    end
+
     resources['ox_inventory'] = {
+        --- registerStash(name, label, slots, maxWeight, owner, groups, coords):
+        --- kept, its items too when it is registered again.
+        RegisterStash = function(_, name, label, slots, maxWeight, owner, groups)
+            if Natives.registerStashThrows then error('ox_inventory: stash refused') end
+            assert(type(name) == 'string' and type(slots) == 'number' and type(maxWeight) == 'number',
+                'RegisterStash: name, slots and maxWeight as ox_inventory checks them')
+            local stash = Env.stashes[name] or { _inventory = {} }
+            stash.label, stash.slots, stash.maxWeight, stash.owner, stash.groups = label, slots, maxWeight, owner, groups
+            Env.stashes[name] = stash
+        end,
         GetItem = function(_, src, name, metadata, returnsCount)
-            local p = Env.players[tonumber(src)]
+            local p = invOf(src)
             if not p then return returnsCount and 0 or nil end
             local count = 0
             for _, slot in ipairs(p._inventory) do
@@ -890,12 +908,14 @@ function Natives.exportsProxy()
         --- does. Ignoring metadata here made a worn item and a pristine one
         --- indistinguishable, so a test could not see an escrow path that
         --- takes one and hands back the other.
-        RemoveItem = function(_, src, name, count, metadata)
-            local p = Env.players[tonumber(src)]
+        RemoveItem = function(_, src, name, count, metadata, slotId)
+            local p = invOf(src)
             if not p then return false end
+            if type(src) == 'string' and Natives.removeItemRefuses then return false end
             local remaining = count
-            for _, slot in ipairs(p._inventory) do
+            for index, slot in ipairs(p._inventory) do
                 if slot.name == name and remaining > 0
+                    and (type(src) ~= 'string' or slotId == nil or (slot.slot or index) == slotId)
                     and Natives.metadataMatches(slot.metadata, metadata) then
                     local take = math.min(slot.count, remaining)
                     slot.count = slot.count - take
@@ -907,15 +927,32 @@ function Natives.exportsProxy()
             return remaining == 0
         end,
         AddItem = function(_, src, name, count, metadata)
-            local p = Env.players[tonumber(src)]
+            local p = invOf(src)
             if not p then return false end
             if p._inventoryFull then return false end
+            if type(src) == 'string' and Natives.stashAddRefuses then return false end
+            if type(src) == 'string' then
+                -- A stash keeps its slots numbered: the first free one.
+                local used = {}
+                for index, slot in ipairs(p._inventory) do
+                    if slot.count > 0 then used[slot.slot or index] = true end
+                end
+                local free = 1
+                while used[free] do free = free + 1 end
+                if free > (p.slots or 50) then return false end
+                local list = {}
+                for _, slot in ipairs(p._inventory) do if slot.count > 0 then list[#list + 1] = slot end end
+                p._inventory = list
+                table.insert(p._inventory, { name = name, count = count, metadata = metadata, slot = free })
+                table.insert(Natives.calls.inventory, { op = 'add', src = src, name = name, count = count })
+                return true
+            end
             table.insert(p._inventory, { name = name, count = count, metadata = metadata })
             table.insert(Natives.calls.inventory, { op = 'add', src = src, name = name, count = count })
             return true
         end,
         CanCarryItem = function(_, src, name, count)
-            local p = Env.players[tonumber(src)]
+            local p = invOf(src)
             return p and not p._inventoryFull or false
         end,
         GetInventoryItems = function(_, src)
@@ -925,8 +962,8 @@ function Natives.exportsProxy()
             if Natives.noGetInventoryItems then
                 error('ox_inventory: no such export GetInventoryItems')
             end
-            local p = Env.players[tonumber(src)]
-            if not p then return {} end
+            local p = invOf(src)
+            if not p then return type(src) == 'string' and nil or {} end
 
             -- Keyed by SLOT NUMBER, which is what ox_inventory returns: this
             -- export hands back the inventory's own `items` table, and that
@@ -935,6 +972,7 @@ function Natives.exportsProxy()
             -- primary read path.
             local out = {}
             for index, slot in ipairs(p._inventory) do
+                if type(src) == 'string' and slot.count <= 0 then goto continue end
                 -- Reported exactly as the fixture wrote it. Filling in a
                 -- slot number the fixture did not set would be the harness
                 -- inventing a field, and a slot is what identifies a weapon
@@ -943,6 +981,7 @@ function Natives.exportsProxy()
                     name = slot.name, count = slot.count, slot = slot.slot,
                     label = slot.label, metadata = slot.metadata,
                 }
+                ::continue::
             end
             return out
         end,

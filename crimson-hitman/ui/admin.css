@@ -857,6 +857,8 @@ ul, ol { list-style: none; }
 .org-dossier { margin: 0.4rem 0; display: grid; gap: 0.3rem; }
 .org-message { display: grid; gap: 0.3rem; padding: 0.5rem 0; border-bottom: 1px solid var(--line); }
 .org-message:last-child { border-bottom: none; }
+.org-discipline, .org-answer { display: grid; gap: 0.3rem; padding: 0.4rem 0; border-bottom: 1px solid var(--line); }
+.org-discipline:last-child, .org-answer:last-child { border-bottom: none; }
 .bp-wrap { max-height: none; }
 .bp-grid th.bp-col { text-align: center; white-space: normal; min-width: 7rem; }
 .bp-col-name { display: block; color: var(--ink); text-transform: none; letter-spacing: 0; overflow-wrap: anywhere; }

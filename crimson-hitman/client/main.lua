@@ -679,6 +679,10 @@ local UI_EVENTS = {
     -- the organisation, approvals, dossiers, probation, duty, the channel.
     'orgWork', 'orgAssign', 'orgRelease', 'orgApprove', 'orgDossier', 'orgProbationEnd', 'orgDuty',
     'orgForceOff', 'orgChannel', 'orgChannelPost', 'orgChannelRemove', 'orgChannelMute',
+    -- And the organisation extras 2 (each off as shipped): the armory, the
+    -- record and leaderboard, discipline, the application form.
+    'orgArmory', 'orgArmoryPut', 'orgArmoryTake', 'orgArmoryLimit', 'orgStats', 'orgStrike',
+    'orgDisciplineRecord', 'orgRecruitForm', 'orgInterviewNote',
 }
 
 --------------------------------------------------------------------------

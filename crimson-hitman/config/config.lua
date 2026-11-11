@@ -762,6 +762,29 @@ Config.Organisation = {
     ChannelPerMinute   = 6,                      -- messages one member sends a minute
     Dossiers           = false,                  -- briefings on assigned organisation contracts
     DossierMaxLength   = 600,                    -- characters in a dossier's notes
+    -- Organisation extras 2 (README, Organisation extras), each its own switch, off.
+    Armory             = false,                  -- an ox_inventory stash of the organisation's, through the app
+    ArmoryItems        = {},                     -- the items allowed in it (item names); empty = none
+    ArmoryAtOffice     = true,                   -- items go in and out only at the boss office
+    ArmorySlots        = 50,                     -- slots in the stash
+    ArmoryWeight       = 100000,                 -- most weight the stash holds (grams)
+    Stats              = false,                  -- each member's record in the organisation, and a leaderboard
+    StatsLeaderboard   = true,                   -- every member sees the leaderboard (off: bosses only)
+    StatsMinForRate    = 3,                      -- outcomes before a reliability is shown
+    StatsBandShort     = 30,                     -- time bands players see: the first edge (minutes)
+    StatsBandMid       = 120,                    -- the second edge (minutes)
+    StatsBandLong      = 480,                    -- the last edge (minutes); over it is the last band
+    Discipline         = false,                  -- strikes and written warnings
+    StrikeDecayDays    = 30,                     -- days a strike counts
+    StrikeSuspendAt    = 3,                      -- strikes that bar a member from contracts (0 = never)
+    StrikeSuspendHours = 48,                     -- hours that bar lasts
+    StrikeDemoteAt     = 0,                      -- strikes that move a member one role down (0 = never)
+    Recruitment        = false,                  -- an application form with a boss's questions, and interview notes
+    RecruitQuestions   = 5,                      -- questions on the form at most
+    RecruitAnswerMax   = 300,                    -- characters in one answer
+    RecruitNoteMax     = 500,                    -- characters in an interview note
+    RecruitCooldownHours = 24,                   -- hours a declined applicant waits to apply again
+    RecruitPerHour     = 10,                     -- applications the organisation takes an hour
     Roles              = { -- the roles made with it: 'grade, name, label, pay, boss'
         '0, recruit, Recruit, 0, no',
         '1, operative, Operative, 0, no',
@@ -798,6 +821,9 @@ Config.Organisation = {
         PayrollPerDayMax         = 0,       -- most paid in salaries in all on one pay day ($); 0 = no cap
         CodenameCooldownMinutes  = 1440,    -- minutes between two own codename changes
         ChannelMuteMaxHours      = 24,      -- longest a boss mutes a member in the channel (hours)
+        ArmoryWithdrawMax        = 10,      -- most a boss lets each member of a role take out a day (items)
+        ArmoryManagePerDay       = 20,      -- most a boss holding Manage armory takes out beyond that a day
+        StrikesPerDay            = 5,       -- strikes and warnings one boss gives a day
     },
 }
 -- ============================================================================

@@ -2577,7 +2577,8 @@ async function main() {
       tldefaults: 'Defaults', tljobs: 'Per job', tlplayer: 'Per player',
       rules: 'Areas', presets: 'Presets', changed: 'Changed from the panel', 'logs:settings': 'Setting changes', orgsetup: 'Setup',
       orgroles: 'Roles & pay', orgmembers: 'Members', orgapps: 'Applications', orgfunds: 'Funds & cuts',
-      orgaccess: 'Contract access', orgnotices: 'Notices', orgwork: 'Work & channel', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
+      orgaccess: 'Contract access', orgnotices: 'Notices', orgwork: 'Work & channel', orgarmory: 'Armory',
+      orgrecord: 'Record & discipline', 'logs:org': 'Org audit', bpmatrix: 'Matrix',
       bplimits: 'Limits', bpoffice: 'Delegation & office', 'logs:grants': 'Grant history', locations: 'Map points',
       'logs:targets': 'Audit log', logs: 'Audit log', alerts: 'Alerts', health: 'Health', devsettings: 'Engine settings', console: 'Console',
       tools: 'Test tools', help: 'How it works', howto: 'How do I…', permissions: 'Who can do what' };
@@ -3188,7 +3189,8 @@ async function main() {
         await settled();
         sweep(app, 'the tools, run');
         // The new sections too: the organisation, Boss permissions and Locations.
-        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'logs:org',
+        for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork',
+          'orgarmory', 'orgrecord', 'logs:org',
           'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'howto']) {
           app.nav(view);
           await settled();
@@ -6991,6 +6993,122 @@ async function main() {
     });
   })();
 
+  /* ---- Armory, Record & discipline, the form: the organisation extras 2 ---- */
+  await (async function () {
+    const off = boot(orgServer());
+    off.open(FULL);
+    await settled();
+    off.nav('orgarmory');
+    await settled();
+    const armOff = off.main();
+    off.nav('orgrecord');
+    await settled();
+    it('EXTRAS 2: the armory and the record say they are off while orgGet carries none', function () {
+      has(armOff, 'The armory is switched off');
+      has(off.main(), 'The record and discipline is switched off');
+    });
+    const extras2 = { Armory: true, Stats: true, Discipline: true, Recruitment: true,
+      armory: { items: [{ slot: 2, name: 'lockpick', label: 'Lock ' + XSS, count: 4 }], allowed: ['lockpick'],
+        limits: { '0': 1 }, withdrawMax: 10, log: [{ at: NOW - 60, dir: 'out', item: 'lockpick', count: 1, who: XSS }] },
+      leaderboard: [{ rank: 1, name: XSS, ref: 'm1_1111', completed: 3, failed: 1, earned: 9000, rate: 75,
+        avgMinutes: 42, band: '30 min to 2 h' }],
+      discipline: [{ ref: 'm2_2222', name: XSS, strikes: 1, rows: [{ id: 'dc1_1', kind: 'strike', reason: 'Late ' + XSS,
+        at: NOW - 60, active: true, by: 'A boss' }] }],
+      disciplineRules: { decayDays: 30, suspendAt: 3, suspendHours: 48, demoteAt: 0 },
+      form: ['Why us?'], formMax: 2 };
+    const apps = [{ id: 'app:1', name: 'Ada', body: 'Hi', at: NOW - 60,
+      form: [{ q: 'Why us?', a: 'Pay ' + XSS }], note: { text: 'Calm', by: 'Staff' } }];
+    const app = boot(orgServer({ orgGet: orgOn({ extras2: extras2, applications: apps }) }));
+    app.open(FULL);
+    await settled();
+    app.nav('orgarmory');
+    await settled();
+    const armText = app.main();
+    const byAct = function (act, attr, value) {
+      return app.$$('[data-act="' + act + '"]').filter(function (b) {
+        return !attr || b.getAttribute(attr) === value;
+      })[0];
+    };
+    const bind = function (b) {
+      return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === b; })[0];
+    };
+    app.type(bind('org.arm.out.2'), '3');
+    app.click(byAct('org-arm-remove', 'data-id', '2'));
+    const removeAfterOne = app.requests('orgArmoryStock').length;
+    app.click(byAct('org-arm-remove', 'data-id', '2'));
+    await settled();
+    const removed = app.last('orgArmoryStock');
+    app.type(bind('org.arm.item'), 'lockpick');
+    app.type(bind('org.arm.count'), '5');
+    app.click(byAct('org-arm-stock'));
+    app.click(byAct('org-arm-stock'));
+    await settled();
+    const stocked = app.last('orgArmoryStock');
+    app.type(bind('org.arm.lim.1'), '2');
+    app.click(byAct('org-arm-limit', 'data-id', '1'));
+    app.click(byAct('org-arm-limit', 'data-id', '1'));
+    await settled();
+    it('workflow screen:admin.view:orgarmory — the armory removes, stocks and sets a limit on two clicks', function () {
+      has(armText, 'Lock ' + XSS);
+      has(armText, 'Allowed: lockpick');
+      eq(app.$$('img').length, 0);
+      eq(removeAfterOne, 0);
+      eq(removed.data, { remove: true, slot: 2, count: 3 });
+      eq(stocked.data, { item: 'lockpick', count: 5 });
+      eq(app.last('orgArmoryLimit').data, { grade: 1, count: 2 });
+    });
+    app.nav('orgrecord');
+    await settled();
+    const recText = app.main();
+    app.click(byAct('org-stats-reset', 'data-ref', 'm1_1111'));
+    app.click(byAct('org-stats-reset', 'data-ref', 'm1_1111'));
+    await settled();
+    const reset = app.last('orgStatsReset');
+    app.click(byAct('org-disc-give'));
+    const giveRefused = app.requests('orgStrike').length;
+    app.click(byAct('dd-open', 'data-dd', 'org-x2-member'));
+    app.click(app.$$('[data-act="dd-pick"]').filter(function (b) {
+      return b.getAttribute('data-dd') === 'org-x2-member' && b.getAttribute('data-value') === 'm1_1111';
+    })[0]);
+    app.click(byAct('org-x2-kind', 'data-value', 'warning'));
+    app.type(bind('org.disc.reason'), 'Loud');
+    app.click(byAct('org-disc-give'));
+    app.click(byAct('org-disc-give'));
+    await settled();
+    const gave = app.last('orgStrike');
+    app.type(bind('org.over.dc1_1'), 'Wrong member');
+    app.click(byAct('org-disc-over', 'data-id', 'dc1_1'));
+    app.click(byAct('org-disc-over', 'data-id', 'dc1_1'));
+    await settled();
+    it('workflow screen:admin.view:orgrecord — the record resets, a warning is given and a strike overturned', function () {
+      has(recText, '42 min (30 min to 2 h)');
+      has(recText, 'Late ' + XSS);
+      eq(app.$$('img').length, 0);
+      eq(reset.data, { member: 'm1_1111' });
+      eq(giveRefused, 0, 'nothing without a member and a reason');
+      eq(gave.data, { member: 'm1_1111', kind: 'warning', reason: 'Loud' });
+      eq(app.last('orgOverturn').data, { member: 'm2_2222', id: 'dc1_1', reason: 'Wrong member' });
+    });
+    app.nav('orgapps');
+    await settled();
+    const appText = app.main();
+    app.type(bind('org.form.q1'), 'Who vouches?');
+    app.click(byAct('org-form-save'));
+    app.click(byAct('org-form-save'));
+    await settled();
+    const saved = app.last('orgRecruitForm');
+    app.type(bind('org.note.app:1'), 'Knows the docks');
+    app.click(byAct('org-note-save', 'data-id', 'app:1'));
+    app.click(byAct('org-note-save', 'data-id', 'app:1'));
+    await settled();
+    it('EXTRAS 2: Applications shows the answers and the note, and saves the form and a note on two clicks', function () {
+      has(appText, 'Pay ' + XSS);
+      has(appText, 'Interview note (Staff): Calm');
+      eq(saved.data, { questions: ['Why us?', 'Who vouches?'] });
+      eq(app.last('orgInterviewNote').data, { id: 'app:1', text: 'Knows the docks' });
+    });
+  })();
+
   /* ---- read-only staff: every new write is disabled, and sends nothing ---- */
   await (async function () {
     const server = orgServer();
@@ -6998,8 +7116,8 @@ async function main() {
     app.open(READER);
     await settled();
     const writes = [];
-    for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork', 'bpmatrix',
-      'bplimits', 'bpoffice', 'locations']) {
+    for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgfunds', 'orgaccess', 'orgnotices', 'orgwork',
+      'orgarmory', 'orgrecord', 'bpmatrix', 'bplimits', 'bpoffice', 'locations']) {
       app.nav(view);
       await settled();
       app.$$('[data-gate]').forEach(function (b) {
@@ -7736,7 +7854,8 @@ async function main() {
     await settled();
     const single = [];
     for (const view of ['orgsetup', 'orgroles', 'orgmembers', 'orgapps', 'orgfunds', 'orgaccess', 'orgnotices',
-      'orgwork', 'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures', 'inbox', 'changed']) {
+      'orgwork', 'orgarmory', 'orgrecord', 'bpmatrix', 'bplimits', 'bpoffice', 'logs:grants', 'locations', 'measures',
+      'inbox', 'changed']) {
       app.nav(view);
       await settled();
       app.$$('[data-gate]').forEach(function (b) {

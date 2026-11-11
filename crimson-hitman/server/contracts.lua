@@ -2556,7 +2556,7 @@ local function walkAway(actor, contractId, opts)
     if active == 0 then dropMeeting(contractId) end
 
     -- Not a failure of theirs when staff took them off it.
-    if Record and not opts.staff then Record.onFailed(actor.cid) end
+    if Record and not opts.staff then Record.onFailed(actor.cid, { contractId = contractId }) end
 
     -- Anything holding state for this hitman on this contract is told.
     -- A handover they had armed is the one that matters: it does not pay
@@ -3590,7 +3590,10 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- ends, in finalise() and resolve().
 
     if Record then
-        Record.onCompleted(hitmanCid, fulfilment, reputation and reputation.factor or nil)
+        -- With what it paid them and how long they held it, for the
+        -- organisation's record (Config.Organisation.Stats).
+        Record.onCompleted(hitmanCid, fulfilment, reputation and reputation.factor or nil, { contractId = contractId,
+            earned = money, seconds = hitman.accepted_at and math.max(0, os.time() - hitman.accepted_at) or nil })
     end
     creditedClaims[contractId .. ':' .. slot] = true
 

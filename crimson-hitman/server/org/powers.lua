@@ -39,6 +39,10 @@ Powers.LIST = {
       about = 'Sign a member below you off probation before their completions are done.' },
     { code = 'M9', area = 'members', label = 'Force off duty', feature = 'Duty',
       about = 'Send a member below you off duty.' },
+    { code = 'M10', area = 'members', label = 'View member stats', feature = 'Stats',
+      about = 'See every member\'s completions, failures, earnings and reliability.' },
+    { code = 'M11', area = 'members', label = 'Issue strikes', feature = 'Discipline', limits = { 'StrikesPerDay' },
+      about = 'Give a member below you a strike or a written warning, with a reason.' },
     -- Roles
     { code = 'R1', area = 'roles', label = 'Create roles', office = true, limits = { 'MaxRoles', 'PayMax' },
       about = 'Add a role below your rank.' },
@@ -97,6 +101,13 @@ Powers.LIST = {
     { code = 'N2', area = 'notices', label = 'Applications', about = 'Read, accept or reject sign-ups.' },
     { code = 'N3', area = 'notices', label = 'Moderate channel', feature = 'Channel', limits = { 'ChannelMuteMaxHours' },
       about = 'Remove messages in the organisation channel and mute members below you.' },
+    { code = 'N4', area = 'notices', label = 'Edit application form', feature = 'Recruitment',
+      about = 'Set the questions an applicant answers.' },
+    -- Armory
+    { code = 'A1', area = 'armory', label = 'Manage armory', feature = 'Armory', limits = { 'ArmoryManagePerDay' },
+      about = 'Read the armory\'s log, and take out more than your role\'s limit a day.' },
+    { code = 'A2', area = 'armory', label = 'Set armory limits', feature = 'Armory', limits = { 'ArmoryWithdrawMax' },
+      about = 'Set how much each member of a role below you takes out of the armory a day.' },
     -- Settings
     { code = 'S1', area = 'settings', label = 'Organisation label', limits = { 'RenameCooldownMinutes' },
       about = 'Rename the organisation\'s display label (never the job name).' },
@@ -117,7 +128,7 @@ Powers.TAKE = 'TAKE'
 --- Plan names that are another code.
 Powers.ALIAS = { D1 = 'R4' }
 
-Powers.AREAS = { 'members', 'roles', 'pay', 'money', 'contracts', 'locations', 'notices', 'settings',
+Powers.AREAS = { 'members', 'roles', 'pay', 'money', 'contracts', 'locations', 'notices', 'armory', 'settings',
     'delegation' }
 
 Powers.BY_CODE = {}
@@ -163,6 +174,8 @@ Powers.LIMIT_KEYS = {
     SalaryMax = { min = 0, max = 1000000 }, PayrollPerDayMax = { min = 0, max = 100000000 },
     CodenameCooldownMinutes = { min = 0, max = 43200 },
     ChannelMuteMaxHours = { min = 0, max = 720 },
+    ArmoryWithdrawMax = { min = 0, max = 1000 }, ArmoryManagePerDay = { min = 0, max = 1000 },
+    StrikesPerDay = { min = 0, max = 100 },
 }
 
 --- One staff bound, clamped, from the organisation's own value or config.

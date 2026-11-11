@@ -5,6 +5,20 @@ are named by their place in `config/config.lua`; the README has the details.
 
 ## 1.2.0
 
+**Organisation extras 2** (each its own switch under `Config.Organisation`, off as shipped)
+- **Armory** (`Armory`, `ArmoryItems`): an ox_inventory stash only the app
+  reaches; members put in the items staff allow and take out their role's
+  limit a day; every move logged. Off with no inventory script, in one line.
+- **Record and leaderboard** (`Stats`): each member's completions, failures,
+  earnings and reliability, filling Your record; players see time bands only.
+- **Discipline** (`Discipline`): strikes and written warnings, decaying,
+  barring from contracts or demoting at their marks; only staff overturn.
+- **Recruitment** (`Recruitment`): a boss's application form, interview notes,
+  a cooldown after a decline and a cap an hour.
+- Five new Boss permissions rows (A1, A2, M10, M11, N4), off until staff allow
+  them; staff do all of it from Hitman organisation, Armory, Record &
+  discipline and Applications.
+
 **Organisation extras** (each its own switch under `Config.Organisation`, off as shipped)
 - **Contracts to the organisation** (`OrgContracts`): a placer may send a
   contract to the organisation; a boss assigns it to a member, and it goes on

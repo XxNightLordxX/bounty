@@ -88,6 +88,17 @@ function Record.level(record)
     return 1 + math.floor(completed / per)
 end
 
+--- Told of each outcome, where something listens (the organisation's
+--- own record, server/org/extras2.lua, sets it): observer(kind, cid, info)
+--- with kind 'completed' or 'failed'. It is asked in a pcall: whatever it
+--- does never touches the counters or a payout.
+Record.observer = nil
+
+local function observe(kind, cid, info)
+    local fn = Record.observer
+    if fn then pcall(fn, kind, cid, info) end
+end
+
 function Record.onContractPlaced(cid)
     Storage.bumpStat(cid, 'placed')
 end
@@ -97,8 +108,10 @@ end
 ---@param cid string
 ---@param fulfilment string
 ---@param factor number|nil the reputation factor (Record.factorFor), when on
-function Record.onCompleted(cid, fulfilment, factor)
+---@param info table|nil { contractId, earned, seconds } for the observer
+function Record.onCompleted(cid, fulfilment, factor, info)
     Storage.bumpStat(cid, 'completed')
+    observe('completed', cid, info)
 
     local cfg = Feature.block(PROGRESSION)
     if not cfg.Enabled then return end
@@ -129,8 +142,10 @@ function Record.onCompleted(cid, fulfilment, factor)
     end
 end
 
-function Record.onFailed(cid)
+---@param info table|nil { contractId } for the observer
+function Record.onFailed(cid, info)
     Storage.bumpStat(cid, 'failed')
+    observe('failed', cid, info)
 end
 
 --- The target outlived the contract: bought out, expired, or cancelled.

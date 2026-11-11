@@ -29,13 +29,14 @@ local Feature = CrimsonBoot.require('server.lib.feature')
 local Places = CrimsonBoot.require('server.places')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local Extras = CrimsonBoot.require('server.org.extras')
+local Extras2 = CrimsonBoot.require('server.org.extras2')
 
 --- The adapters answering now (server/adapters/): nil while none does.
 local function Framework() return Integrations.get('framework') end
 
 local Org = {}
 
-Org.Powers, Org.Engine, Org.Jobs, Org.Funds, Org.Extras = Powers, Engine, Jobs, Funds, Extras
+Org.Powers, Org.Engine, Org.Jobs, Org.Funds, Org.Extras, Org.Extras2 = Powers, Engine, Jobs, Funds, Extras, Extras2
 
 local deps
 
@@ -212,6 +213,19 @@ local function settingsOf(raw)
     s.orgContracts = type(s.orgContracts) == 'table' and s.orgContracts or {}
     s.probation = type(s.probation) == 'table' and s.probation or {}
     s.channelMutes = type(s.channelMutes) == 'table' and s.channelMutes or {}
+    -- Organisation extras 2 (server/org/extras2.lua): the armory's role
+    -- limits and short log, each member's counts, the discipline record
+    -- and the suspensions strikes made, the application form.
+    s.armory = type(s.armory) == 'table' and s.armory or {}
+    s.armory.limits = type(s.armory.limits) == 'table' and s.armory.limits or {}
+    s.armory.log = type(s.armory.log) == 'table' and s.armory.log or {}
+    s.stats = type(s.stats) == 'table' and s.stats or {}
+    s.discipline = type(s.discipline) == 'table' and s.discipline or {}
+    s.strikeSuspended = type(s.strikeSuspended) == 'table' and s.strikeSuspended or {}
+    s.recruit = type(s.recruit) == 'table' and s.recruit or {}
+    s.recruit.questions = type(s.recruit.questions) == 'table' and s.recruit.questions or {}
+    s.recruit.cooldowns = type(s.recruit.cooldowns) == 'table' and s.recruit.cooldowns or {}
+    s.recruit.notes = type(s.recruit.notes) == 'table' and s.recruit.notes or {}
     return s
 end
 
@@ -299,6 +313,7 @@ function Org.init(d)
     Jobs.reset()
     Funds.init({ storage = d.storage, audit = d.audit })
     Extras.init(d)
+    Extras2.init(d)
     Places.attach(d.storage)
     registerSpots()
     -- The money path's two hooks, which read one switch while it is off.
@@ -391,6 +406,7 @@ function Org.validate(warn)
     end
     if type(cfg.NpcModel) ~= 'string' or not cfg.NpcModel:match('^[%w_]+$') then back('NpcModel', 'must be a ped model name') end
     Extras.validate(warn)
+    Extras2.validate(warn)
     if type(cfg.Limits) ~= 'table' then
         back('Limits', 'must be a table')
     else
@@ -2579,7 +2595,7 @@ end
 
 --- A player asks to join (at a sign-up spot, where Config says so). One
 --- open application each.
-function Org.apply(actor, text)
+function Org.apply(actor, text, answers)
     local org = Org.current()
     if not org then return fail(ERR.OFF) end
     if org.members[actor.cid] then return fail(ERR.ALREADY) end
@@ -2590,8 +2606,16 @@ function Org.apply(actor, text)
     if Config.Organisation.ApplyAtSignupOnly ~= false and not atSignup(org, actor.source) then
         return fail(ERR.RULE, { message = 'Applications are taken only at a sign-up spot: stand at one, then apply.' })
     end
+    -- The form's answers, the cooldown and the hourly cap
+    -- (Config.Organisation.Recruitment): one comparison while it is off.
+    local body = text
+    if Extras2.on('Recruitment') then
+        local berr, bdata
+        body, berr, bdata = Extras2.applyBody(org, actor, text, answers)
+        if berr then return fail(berr, bdata) end
+    end
     local row = { id = ('app:%s:%d:%d'):format(org.id, now(), math.random(1000, 9999)):sub(1, 48), org_id = org.id,
-        cid = actor.cid, name = actor.name, body = text, state = 'open', created_at = now() }
+        cid = actor.cid, name = actor.name, body = body, state = 'open', created_at = now() }
     deps.storage.writeOrgRow('applications', row)
     org.applications[row.id] = row
     deps.audit.action('org_applied', actor.cid, nil, { org = org.id })
@@ -2606,7 +2630,10 @@ function Org.applications(who)
     if err then return fail(err) end
     local out = {}
     for _, a in pairs(org.applications) do
-        out[#out + 1] = { id = a.id, name = a.name, body = a.body, at = a.created_at }
+        local row = { id = a.id, name = a.name, body = a.body, at = a.created_at }
+        -- The form's answers and the interview note (Recruitment).
+        Extras2.applicationView(org, a, row)
+        out[#out + 1] = row
     end
     table.sort(out, function(a, b) return (a.at or 0) < (b.at or 0) end)
     return true, nil, { rows = out }
@@ -2646,6 +2673,8 @@ function Org.decide(who, id, accept)
     deps.storage.writeOrgRow('applications', row)
     org.applications[row.id] = nil
     record('org_application', who, { member = row.cid, accepted = accept })
+    -- The interview note dropped, a declined applicant's cooldown begun.
+    Extras2.decided(org, row, accept)
     local applicant = deps.identity.byCitizenId(row.cid)
     if applicant then Org.pushSpots(applicant.source) end
     return true
@@ -2730,6 +2759,7 @@ local function memberView(org, viewer, m, full)
         boss = role and role.is_boss or nil,
     }
     Extras.memberView(org, m, out)
+    Extras2.memberView(org, m, out, full)
     if full then
         out.grants, out.denies = {}, {}
         for code, entry in pairs(m.grants) do
@@ -2790,12 +2820,15 @@ function Org.mine(actor)
     if not member then
         local open = false
         for _, a in pairs(org.applications) do if a.cid == actor.cid then open = true end end
-        return { enabled = true, member = false, label = org.label, applied = open or nil,
+        local outside = { enabled = true, member = false, label = org.label, applied = open or nil,
             invite = Org.inviteFor(actor.cid),
             -- Where they may apply from: anywhere, or only at a sign-up spot
             -- (and whether they stand at one now, by the server's own look).
             signupOnly = Config.Organisation.ApplyAtSignupOnly ~= false or nil,
             atSignup = (Config.Organisation.ApplyAtSignupOnly ~= false and atSignup(org, actor.source)) or nil }
+        -- The application form (Config.Organisation.Recruitment), while on.
+        Extras2.outside(org, actor.cid, outside)
+        return outside
     end
     local role = org.roles[member.grade]
     local held = Engine.held(org, actor.cid)
@@ -2827,12 +2860,13 @@ function Org.mine(actor)
             and org.settings.codenames[actor.cid].by ~= 'self' or nil,
         payroll = Org.payrollOn() and { salary = Org.salaryOf(org, member.grade),
             nextIn = org.settings.payroll.nextAt and math.max(0, org.settings.payroll.nextAt - now()) or nil } or nil,
-        -- Placeholder: a member's own record lands here (plan R11).
-        stats = nil,
     }
     -- Duty, probation, assigned contracts, approvals and the channel, each
     -- only while its switch is on (server/org/extras.lua).
     Extras.mine(org, member, out)
+    -- The record and leaderboard, discipline, the armory and recruitment,
+    -- each only while its switch is on (server/org/extras2.lua).
+    Extras2.mine(org, member, out)
     return out
 end
 
@@ -2921,11 +2955,33 @@ function Org.staffView(viewer)
     }
     -- Organisation extras (server/org/extras.lua), each only while on.
     Extras.staffView(org, viewer, view)
+    Extras2.staffView(org, viewer, view)
     return view
 end
 
 Extras.attach(Org, {
     fail = fail, record = record, save = function() saveOrgRow() end, deps = function() return deps end,
+})
+
+--- Move a member one role, as discipline does (StrikeDemoteAt): told to
+--- qbx_core, saved, on the record as the strikes' doing.
+---@return boolean
+local function setGrade(org, cid, grade)
+    local member = org.members[cid]
+    if not member or not org.roles[grade] then return false end
+    local done = Jobs.setMember(org, cid, grade, false)
+    if not done then return false end
+    local from = member.grade
+    member.grade = grade
+    saveMember(member)
+    deps.audit.action('org_member_role', cid, nil, { org = org.id, member = cid, from = from, to = grade,
+        by = 'discipline' })
+    return true
+end
+
+Extras2.attach(Org, {
+    fail = fail, record = record, save = function() saveOrgRow() end, deps = function() return deps end,
+    saveMember = saveMember, setGrade = setGrade,
 })
 
 return Org

@@ -31,12 +31,13 @@ Integrations.KINDS = {
     { kind = 'framework', key = 'Framework', side = 'server', required = true,
       without = 'players, jobs and money cannot be read: the resource waits for it and does nothing' },
     { kind = 'inventory', key = 'Inventory', side = 'server',
-      without = 'item, weapon and dirty-money rewards, burner phones and proof items are off; '
-          .. 'cash and bank rewards work',
+      without = 'item, weapon and dirty-money rewards, burner phones, proof items and the organisation\'s '
+          .. 'armory are off; cash and bank rewards work',
       needed = function(c)
           local s = c.Sources or {}
           local on = function(t) return type(t) == 'table' and t.enabled == true end
-          return on(s.item) or on(s.weapon) or on(s.dirty)
+          local org = type(c.Organisation) == 'table' and c.Organisation or {}
+          return on(s.item) or on(s.weapon) or on(s.dirty) or (org.Enabled == true and org.Armory == true)
       end },
     { kind = 'target', key = 'Target', side = 'client',
       without = 'step markers and organisation spots have no third-eye option; the map markers still show',
