@@ -491,6 +491,48 @@ paste the reference `docs_spec` prints over `docs/configuration.md`'s. `config_l
 collation under concurrent writes, and performance under real load. That is
 [in-game-checklist.md](in-game-checklist.md).
 
+### Real database check
+
+Not part of `tests/all.sh`: it needs a database server. It starts a
+throwaway MariaDB (its own data directory, a socket only, deleted at the
+end) and checks the mysql store against it:
+
+```bash
+pip install pymysql                          # once
+sh tools/db_check.sh                         # everything, about half an hour
+CH_SUITES=storage_spec sh tools/db_check.sh  # only those suites' statements, in seconds
+DB_SOCKET=/path/to/sock sh tools/db_check.sh # a server already running (root, no password)
+```
+
+1. `install/sql/crimson_hitman.sql` imports into an empty utf8mb4 database,
+   again on top of itself, and into a latin1 one; every table is InnoDB and
+   every text column `utf8mb4_unicode_ci`.
+2. What `MySQLStore.migrate` sends to a database an old version left at its
+   oldest (every table its key only, on MyISAM, in latin1, escrow's old
+   `portion` column with a row) runs there and leaves exactly the tables,
+   columns, defaults and indexes of a fresh install, with the row kept.
+3. `tools/db_trace.lua` runs the server suite with `mysql_exec.lua`
+   watched and writes every statement the store sent, its `?` filled in as
+   oxmysql fills them, with the stand-in's answer. `tools/db_replay.py`
+   runs them in order on the real server (as oxmysql connects: utf8mb4,
+   `FOUND_ROWS`, `IGNORE_SPACE`, transactions as the stand-in settled
+   them) and fails on a statement either side refused that the other ran;
+   every distinct statement is also `PREPARE`d against the schema. Rows and
+   counts that differ are listed by test in the report, for reading: a test
+   that writes rows into the stand-in by hand (`Exec.tables`) differs from
+   there on, and rows tied on an `ORDER BY` column come back in either order.
+4. Every keyword the server knows, tried as an unquoted column name: each
+   one it refuses is in `tests/harness/reserved_words.lua`.
+
+A difference it finds belongs in `mysql_exec.lua` (or the store) with a test
+in the normal suite, so the suite catches it without a database. Last run on
+MariaDB 10.11.14: 1.37 million statements, 280 shapes, no refusals either
+side; it found the stand-in ignoring a `LIMIT 1` written in the statement,
+not sorting an `ORDER BY` through a table alias (`c.resolved_at`) and
+reading an unquoted `= 0` back as the text `'0'` (all fixed, with a test in
+`storage_spec`). What it still lists is rows tied on their `ORDER BY` column
+and the rows tests wrote into the stand-in by hand.
+
 ## Release build
 
 `tools/release.lua` makes what a server owner (or the escrow upload) gets:

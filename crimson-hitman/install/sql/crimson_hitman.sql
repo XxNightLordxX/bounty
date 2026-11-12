@@ -12,7 +12,7 @@
 --
 -- mysql is the shipped mode; in json mode nothing here is used.
 --
--- The 33 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
+-- The 32 tables: crimson_contracts, crimson_escrow, crimson_hitmen,
 -- crimson_amendments, crimson_messages, crimson_ledger, crimson_pending,
 -- crimson_stats, crimson_audit, crimson_reveals, crimson_placer_informants,
 -- crimson_mutes, crimson_photos, crimson_review, crimson_settings,

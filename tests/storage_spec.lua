@@ -1045,6 +1045,22 @@ describe('the mysql executor refuses a statement it cannot read', function()
         eq(#exec.run("SELECT * FROM t WHERE tag <> 'x'", {}), 1, 'an inequality')
     end)
 
+    --- Both found by running the suite's statements on a real MariaDB
+    --- (tools/db_check.sh): the real server answered one row and a number.
+    it('answers as the server does to a LIMIT and a number written in the statement', function()
+        local exec = loaded()
+        eq(#exec.run('SELECT id FROM t LIMIT 1'), 1, 'LIMIT 1 is one row, not every row')
+        exec.run("UPDATE t SET n = 0, tag = '7' WHERE id = ?", { 'a' })
+        local row = exec.run('SELECT * FROM t WHERE id = ?', { 'a' })[1]
+        eq(math.type(row.n), 'integer', 'an unquoted 0 reads back as the number 0, not the text')
+        eq(row.n, 0)
+        eq(row.tag, '7', 'and a quoted one as the text')
+        exec.run('INSERT INTO t (id, n, tag) VALUES (?, ?, ?)', { 'c', -5, 'z' })
+        local sorted = exec.run('SELECT x.id FROM t x WHERE x.n < ? ORDER BY x.n LIMIT ?', { 10, 2 })
+        eq(#sorted, 2)
+        eq(sorted[1].id .. sorted[2].id, 'ca', 'ORDER BY through an alias sorts by the column')
+    end)
+
     it('evaluates a correlated NOT EXISTS against the other table', function()
         local exec = loaded()
         exec.run('CREATE TABLE IF NOT EXISTS u (id VARCHAR(32) PRIMARY KEY, t_id VARCHAR(32), state VARCHAR(8))')
@@ -2908,8 +2924,12 @@ describe('the install SQL', function()
 
         local handle = io.open('crimson-hitman/install/sql/crimson_hitman.sql', 'r')
         truthy(handle, 'install/sql/crimson_hitman.sql must ship')
-        local shipped = statements(handle:read('a'))
+        local text = handle:read('a')
+        local shipped = statements(text)
         handle:close()
+        -- Its header counts them for the owner reading it: it said 33 over
+        -- 32 statements.
+        eq(tonumber(text:match('%-%- The (%d+) tables:')), #ran, 'the header counts the tables it makes')
 
         eq(#ran, 32, 'the thirty-two crimson_* tables (the eight organisation tables the latest, its channel '
             .. 'the newest; its spots are map_place rows)')

@@ -704,8 +704,12 @@ local function update(sql, params)
                 delta = tonumber((delta:gsub('%s', ''))),
             }
         else
-            assignments[#assignments + 1] =
-                { column = column, literal = trimmed:gsub("^'", ''):gsub("'$", '') }
+            -- A quoted literal is text; an unquoted number is a number, as
+            -- the server hands it back (`bailout_attempts = 0` read back as
+            -- the string '0' here, and as 0 on MariaDB).
+            local literal = trimmed:match("^'(.*)'$") or math.tointeger(tonumber(trimmed))
+                or tonumber(trimmed) or trimmed
+            assignments[#assignments + 1] = { column = column, literal = literal }
         end
     end
 
@@ -839,8 +843,12 @@ local function select_(sql, params)
         out = only
     end
 
-    local orderBy = sql:match('ORDER BY ([%w_, ]+)')
+    -- A column may be named through its table's alias (`ORDER BY
+    -- c.resolved_at`): the alias is not a column, and sorting by it left
+    -- the rows unsorted.
+    local orderBy = sql:match('ORDER BY ([%w_%., ]+)')
     if orderBy then
+        orderBy = orderBy:gsub('[%w_]+%.', '')
         local columns, descending = {}, sql:find('DESC') ~= nil
         for column in orderBy:gmatch('[%w_]+') do
             if column:upper() ~= 'DESC' and column:upper() ~= 'ASC' then
@@ -854,6 +862,11 @@ local function select_(sql, params)
     if limit then
         local n = tonumber(params[#params]) or #out
         while #out > n do table.remove(out) end
+    end
+    -- And a LIMIT written in the statement (`SELECT id FROM t LIMIT 1`).
+    local fixed = tonumber(sql:match('LIMIT (%d+)%s*$'))
+    if fixed then
+        while #out > fixed do table.remove(out) end
     end
 
     return out
