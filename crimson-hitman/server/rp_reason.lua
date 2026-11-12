@@ -22,10 +22,36 @@ local Reason = {}
 
 local deps
 
---- The reason as words: lower case, anything but letters and digits a gap.
+--- Lower case, for the scripts a reason is commonly written in beyond
+--- ASCII: Latin-1 letters, Greek and Cyrillic capitals. string.lower knows
+--- ASCII alone, so 'ФИГНЯ' never matched a LowEffort 'фигня'. Text that is
+--- not valid UTF-8 is lowered as ASCII only.
+local function lower(text)
+    text = text:lower()
+    if not text:find('[\128-\255]') then return text end
+    local ok, out = pcall(function()
+        local chars = {}
+        for _, c in utf8.codes(text) do
+            if (c >= 0xC0 and c <= 0xDE and c ~= 0xD7) or (c >= 0x391 and c <= 0x3AB and c ~= 0x3A2)
+                or (c >= 0x410 and c <= 0x42F) then
+                c = c + 0x20
+            elseif c >= 0x400 and c <= 0x40F then
+                c = c + 0x50
+            end
+            chars[#chars + 1] = utf8.char(c)
+        end
+        return table.concat(chars)
+    end)
+    return ok and out or text
+end
+
+--- The reason as words: lower case, split at spaces and ASCII punctuation.
+--- Not at every byte %w does not know: that is every byte of a letter
+--- outside ASCII, so a Cyrillic or Greek reason counted no words at all and
+--- a Polish one a word at each accented letter.
 local function words(text)
     local out = {}
-    for word in text:lower():gsub('[^%w]+', ' '):gmatch('%S+') do out[#out + 1] = word end
+    for word in lower(text):gsub('[%s%p]+', ' '):gmatch('%S+') do out[#out + 1] = word end
     return out
 end
 
@@ -106,7 +132,11 @@ function Reason.validate(warn)
     local block = Config.Roleplay.ReasonQuality
     local most = Config.Reason and tonumber(Config.Reason.MaxLength)
     if most and block.MinLength > most then
-        warn[#warn + 1] = (L('rp_reason.roleplay_reasonquality_minlength_is_above_reason')):format(block.MinLength, most, most)
+        -- %s, not %d: a MaxLength of 0.5 or math.huge raised here.
+        local shown = (most == math.floor(most) and most == most and math.abs(most) < 2^53)
+            and ('%d'):format(most) or tostring(most)
+        warn[#warn + 1] = (L('rp_reason.roleplay_reasonquality_minlength_is_above_reason'))
+            :format(tostring(block.MinLength), shown, shown)
         block.MinLength = math.floor(most)
     end
 end

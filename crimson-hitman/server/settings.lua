@@ -1089,7 +1089,7 @@ local CATALOGUE = {
       kind = 'number', integer = true, min = 320, max = 4096, label = L('settings.photo_longest_side_px'),
       about = L('settings.server_storage'), inflight = AT_USE },
     { key = 'Completion.PhotoMaxBytes', section = 'limits', category = 'developer', group = 'Completion',
-      kind = 'number', integer = true, min = 10000, max = 10000000, label = L('settings.largest_photo_bytes'),
+      kind = 'number', integer = true, min = 50000, max = 1500000, label = L('settings.largest_photo_bytes'),
       about = L('settings.server_storage'), inflight = AT_USE },
     { key = 'Completion.PhotoHostRefreshSeconds', section = 'limits', category = 'developer',
       group = 'Completion', kind = 'number', integer = true, min = 30, max = 86400,
@@ -1133,6 +1133,32 @@ local CATALOGUE = {
 --- and 'auto' (and 'none', but for the framework). A resource name is never
 --- typed in here, so nothing can be made to call an export it was not
 --- written for.
+--- Each kind's name and what happens without one, in the language in force:
+--- shared/integrations.lua keeps its English for the console line alone.
+--- [kind] = { name, without }
+local INTEGRATION_WORDS = {
+    framework = { L('integrations.framework_name'), L('integrations.framework_without') },
+    inventory = { L('integrations.inventory_name'), L('integrations.inventory_without') },
+    target = { L('integrations.target_name'), L('integrations.target_without') },
+    dispatch = { L('integrations.dispatch_name'), L('integrations.dispatch_without') },
+    ambulance = { L('integrations.ambulance_name'), L('integrations.ambulance_without') },
+    banking = { L('integrations.banking_name'), L('integrations.banking_without') },
+    phone = { L('integrations.phone_name'), L('integrations.phone_without') },
+    keys = { L('integrations.keys_name'), L('integrations.keys_without') },
+    garage = { L('integrations.garage_name'), L('integrations.garage_without') },
+    mugshot = { L('integrations.mugshot_name'), L('integrations.mugshot_without') },
+    clothing = { L('integrations.clothing_name'), L('integrations.clothing_without') },
+    progression = { L('integrations.progression_name'), L('integrations.progression_without') },
+}
+
+--- What a kind's words are, for the Setup page (server/setup.lua).
+---@param kind string
+---@return string|nil without
+function Settings.integrationWithout(kind)
+    local words = INTEGRATION_WORDS[kind]
+    return words and words[2] or nil
+end
+
 local INTEGRATION_ABOUT = {
     Framework = L('settings.players_jobs_and_money_required_so'),
     Banking = L('settings.where_the_organisations_funds_are_kept'),
@@ -1150,12 +1176,16 @@ for _, spec in ipairs(Integrations.KINDS) do
     elseif client then
         inflight = L('settings.sent_to_every_players_game_at')
     end
+    local words = INTEGRATION_WORDS[spec.kind] or { spec.kind, spec.without }
     CATALOGUE[#CATALOGUE + 1] = {
         key = 'Integrations.' .. spec.key, section = 'limits', category = 'developer', group = 'Other scripts',
         kind = 'choice', choices = choices, client = client or nil, live = spec.required and false or nil,
-        label = L('settings.other_scripts') .. spec.kind,
+        -- The kind and what happens without one, in the language in force
+        -- (integrations.<kind>_name, _without): shared/integrations.lua
+        -- keeps its English for the console line alone.
+        label = L('settings.other_scripts') .. words[1],
         about = (INTEGRATION_ABOUT[spec.key] or '') .. (INTEGRATION_ABOUT[spec.key] and ' ' or '')
-            .. L('settings.auto_the_first_installed_and_started') .. spec.without .. '.',
+            .. L('settings.auto_the_first_installed_and_started') .. words[2] .. '.',
         inflight = inflight,
     }
 end
@@ -2010,6 +2040,42 @@ end
 ---@return boolean
 function Settings.same(a, b) return same(a, b) end
 
+--- A batch of values checked as Settings.boot loads them: in `keys` order,
+--- then again in passes, each key refused retried against every value
+--- accepted so far, until a pass accepts nothing more. Checked once, a key
+--- refused against the live value of another the same batch changes (one
+--- of a linked pair, Buyout pricing's least and most) was refused, and
+--- the batch applied half the pair. Every batch the panel applies (an
+--- import, a preset, the setup) checks through here and sets in the order
+--- returned, so each set sees the ones before it live.
+---@param keys string[] in Settings.order order
+---@param valueFor fun(key: string): any the raw value for a key
+---@return table[] accepted { { key, value } } in the order they were accepted
+---@return table[] refused { { key, why } } with the last pass's refusal
+---@return table with every accepted key's checked value
+function Settings.checkInPasses(keys, valueFor)
+    local accepted, with, waiting = {}, {}, {}
+    for _, key in ipairs(keys) do waiting[#waiting + 1] = { key = key } end
+    local progressed = true
+    while progressed and #waiting > 0 do
+        progressed = false
+        local still = {}
+        for _, w in ipairs(waiting) do
+            local value, _, why = Settings.check(w.key, Util.copy(valueFor(w.key)), with)
+            if value == nil then
+                w.why = tostring(why or 'refused')
+                still[#still + 1] = w
+            else
+                progressed = true
+                with[w.key] = value
+                accepted[#accepted + 1] = { key = w.key, value = value }
+            end
+        end
+        waiting = still
+    end
+    return accepted, waiting, with
+end
+
 --- Whether a start-up line names a key: in full, or by its last part where
 --- no other key on the list ends in it ('MinMultiplier', not 'Enabled').
 local lastParts = {}
@@ -2122,7 +2188,7 @@ local function normalise(entry, raw, config)
     if entry.kind == 'text' then
         if type(raw) ~= 'string' or #raw == 0 or #raw > (entry.maxLength or 64)
             or not raw:match(entry.pattern or '^[%w_%-]+$') then
-            return nil, (L('settings.has_to_be_up_to_long')):format(entry.says or 'letters, digits, - and _ only',
+            return nil, (L('settings.has_to_be_up_to_long')):format(entry.says or L('settings.letters_digits_dash_underscore_only'),
                 entry.maxLength or 64)
         end
         return raw
@@ -2704,7 +2770,7 @@ end
 ---@param value any
 ---@return string
 function Settings.describe(value)
-    if type(value) == 'boolean' then return value and 'on' or 'off' end
+    if type(value) == 'boolean' then return value and L('settings.on') or L('settings.off') end
     -- A range ({ min, max }): table.concat reads only a list, so every
     -- range read '[]' and compared equal to every other.
     if type(value) == 'table' and value.min ~= nil and value.max ~= nil and value[1] == nil then

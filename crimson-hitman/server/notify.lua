@@ -72,6 +72,11 @@ local paranoidUntil = {}
 --- before it (Notify.rearm).
 local revealAt = {}
 
+--- [contractId] = { hidden = the reveal time it still had, or nil, at =
+--- os.time() it ended }: what an ended contract's wait was when it ended,
+--- kept for Nearby (Notify.wasShownBefore) as long as Nearby reads it.
+local endedReveal = {}
+
 --- [targetCid] = the paranoid alert waiting out its delay, and the
 --- contracts it stands for: { ids = { [contractId] = os.time() it falls due
 --- for that one }, due = the earliest of them }. It goes only while one of
@@ -109,6 +114,7 @@ function Notify.init(deps)
     waiting = {}
     paranoidUntil = {}
     revealAt = {}
+    endedReveal = {}
     pendingAlert = {}
     viewOptIn, viewTold, viewWaiting = {}, {}, {}
     -- Police & press (server/police.lua) tells officers through this.
@@ -758,6 +764,24 @@ function Notify.shownToTarget(contract)
     return true
 end
 
+--- Whether a contract's target had been shown it by `t` (its end, for
+--- Nearby): from the wait drawn for it when it was placed, kept past its
+--- end (Notify.clearContract). One this process did not see end (it ended
+--- before a restart) is read from the longest wait now in force, as before.
+---@param contract table
+---@param t integer os.time()
+---@return boolean
+function Notify.wasShownBefore(contract, t)
+    if type(contract) ~= 'table' then return false end
+    local e = endedReveal[contract.id]
+    if e then return e.hidden == nil or e.hidden <= t end
+    local at = revealAt[contract.id]
+    if at then return at <= t end
+    local wait = Config.Notifications.ParanoidAlertJitter
+    local longest = type(wait) == 'table' and tonumber(wait.max) or 0
+    return (tonumber(t) or 0) - (tonumber(contract.created_at) or tonumber(t) or 0) >= longest
+end
+
 --- Tell the target of a contract that a hitman on it bought an informant tip
 --- (server/intel/tip.lua): through the notice budget, as any news, kept
 --- past it rather than dropped, and their open app moved on (a push that
@@ -1221,11 +1245,19 @@ function Notify.outstandingDelivered(cid, count, summary)
         local money = math.floor(tonumber(summary.money) or 0)
         local goods = math.floor(tonumber(summary.goods) or 0)
         local left = math.floor(tonumber(summary.left) or 0)
-        local parts = {}
-        if money > 0 then parts[#parts + 1] = Words.dollars(money, 'before') end
-        if goods > 0 then parts[#parts + 1] = L('notify.item'):format(goods) end
-        local what = table.concat(parts, ' and ')
-        if what == '' then what = L('notify.payment'):format(count) end
+        -- Money and goods together in the locale's own words (notify.and_item,
+        -- as the receipt says them): joined with ' and ' here, they were
+        -- English in any language.
+        local what
+        if money > 0 and goods > 0 then
+            what = L('notify.and_item'):format(Words.dollars(money, 'before'), goods)
+        elseif money > 0 then
+            what = Words.dollars(money, 'before')
+        elseif goods > 0 then
+            what = L('notify.item'):format(goods)
+        else
+            what = L('notify.payment'):format(count)
+        end
         body = L('notify.you_were_owed_arrived'):format(what,
             (money > 0 and goods == 0) and L('notify.has') or L('notify.have'))
             .. (left > 0 and L('notify.more_still_waiting_for_you'):format(left,
@@ -1363,7 +1395,8 @@ local function hitmanNotice(contract, ending, outcome)
         -- contract having paid them nothing.
         local paid = math.floor(tonumber(outcome.claims) or 0)
         local collected = paid > 0
-            and L('notify.you_were_paid_for_collection_on'):format(paid, paid == 1 and '' or 's')
+            and L(paid == 1 and 'notify.you_were_paid_for_collection_on_one'
+                or 'notify.you_were_paid_for_collection_on_many'):format(paid)
             or ''
         return L('notify.contract_expired'), (outcome.forfeited
             and L('notify.the_deadline_on_your_contract_on'):format(target)
@@ -1784,6 +1817,19 @@ function Notify.clearPlayer(cid)
 end
 
 function Notify.clearContract(contractId, contract)
+    -- The wait it was drawn, kept past its end: whether the target had been
+    -- shown it is decided from that, not from the setting in force later
+    -- (Notify.wasShownBefore). Pruned as Nearby stops reading it.
+    if contractId ~= nil then
+        local now = os.time()
+        local keep = math.max(0, tonumber(Config.Targeting and Config.Targeting.NearbyClosedAfterSeconds) or 0)
+        for id, e in pairs(endedReveal) do
+            if now - e.at > keep then endedReveal[id] = nil end
+        end
+        if keep > 0 and not endedReveal[contractId] then
+            endedReveal[contractId] = { hidden = revealAt[contractId], at = now }
+        end
+    end
     revealAt[contractId] = nil
     told[contractId] = nil
     -- A kept "New message" about it (Notify.keepMessageNotice): its thread
@@ -1835,7 +1881,9 @@ function Notify.clearContract(contractId, contract)
     -- or UseDispatch off while one was up left it there for good. Clearing
     -- an id never filed does nothing. In a thread of its own: the export
     -- waits on the database, and this is the end of a settlement.
-    if contract and contract.target_protected and Integrations.has('dispatch') then
+    -- Not only while a dispatch script is chosen: one set to 'none' after
+    -- the advisory went up left it there (Police.clear asks every one up).
+    if contract and contract.target_protected then
         for _, stage in ipairs({ 'posted', 'accepted', 'tip' }) do
             local uid = 'ch-' .. contractId .. '-' .. stage
             CreateThread(function() Police.clear(uid) end)

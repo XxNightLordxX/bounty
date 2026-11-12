@@ -579,6 +579,17 @@ local function checkPhotoAddress(warn)
     end
 end
 
+--- A number as a warning shows it: whole numbers without a fraction,
+--- anything else (0.5, math.huge) as Lua writes it. %d raised on either,
+--- and the start stopped inside the check meant to correct the value.
+local function shownNumber(value)
+    local n = tonumber(value)
+    if n and n == n and n ~= math.huge and n ~= -math.huge and n == math.floor(n) and math.abs(n) < 2^53 then
+        return ('%d'):format(n)
+    end
+    return tostring(value)
+end
+
 local function validateConfig(quiet)
     local fatal, warn = {}, {}
     -- What is worth knowing and wrong with nothing: printed with
@@ -823,7 +834,7 @@ local function validateConfig(quiet)
             local value = type(holder) == 'table' and tonumber(holder[key]) or nil
             if value and value > INT_MAX then
                 warn[#warn + 1] = (L('main.config_is_mysql_mode_keeps_money'))
-                    :format(table.concat(path, '.'), value == math.huge and 'infinite'
+                    :format(table.concat(path, '.'), value == math.huge and L('main.infinite')
                         or ('%.0f'):format(value))
                 holder[key] = INT_MAX
             end
@@ -891,7 +902,7 @@ local function validateConfig(quiet)
 
     if Config.Ledger.Depth > Config.Ledger.MaxDepthHardCap then
         warn[#warn + 1] = (L('main.ledger_depth_exceeds_the_hard_cap'))
-            :format(Config.Ledger.Depth, Config.Ledger.MaxDepthHardCap)
+            :format(shownNumber(Config.Ledger.Depth), shownNumber(Config.Ledger.MaxDepthHardCap))
     end
 
     -- A deadline past the lifetime is one that never arrives: the contract
@@ -899,7 +910,7 @@ local function validateConfig(quiet)
     -- back, so the penalty a hitman agreed to could never be taken.
     if Config.Limits.DefaultDeadlineSeconds > Config.Limits.ContractLifetimeSeconds then
         warn[#warn + 1] = (L('main.limits_defaultdeadlineseconds_is_longer_than_contractlifetimeseconds'))
-            :format(Config.Limits.DefaultDeadlineSeconds, Config.Limits.ContractLifetimeSeconds)
+            :format(shownNumber(Config.Limits.DefaultDeadlineSeconds), shownNumber(Config.Limits.ContractLifetimeSeconds))
         Config.Limits.DefaultDeadlineSeconds = Config.Limits.ContractLifetimeSeconds
     end
 
@@ -1120,8 +1131,8 @@ local function validateConfig(quiet)
     minReward = math.floor(minReward)
     local maxValue = tonumber(Config.MaxContractValue)
     if maxValue and minReward > maxValue then
-        warn[#warn + 1] = (L('main.limits_mincontractreward_is_above_maxcontractvalue_so')):format(minReward, maxValue,
-                math.floor(maxValue))
+        warn[#warn + 1] = (L('main.limits_mincontractreward_is_above_maxcontractvalue_so')):format(
+                shownNumber(minReward), shownNumber(maxValue), shownNumber(math.floor(maxValue)))
         minReward = math.floor(maxValue)
     end
     Config.Limits.MinContractReward = minReward
@@ -1239,7 +1250,7 @@ local function validateConfig(quiet)
         and type(provider.resource) == 'string' and provider.resource ~= ''
         and type(provider.export) == 'string' and provider.export ~= '') then
         warn[#warn + 1] = (L('main.immunity_playtimeprovider_has_to_be_resource')):format(type(provider) == 'table'
-                and L('main.missing_its_resource_or_export') or ('a ' .. type(provider)))
+                and L('main.missing_its_resource_or_export') or (L('main.a_value_of_type')):format(type(provider)))
         Config.Immunity.PlaytimeProvider = nil
     end
 
@@ -1256,7 +1267,7 @@ local function validateConfig(quiet)
         Config.Kidnap.RestraintProvider = restraint.resource
     elseif restraint ~= nil and not (type(restraint) == 'string' and restraint ~= '') then
         warn[#warn + 1] = (L('main.kidnap_restraintprovider_has_to_be_the'))
-            :format(type(restraint) == 'string' and 'empty' or ('a ' .. type(restraint)))
+            :format(type(restraint) == 'string' and L('main.empty') or (L('main.a_value_of_type')):format(type(restraint)))
         Config.Kidnap.RestraintProvider = nil
     end
 

@@ -174,13 +174,15 @@ end
 --- to do. The hitman's words never say who placed it.
 local function tell(cid, role, contract, moved)
     local target = contract.target_name or L('meeting.your_target')
-    local intro
+    -- Whole sentences, one for each party and each of set and moved: the
+    -- verb slotted in was English whatever the language.
+    local key
     if role == 'placer' then
-        intro = (L('meeting.your_meeting_point_for_the_contract')):format(target,
-            moved and 'moved' or 'set')
+        key = moved and 'meeting.placer_point_moved' or 'meeting.placer_point_set'
     else
-        intro = (L('meeting.the_person_who_placed_your_contract')):format(target, moved and 'moved' or 'set')
+        key = moved and 'meeting.hitman_point_moved' or 'meeting.hitman_point_set'
     end
+    local intro = (L(key)):format(target)
     Notify.toCitizen(cid, moved and L('meeting.meeting_point_moved') or L('meeting.meeting_point_set'),
         intro .. ' ' .. Meeting.steps(role), { contractId = contract.id })
 end

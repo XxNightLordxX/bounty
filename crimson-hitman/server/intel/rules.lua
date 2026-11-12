@@ -178,6 +178,8 @@ end
 
 --- Read the pending warnings and the dark targets once, at the start or
 --- the first use; a read that raises is tried again at the next use.
+local arm
+
 local function load()
     if loaded or not Storage or not Storage.readRpRows then return end
     local okW, warns = pcall(Storage.readRpRows, IntelRules.KIND_WARN)
@@ -187,6 +189,12 @@ local function load()
     for _, row in ipairs(warns) do
         if row.tip_id then pending[row.tip_id] = row end
     end
+    -- Every warning read is armed here, whoever read it: a start whose
+    -- read raised left the next use (a target's card) to load them, and
+    -- only the start armed what it loaded, so they waited for good, never
+    -- sent and the tip never on the target's card. arm() skips one with a
+    -- timer already.
+    for _, row in pairs(pending) do arm(row) end
     for _, row in ipairs(darks) do
         -- A row still pending was written for a purchase that never
         -- finished (IntelRules.goDark): its charge was refused or never made,
@@ -221,7 +229,7 @@ local function send(row)
     pcall(Storage.deleteRpRow, row.id)
 end
 
-local function arm(row)
+arm = function(row)
     if timers[row.tip_id] then return end
     local left = math.max(0, (tonumber(row.due_at) or 0) - os.time())
     timers[row.tip_id] = SetTimeout(left * 1000, function()

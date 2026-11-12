@@ -32,9 +32,9 @@ local AUDIT_ROWS = 500
 local AUDIT_MONEY = {
     bailout_paid            = { way = 'out', kind = L('history.buyouts_paid'), field = 'amount' },
     bailout_refunded        = { way = 'in', kind = L('history.buyouts_refunded'), field = 'amount' },
-    informant_purchased     = { way = 'out', kind = 'informants', field = 'cost', informant = 'informant' },
-    placer_informant_bought = { way = 'out', kind = 'informants', field = 'amount', informant = 'placerInformant' },
-    location_tip_bought     = { way = 'out', kind = 'informants', field = 'amount', informant = 'locationTip' },
+    informant_purchased     = { way = 'out', kind = L('history.informants'), field = 'cost', informant = 'informant' },
+    placer_informant_bought = { way = 'out', kind = L('history.informants'), field = 'amount', informant = 'placerInformant' },
+    location_tip_bought     = { way = 'out', kind = L('history.informants'), field = 'amount', informant = 'locationTip' },
     location_tip_refunded   = { way = 'in', kind = L('history.informant_refunds'), field = 'amount' },
     anonymity_fee           = { way = 'out', kind = L('history.anonymity_fees'), field = 'amount', identityOnly = true },
 }
@@ -70,7 +70,11 @@ local function lineMoney(line, cid)
     else
         if line.taken_from == cid then out[#out + 1] = { 'out', L('history.rewards_put_up'), amount } end
         if line.state == CH.ESCROW_STATE.SETTLED and line.settled_to == cid then
-            out[#out + 1] = { 'in', line.taken_from == cid and L('history.rewards_returned') or 'payouts', amount }
+            -- The fourth says it is a payout, for the count of completed
+            -- contracts: compared by the words, it broke on any language.
+            local returned = line.taken_from == cid
+            out[#out + 1] = { 'in', returned and L('history.rewards_returned') or L('history.payouts'), amount,
+                not returned }
         end
     end
     return out
@@ -146,7 +150,7 @@ function History.build(deps, cid, canIdentify)
             for _, line in ipairs(lines) do
                 for _, moved in ipairs(lineMoney(line, cid) or {}) do
                     add(moved[1] == 'in' and moneyIn or moneyOut, moved[2], moved[3])
-                    if moved[2] == 'payouts' then collected = true end
+                    if moved[4] then collected = true end
                 end
             end
             if collected and mine then counts.completed = counts.completed + 1 end
@@ -205,18 +209,20 @@ function History.build(deps, cid, canIdentify)
         if row.kind == 'payment' then
             add(moneyIn, L('history.staff_payments'), row.amount)
         else
-            local state
+            local state, ranOut
             if row.ended_at then
-                state = row.ended_why == 'expired' and 'ended' or 'lifted'
+                ranOut = row.ended_why == 'expired'
+                state = ranOut and L('history.ended') or L('history.lifted')
             elseif row.until_at and now >= row.until_at then
-                state = 'ended'
+                ranOut = true
+                state = L('history.ended')
             else
                 state = L('history.in_force')
             end
             if row.kind == 'freeze' and not row.ended_at then frozenNoted = true end
             measures[#measures + 1] = {
                 kind = row.kind, from = row.created_at, ['until'] = row.until_at,
-                ended = row.ended_at or (state == 'ended' and row.until_at) or nil,
+                ended = row.ended_at or (ranOut and row.until_at) or nil,
                 state = state, reason = row.reason,
                 by = canIdentify and row.by_cid or nil,
                 endedBy = canIdentify and row.ended_by or nil,

@@ -560,7 +560,10 @@ end
 function TargetLimits.adjust(staffCid, cid, action, args, quiet)
     args = args or {}
     if type(cid) ~= 'string' or cid == '' then return false, CH.ERR.INVALID_INPUT end
-    local reason = type(args.reason) == 'string' and args.reason:sub(1, TargetLimits.REASON_MAX) or nil
+    -- Cut by characters, never mid-character: a byte cut of a Polish or
+    -- Russian reason the panel had already capped by characters kept a
+    -- broken one at its end, which a strict utf8mb4 column refuses.
+    local reason = type(args.reason) == 'string' and Util.sanitizeText(args.reason, TargetLimits.REASON_MAX) or nil
     return WriteLock.run(cid, function()
         local now = os.time()
         local row = Draft(cid, args.name)

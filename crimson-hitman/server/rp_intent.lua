@@ -149,7 +149,8 @@ function Intent.proof(contract, hitmanCid, fulfilment, claiming)
     if sent >= want then return true end
     if closedFor(contract, claiming) then return false, nil, true end
     local left = want - sent
-    return false, (L('rp_intent.more_message_to_the_person_who')):format(left, left == 1 and '' or 's')
+    return false, (L(left == 1 and 'rp_intent.more_message_to_the_person_who_one'
+        or 'rp_intent.more_message_to_the_person_who_many')):format(left)
 end
 
 --- A claim is about to release a payout to this hitman (Contracts.claimSlot,

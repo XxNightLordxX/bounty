@@ -401,7 +401,7 @@ function Holds.shown(contract, hitmen, canIdentify)
             -- The store's freezes could not be read: every live contract is
             -- held alike, through nobody. Said as that with IdentityAce, and
             -- to everybody else as held, which names nobody either.
-            out[#out + 1] = canIdentify and L('holds.store_unreadable') or 'held'
+            out[#out + 1] = canIdentify and L('holds.store_unreadable') or L('holds.held_unnamed')
         elseif canIdentify or not party.anonymous then
             out[#out + 1] = party.role == 'target' and L('holds.the_target')
                 or party.role == 'client' and L('holds.the_placer')

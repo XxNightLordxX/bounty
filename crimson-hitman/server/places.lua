@@ -326,12 +326,23 @@ function Places.set(who, name, spec)
         Seq = Seq + 1
         id = ('%s:%s:%s%d'):format(owner ~= '' and owner or 'place', name, Util.randomId(''), Seq):sub(1, 48)
     end
+    -- Switched on or off only when asked: a move that does not say (the
+    -- boss menu's Place here never does) keeps what staff chose. The
+    -- and/or here read a spot staff had switched off as nil, which is on.
+    local enabled
+    if spec.enabled ~= nil then
+        enabled = spec.enabled == true
+    elseif existing then
+        enabled = existing.enabled ~= false
+    else
+        enabled = true
+    end
     local row = {
         id = id, kind = name, owner = owner, label = label,
         x = r1(at.x), y = r1(at.y), z = r1(at.z), h = r1(at.h) % 360,
         radius = radius and r1(radius) or nil,
         blip = f.blip and (spec.blip == nil and (existing and existing.blip) or spec.blip == true) or nil,
-        enabled = spec.enabled == nil and (existing == nil or existing.enabled ~= false) or spec.enabled,
+        enabled = enabled,
         anchor = (kind.anchor and kind.anchor(who, at, existing)) or (existing and existing.anchor) or nil,
         by = who.cid, at = os.time(),
     }
@@ -493,7 +504,11 @@ function Places.addOps(panel)
         local id = Text.field(data.id, 48)
         if not id then return false, 'invalid_input', SAYS.not_found end
         local ok, err, what = Places.remove(staff(src), id)
-        return said(ok, err, ok and nil or what, nil, L('places.place_removed'))
+        -- Nothing of the row on success: it carries who set it (`by`, a
+        -- boss's citizen id on an organisation spot), and the page needs
+        -- only that it went. `ok and nil or what` was always the row.
+        if not ok then return false, err, what end
+        return true, nil, L('places.place_removed')
     end)
     panel.extend('placeReset', WRITE, function(src, data)
         local name = Text.field(data.kind, 24)

@@ -177,16 +177,19 @@ end
 local function tell(contract, raised, placerLine)
     local target = tostring(contract.target_name or L('staff_reward.your_target'))
     local title = raised and StaffReward.TITLE_RAISED or StaffReward.TITLE_LOWERED
-    local verb = raised and 'raised' or 'lowered'
+    -- Whole sentences for a raise and a cut: the verb slotted in was
+    -- English in any language.
     deps.notify.tellOrKeep(contract.creator_cid, title,
-        (L('staff_reward.staff_the_reward_on_your_contract')):format(verb, target, placerLine or ''),
+        (L(raised and 'staff_reward.staff_raised_the_reward_on_your_contract'
+            or 'staff_reward.staff_lowered_the_reward_on_your_contract')):format(target, placerLine or ''),
         { bypassBudget = true }, contract.id)
     local cids = {}
     for _, h in ipairs(deps.storage.readHitmen(contract.id) or {}) do
         if h.state == 'active' then
             cids[#cids + 1] = h.hitman_cid
             deps.notify.tellOrKeep(h.hitman_cid, title,
-                (L('staff_reward.staff_the_reward_on_a_contract')):format(verb),
+                L(raised and 'staff_reward.staff_raised_the_reward_on_a_contract'
+                    or 'staff_reward.staff_lowered_the_reward_on_a_contract'),
                 { bypassBudget = true }, contract.id)
         end
     end
@@ -270,7 +273,8 @@ local function changeUnlocked(staff, contractId, by, opts)
     })
     local placerLine
     if by > 0 and done.from == 'placer' then
-        placerLine = (L('staff_reward.was_taken_from_your_for_it')):format(by, opts.account)
+        placerLine = (opts.account == 'cash' and L('staff_reward.was_taken_from_your_cash_for_it')
+            or L('staff_reward.was_taken_from_your_bank_for_it')):format(by)
     elseif (done.toPlacer or 0) > 0 then
         placerLine = (done.queued or 0) > 0
             and (L('staff_reward.of_what_you_put_up_is'))
@@ -315,8 +319,21 @@ function StaffReward.preview(contractId, by)
     end
     if by then
         out.after = held.reward + by
+        if by > 0 then
+            -- Refused here as the change itself refuses it, with its own
+            -- figures: the preview said nothing and only the confirm did.
+            local ceiling = tonumber(Config.MaxContractValue) or 0
+            if most() > 0 and by > most() then
+                out.refused, out.refusedDetail = 'too_much', { max = most() }
+            elseif ceiling > 0 and out.total + by > ceiling then
+                out.refused, out.refusedDetail = 'too_much_value', { max = math.max(0, ceiling - out.total) }
+            end
+        end
         if by < 0 then
-            local plan, planErr = cutPlan(contract, held, -by)
+            -- With the figure the refusal names (the most it may be
+            -- lowered by, the least a reward may be): without it the
+            -- preview said $0 where the change says the real limit.
+            local plan, planErr, planDetail = cutPlan(contract, held, -by)
             if plan then
                 local toStaff, toPlacer = 0, 0
                 for _, step in ipairs(plan) do
@@ -325,7 +342,7 @@ function StaffReward.preview(contractId, by)
                 end
                 out.toStaff, out.toPlacer = toStaff, toPlacer
             else
-                out.refused = planErr
+                out.refused, out.refusedDetail = planErr, planDetail
             end
         end
     end
@@ -364,6 +381,9 @@ local function refused(src, contractId, err, detail)
     if err == 'too_much_value' then
         return false, err, (L('staff_reward.not_past_the_most_a_contract')):format(detail and detail.max or 0), detail
     end
+    if err == 'too_much' then
+        return false, err, (L('staff_reward.at_most_at_once_config_staff')):format(detail and detail.max or most()), detail
+    end
     if err == CH.ERR.REWARD_TOO_SMALL then
         return false, err, (L('staff_reward.not_below_the_least_a_reward_2'))
             :format(detail and detail.min or 0), detail
@@ -384,8 +404,9 @@ local function opPreview(src, data)
         local _, code, message = refused(src, id, view.refused)
         view.refused, view.message = code, message
     elseif view.refused then
-        view.message = select(3, refused(src, id, view.refused))
+        view.message = select(3, refused(src, id, view.refused, view.refusedDetail))
     end
+    view.refusedDetail = nil
     return true, nil, nil, view
 end
 
@@ -422,7 +443,8 @@ local function opChange(src, data)
     local said
     if by > 0 then
         said = (L('staff_reward.reward_raised_from_to')):format(detail.before, detail.after,
-            detail.from == 'placer' and (L('staff_reward.charged_to_the_placers') .. account) or L('staff_reward.added_by_staff'))
+            detail.from == 'placer' and (account == 'cash' and L('staff_reward.charged_to_the_placers_cash')
+                or L('staff_reward.charged_to_the_placers_bank')) or L('staff_reward.added_by_staff'))
     else
         said = (L('staff_reward.reward_lowered_from_to')):format(detail.before, detail.after)
         if (detail.toPlacer or 0) > 0 then

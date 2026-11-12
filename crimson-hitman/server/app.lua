@@ -323,8 +323,6 @@ local function onLiveContract(actor)
     local involved = deps.storage.contractsInvolving(actor.cid) or {}
     local now = os.time()
     local after = tonumber(Config.Targeting.NearbyClosedAfterSeconds) or 0
-    local wait = Config.Notifications.ParanoidAlertJitter
-    local longestWait = type(wait) == 'table' and tonumber(wait.max) or 0
     for i = 1, #involved do
         local c = involved[i]
         local live = not CH.TERMINAL[c.state]
@@ -333,8 +331,11 @@ local function onLiveContract(actor)
             if c.creator_cid == actor.cid then return true end
             if c.target_cid == actor.cid then
                 if live and deps.notify.shownToTarget(c) then return true end
+                -- Shown by its end, by the wait drawn for it (a wait
+                -- lowered since would read one withdrawn inside its own
+                -- as one they had been shown).
                 if recent and (c.state == CH.STATE.COMPLETED or c.state == CH.STATE.BAILED_OUT
-                    or c.resolved_at - (c.created_at or c.resolved_at) >= longestWait) then
+                    or deps.notify.wasShownBefore(c, c.resolved_at)) then
                     return true
                 end
             else

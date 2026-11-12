@@ -174,23 +174,24 @@ local function previewOf(preset)
     -- Ceilings first, each checked with the values before it.
     Settings.order(keys)
     local out = { changes = {}, refused = {}, same = 0 }
-    local with = {}
-    for _, key in ipairs(keys) do
+    local function labelOf(key)
         local entry = Settings.entry(key)
-        local label = entry and entry.label or key
-        local value, _, why = Settings.check(key, Util.copy(preset.values[key]), with)
-        if value == nil then
-            out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(why or 'refused') }
+        return entry and entry.label or key
+    end
+    -- In passes: a key refused against a value the preset also changes is
+    -- checked again once that one is accepted (Settings.checkInPasses).
+    local accepted, refused = Settings.checkInPasses(keys, function(key) return preset.values[key] end)
+    for _, a in ipairs(accepted) do
+        local now = Settings.valueOf(a.key)
+        if Settings.same(now, a.value) then
+            out.same = out.same + 1
         else
-            local now = Settings.valueOf(key)
-            with[key] = value
-            if Settings.same(now, value) then
-                out.same = out.same + 1
-            else
-                out.changes[#out.changes + 1] = { key = key, label = label,
-                    from = Settings.describe(now), to = Settings.describe(value) }
-            end
+            out.changes[#out.changes + 1] = { key = a.key, label = labelOf(a.key),
+                from = Settings.describe(now), to = Settings.describe(a.value) }
         end
+    end
+    for _, r in ipairs(refused) do
+        out.refused[#out.refused + 1] = { key = r.key, label = labelOf(r.key), why = r.why }
     end
     return out
 end

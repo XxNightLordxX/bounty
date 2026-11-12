@@ -538,6 +538,7 @@ local SCHEMA = {
         bought_at INT NOT NULL,
         revealed TINYINT(1) NOT NULL DEFAULT 0,
         alerted TINYINT(1) NOT NULL DEFAULT 0,
+        answer TEXT,
         INDEX idx_placer_informant_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Threads somebody has muted (§11.4): a row is a mute, and unmuting
@@ -3019,7 +3020,7 @@ end
 --- memory backend.
 function MySQLStore.readPlacerInformants(contractId, placerCid)
     local rows = db.query([[
-        SELECT hitman_cid, seq, bought_at, revealed, alerted FROM crimson_placer_informants
+        SELECT hitman_cid, seq, bought_at, revealed, alerted, answer FROM crimson_placer_informants
         WHERE contract_id = ? AND placer_cid = ?
     ]], { contractId, placerCid }) or {}
     for i = 1, #rows do
@@ -3032,14 +3033,14 @@ end
 function MySQLStore.writePlacerInformant(row)
     db.query([[
         INSERT INTO crimson_placer_informants
-            (id, contract_id, placer_cid, hitman_cid, seq, bought_at, revealed, alerted)
-        VALUES (?,?,?,?,?,?,?,?)
+            (id, contract_id, placer_cid, hitman_cid, seq, bought_at, revealed, alerted, answer)
+        VALUES (?,?,?,?,?,?,?,?,?)
         ON DUPLICATE KEY UPDATE hitman_cid = VALUES(hitman_cid), bought_at = VALUES(bought_at),
-            revealed = VALUES(revealed), alerted = VALUES(alerted)
+            revealed = VALUES(revealed), alerted = VALUES(alerted), answer = VALUES(answer)
     ]], {
         row.contract_id .. ':' .. row.placer_cid .. ':' .. tostring(row.seq), row.contract_id,
         row.placer_cid, row.hitman_cid, row.seq, row.bought_at,
-        row.revealed and 1 or 0, row.alerted and 1 or 0,
+        row.revealed and 1 or 0, row.alerted and 1 or 0, row.answer,
     })
     return true
 end

@@ -135,8 +135,9 @@ local function says(rule)
     local kind = rule.kind
     if kind == 'switch' then return L('lib_feature.true_or_false') end
     if kind == 'number' then
-        return (L('lib_feature.a_from_to')):format(rule.integer and L('lib_feature.whole_number') or 'number',
-            tostring(rule.min), tostring(rule.max))
+        -- Whole phrases, so a translation orders its own words.
+        return (L(rule.integer and 'lib_feature.a_whole_number_from_to' or 'lib_feature.a_number_from_to'))
+            :format(tostring(rule.min), tostring(rule.max))
     end
     if kind == 'text' then return L('lib_feature.a_name_of_letters_digits_and') end
     if kind == 'choice' then

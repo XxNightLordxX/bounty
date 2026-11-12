@@ -623,6 +623,20 @@ local function shownJob(job)
     return tostring(job.name or 'job')
 end
 
+--- A job's label as players read it (job.label, or qbx_core's definition),
+--- or nil when neither gives one: never the internal job name.
+---@param job table|nil
+---@return string|nil
+function Identity.jobLabel(job)
+    if type(job) ~= 'table' then return nil end
+    if type(job.label) == 'string' and job.label ~= '' then return job.label end
+    local definition = type(job.name) == 'string' and jobDefinition(job.name) or nil
+    if definition and type(definition.label) == 'string' and definition.label ~= '' then
+        return definition.label
+    end
+    return nil
+end
+
 --- Whether a contract's target is listed in the whitelisted-job view as a
 --- member of a whitelisted job, and the job they are shown under: by what
 --- the contract recorded when it was placed, the flag the listing and the

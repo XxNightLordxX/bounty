@@ -278,6 +278,7 @@ CREATE TABLE IF NOT EXISTS crimson_placer_informants (
     bought_at INT NOT NULL,
     revealed TINYINT(1) NOT NULL DEFAULT 0,
     alerted TINYINT(1) NOT NULL DEFAULT 0,
+    answer TEXT,
     INDEX idx_placer_informant_contract (contract_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

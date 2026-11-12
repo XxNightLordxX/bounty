@@ -22,7 +22,6 @@ CrimsonBoot.define('server.setup', function() --[[
 --- audit log, in Change history with its Undo), and saves the setup as done
 --- (crimson_rp_rows, kind 'setup'), even when nothing changed.
 
-local Util = CrimsonBoot.requireShared('util')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local L = CrimsonBoot.requireShared('locale').t
 
@@ -105,7 +104,7 @@ function Setup.view(permissions)
         local setting = rowOf('Integrations.' .. st.key)
         integrations[#integrations + 1] = {
             kind = st.kind, key = 'Integrations.' .. st.key, choice = st.choice, active = st.active,
-            detected = st.detected, without = st.without, required = st.required,
+            detected = st.detected, without = deps.settings.integrationWithout and deps.settings.integrationWithout(st.kind) or st.without, required = st.required,
             choices = setting and setting.choices or { st.choice },
         }
     end
@@ -141,25 +140,29 @@ function Setup.preview(values)
     -- Ceilings first, each checked with the values before it.
     Settings.order(keys)
     local out = { changes = {}, refused = {}, same = 0 }
-    local with = {}
+    local checkable, labels = {}, {}
     for _, key in ipairs(keys) do
         local entry = allowed[key] and Settings.entry(key) or nil
-        local label = entry and entry.label or key
+        labels[key] = entry and entry.label or key
         if not entry or entry.readonly then
-            out.refused[#out.refused + 1] = { key = key, label = label, why = L('setup.not_one_the_setup_changes') }
+            out.refused[#out.refused + 1] = { key = key, label = labels[key], why = L('setup.not_one_the_setup_changes') }
         else
-            local value, _, why = Settings.check(key, Util.copy(values[key]), with)
-            if value == nil then
-                out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(why or 'refused') }
-            elseif Settings.same(Settings.valueOf(key), value) then
-                out.same = out.same + 1
-                with[key] = value
-            else
-                with[key] = value
-                out.changes[#out.changes + 1] = { key = key, label = label,
-                    from = Settings.describe(Settings.valueOf(key)), to = Settings.describe(value), value = value }
-            end
+            checkable[#checkable + 1] = key
         end
+    end
+    -- In passes: a key refused against a value the same screen also
+    -- changes is checked again once that one is accepted.
+    local accepted, refused = Settings.checkInPasses(checkable, function(key) return values[key] end)
+    for _, a in ipairs(accepted) do
+        if Settings.same(Settings.valueOf(a.key), a.value) then
+            out.same = out.same + 1
+        else
+            out.changes[#out.changes + 1] = { key = a.key, label = labels[a.key],
+                from = Settings.describe(Settings.valueOf(a.key)), to = Settings.describe(a.value), value = a.value }
+        end
+    end
+    for _, r in ipairs(refused) do
+        out.refused[#out.refused + 1] = { key = r.key, label = labels[r.key], why = r.why }
     end
     return out
 end

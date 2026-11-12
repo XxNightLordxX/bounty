@@ -123,8 +123,11 @@ function ConfigCheck.findings()
             else
                 local names = {}
                 for i = 1, #st.detected do names[i] = st.detected[i].resource end
-                fix = (L('configcheck.install_and_start_before_crimson_hitman'))
-                    :format(#names > 0 and table.concat(names, ' or ') or 'one', st.key)
+                fix = #names > 0
+                    and (L('configcheck.install_and_start_before_crimson_hitman'))
+                        :format(table.concat(names, ' or '), st.key)
+                    or (L('configcheck.install_one_and_start_it_before'))
+                        :format(table.concat(st.names or {}, ', '), st.key)
             end
             add('script', line, fix)
         end
@@ -174,10 +177,11 @@ end
 function ConfigCheck.lines()
     local found = ConfigCheck.findings()
     local out = { L('configcheck.crimson_hitman_config_check') }
-    local words = { setting = 'setting', script = L('configcheck.other_script'), permission = 'permission', risky = 'risky' }
+    local words = { setting = L('configcheck.kind_setting'), script = L('configcheck.other_script'),
+        permission = L('configcheck.kind_permission'), risky = L('configcheck.kind_risky') }
     for _, f in ipairs(found) do
-        out[#out + 1] = ('%s: %s'):format(words[f.kind] or f.kind, f.text)
-        out[#out + 1] = '  -> fix: ' .. tostring(f.fix)
+        out[#out + 1] = (L('configcheck.finding_line')):format(words[f.kind] or f.kind, f.text)
+        out[#out + 1] = (L('configcheck.fix_line')):format(tostring(f.fix))
     end
     out[#out + 1] = #found == 0 and L('configcheck.nothing_to_fix_every_value_is')
         or (L('configcheck.thing_to_look_at')):format(#found)

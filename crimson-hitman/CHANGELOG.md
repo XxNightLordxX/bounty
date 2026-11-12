@@ -87,6 +87,56 @@ say how things work now.
   the phone and in the panel are now in the language files, whole sentences
   with their plural forms.
 
+**Review 85 fixes (server)**
+- A kill pays one collection, however many photo tokens are asked for: a
+  token asked for while the first photo's claim waited on the database is
+  refused (*busy*), and a claim that raised part-way is decided from what the
+  store holds before that kill can be claimed again.
+- `/ch-diag` in F8 names nobody to staff without `crimson.identity`, as the
+  panel's Run diagnosis already did (staff alerts, page faults, the subject's
+  identity line and page log).
+- A late payout's notice says what arrived (after the organisation's cut, or a
+  part already given), not the line's whole amount. The weekly Discord post
+  counts only payouts as *Paid out to hitmen*, never refunds.
+- The placer's informant shows the answer bought, whatever
+  `Config.Intel.PlacerInformant.RevealMode` says later (a new `answer` column
+  in `crimson_placer_informants`, added at the next start). A description
+  names the job by its label (*LS Customs*), never its internal name.
+- A delayed tip warning (`Config.Intel.WarningDelay`) loaded after a start
+  whose read failed is still sent, and the target's card shows the tip.
+- Locations: a spot staff switched off stays off when a boss moves it with
+  Place here; Remove no longer sends the row (with the boss's citizen id) back
+  to the page.
+- Reason quality (`Config.Roleplay.ReasonQuality`) counts words in any script:
+  Cyrillic, Greek and Polish reasons count their real words, and a LowEffort
+  phrase in them matches in any case.
+- Settings import, presets and the setup apply both halves of a linked pair
+  (Buyout pricing's least and most) in one go; a damaged text whose settings
+  are a list is refused as damaged, not as secrets.
+- A target-limit staff reason is cut by characters, never mid-character.
+- `/cleanse` tells a target short of the buyout across both accounts just
+  that, not to move money into one account.
+- Body disposal: a refused Load or Drop off says why; `ReducedPercent` is what
+  the hitman keeps in all with `PayNowPercent`; past `MaxRespawns` a vehicle
+  left behind stays where it is instead of being made again for free.
+- Contract decay: a reward that never rose is not said to have risen as far as
+  it will; the *shorten* stop notice is titled *Contract time*.
+- Staff reward preview names the real limits (most it may be lowered by, the
+  least a reward may be, the most at once); a refused reassign says why in
+  words, never its code.
+- The panel's *Largest photo* range is the one the server takes (50,000 to
+  1,500,000 bytes); a fractional or infinite duration in `config.lua` is a
+  warning, not a stopped start; an advisory is cleared off the MDT even after
+  `Config.Integrations.Dispatch` was set to `none`; lowering
+  `ParanoidAlertJitter` no longer lets Nearby show a target a contract
+  withdrawn inside its own wait.
+- Translations: every server sentence that slotted an English word into
+  translated text (staff console lines and resolutions, the config check,
+  history kinds, meeting, receipts, the panel's spans and export, reputation,
+  witness compass points, the guard's pay, proof of intent, reward notices,
+  setting rules, *on*/*off* and the other scripts' names) is whole sentences
+  in `locales/en.lua`.
+
 **Review 84 fixes (1)**
 - Body disposal starts in game: a verified kill with `Config.Disposal` on
   waits in escrow until the drop-off, the vehicle is made and the body can be

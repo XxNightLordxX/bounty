@@ -588,13 +588,13 @@ Map markers for each step of a contract, to the one party who acts on it (docs/f
 | `Config.Disposal.PayNowPercent` | `0` | of a cash or bank payout handed over at the kill |
 | `Config.Disposal.TimeLimitMinutes` | `30` | minutes of the hitman's time in the city to finish |
 | `Config.Disposal.OnTimeout` | `'pay'` | 'pay' \| 'reduced' \| 'refund' (to the placer) |
-| `Config.Disposal.ReducedPercent` | `50` | 'reduced': what the hitman keeps of the money (%) |
+| `Config.Disposal.ReducedPercent` | `50` | 'reduced': what the hitman keeps of the money (%), what `PayNowPercent` paid at once included |
 | `Config.Disposal.LoadMetres` | `3.0` | how near the body the hitman stands to load it |
 | `Config.Disposal.DropMetres` | `8.0` | how near the drop-off the hitman stands |
 | `Config.Disposal.VehicleMetres` | `10.0` | how near the body or drop-off the vehicle is |
 | `Config.Disposal.AbandonMetres` | `300.0` | a vehicle left this far away ... |
 | `Config.Disposal.AbandonMinutes` | `5` | ... this long is taken back to the spawn spot |
-| `Config.Disposal.MaxRespawns` | `3` | times the vehicle is made again when lost |
+| `Config.Disposal.MaxRespawns` | `3` | times the vehicle is made again when lost or left behind; past it one left behind stays where it is |
 | `Config.Disposal.MaxHoldMinutes` | `120` | real minutes from the kill a step may stand, away or not |
 | `Config.Disposal.DespawnSeconds` | `10` | seconds after the drop-off it is taken away |
 

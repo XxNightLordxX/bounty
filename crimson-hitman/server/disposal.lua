@@ -204,6 +204,28 @@ local function Tell(cid, title, text)
     end
 end
 
+--- [cid .. action .. why] = when a refused Load or Drop off was last said.
+local refusalSaidAt = {}
+
+--- A Load the body or Drop off the body refused for where the hitman
+--- stands, said, at most every few seconds however often they tap. Said
+--- nothing, the option looked broken while the disposal clock ran.
+local function TellRefused(cid, action, why)
+    local key = cid .. ':' .. action .. ':' .. why
+    local now = os.time()
+    if refusalSaidAt[key] and now - refusalSaidAt[key] < 5 then return end
+    refusalSaidAt[key] = now
+    local text
+    if why == 'far' then
+        text = action == 'load' and L('disposal.stand_right_by_the_body_to_load')
+            or L('disposal.stand_at_the_drop_off_to_leave')
+    else
+        text = action == 'load' and L('disposal.the_body_is_already_loaded')
+            or L('disposal.load_the_body_first')
+    end
+    Tell(cid, L('disposal.body_disposal'), text)
+end
+
 local function Refresh()
     if Deps.missionSteps then Deps.missionSteps.refresh() end
 end
@@ -510,14 +532,17 @@ end
 --- rest left on the line (Escrow.reduceStake: the owed share is written
 --- before the line is lowered, and boot recovery finishes one cut off).
 ---@param keepPercent number what stays on each line, of 100
+---@param keepFor? fun(line: table, all: table[], amount: integer): integer what stays on a
+--- line in dollars, where a share of 100 is not the rule (the 'reduced' timeout)
 ---@return integer moved dollars
-local function SplitMoney(step, cid, keepPercent, reason)
+local function SplitMoney(step, cid, keepPercent, reason, keepFor)
     local moved = 0
     local held, all = HeldLines(step)
     for _, line in ipairs(held) do
         if (line.source == 'cash' or line.source == 'bank') and not SplitTo(all, line.id, cid) then
             local amount = math.floor(tonumber(line.amount) or 0) - math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
-            local keep = math.floor(amount * keepPercent / 100)
+            local keep = keepFor and math.max(0, math.min(amount, math.floor(keepFor(line, all, amount) or amount)))
+                or math.floor(amount * keepPercent / 100)
             if amount > 0 and keep < amount then
                 local proxy = setmetatable({ staker = cid }, { __index = line })
                 local ok, owed = pcall(Deps.escrow.reduceStake, step.contract_id, proxy,
@@ -597,8 +622,25 @@ local function TimedOut(step)
     if mode == 'refund' then
         RefundAll(step)
     elseif mode == 'reduced' then
-        SplitMoney(step, step.creator_cid, math.max(0, math.min(100, Num('ReducedPercent', 50))),
-            'disposal_reduced')
+        -- ReducedPercent is what the hitman keeps of the money, all of it:
+        -- the part already paid at once (PayNowPercent, split off this line
+        -- to them) counts towards it. Taken of what was left after that,
+        -- 40 at once and 50 reduced kept them 70. Never less than they were
+        -- already handed: nothing paid is taken back.
+        local pct = math.max(0, math.min(100, Num('ReducedPercent', 50)))
+        SplitMoney(step, step.creator_cid, pct, 'disposal_reduced', function(line, all, _)
+            local paidNow = 0
+            for _, l in ipairs(all) do
+                local mark = type(l.metadata) == 'table' and l.metadata or nil
+                if l.portion == CH.PORTION.OWED and mark and mark.splitFrom == line.id
+                    and l.owed_to == step.hitman_cid then
+                    paidNow = paidNow + math.max(0, math.floor(tonumber(l.amount) or 0))
+                end
+            end
+            local arrived = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
+            local original = math.floor(tonumber(line.amount) or 0) + paidNow
+            return math.floor(original * pct / 100) - paidNow - arrived
+        end)
     else
         mode = 'pay'
     end
@@ -721,8 +763,8 @@ function Disposal.act(actor, action, contractId)
     local vehicleAt = VehicleThere(rt) and Disposal.world.coords(rt.vehicle) or nil
     local vehicleMetres = Num('VehicleMetres', 10)
     if action == 'load' then
-        if step.stage ~= 'body' then return false, 'stage' end
-        if not Near(me, step.body, Num('LoadMetres', 3)) then return false, 'far' end
+        if step.stage ~= 'body' then TellRefused(actor.cid, action, 'stage') return false, 'stage' end
+        if not Near(me, step.body, Num('LoadMetres', 3)) then TellRefused(actor.cid, action, 'far') return false, 'far' end
         if not Near(vehicleAt, step.body, vehicleMetres) then
             Tell(actor.cid, L('disposal.body_disposal'), L('disposal.bring_the_disposal_vehicle_up_to'))
             return false, 'no_vehicle'
@@ -735,8 +777,11 @@ function Disposal.act(actor, action, contractId)
         return true
     elseif action == 'drop' then
         local drop = Disposal.spot('drop')
-        if step.stage ~= 'loaded' or not drop then return false, 'stage' end
-        if not Near(me, drop, Num('DropMetres', 8)) then return false, 'far' end
+        if step.stage ~= 'loaded' or not drop then
+            if drop then TellRefused(actor.cid, action, 'stage') end
+            return false, 'stage'
+        end
+        if not Near(me, drop, Num('DropMetres', 8)) then TellRefused(actor.cid, action, 'far') return false, 'far' end
         if not Near(vehicleAt, drop, vehicleMetres) then
             Tell(actor.cid, L('disposal.body_disposal'), L('disposal.the_body_is_in_the_disposal'))
             return false, 'no_vehicle'
@@ -823,11 +868,19 @@ function Disposal.tick()
                             elseif rt.reached and not Near(me, at, Num('AbandonMetres', 300)) then
                                 rt.farSince = rt.farSince or now
                                 if now - rt.farSince >= Num('AbandonMinutes', 5) * 60 then
-                                    -- Left behind: taken away, and made again at the spawn spot.
-                                    Deps.audit.action('disposal_abandoned', step.hitman_cid, step.contract_id, {})
-                                    RemoveVehicle(step)
-                                    SpawnVehicle(step, 'abandoned')
-                                    changed = true
+                                    if (tonumber(step.respawns) or 0) >= math.floor(Num('MaxRespawns', 3)) then
+                                        -- No respawn left: the vehicle stays where they
+                                        -- left it. Taken away here, the next tick read the
+                                        -- gap as this file's own and made it again for
+                                        -- free, so the limit never stopped an abandonment.
+                                        rt.farSince = now
+                                    else
+                                        -- Left behind: taken away, and made again at the spawn spot.
+                                        Deps.audit.action('disposal_abandoned', step.hitman_cid, step.contract_id, {})
+                                        RemoveVehicle(step)
+                                        SpawnVehicle(step, 'abandoned')
+                                        changed = true
+                                    end
                                 end
                             else
                                 rt.farSince = nil
@@ -1052,6 +1105,7 @@ function Disposal.init(deps)
     Deps = deps or {}
     -- Read lazily, at the first give or tick that asks: nothing at start.
     Steps, Runtime, loaded, saidAt = {}, {}, false, {}
+    refusalSaidAt = {}
     Registry.attach(Deps.storage)
     RegisterSpots()
     local escrow, contracts = Deps.escrow, Deps.contracts

@@ -2044,9 +2044,11 @@ describe('a player the app is closed to can still buy out', function()
         falsy(said:find('insufficient_funds', 1, true), said)
         -- W180: as the app says it. The whole price from one account, never
         -- split, so "you do not have that much" was wrong for somebody
-        -- holding more than it across the two.
-        truthy(said:find('bank or your cash has to cover the full $15,000 on its own', 1, true), said)
-        truthy(said:find('never split', 1, true), said)
+        -- holding more than it across the two (staff_output_spec W180).
+        -- R85 C3 F1: but somebody short of it across both is told just
+        -- that, not to move it into one account.
+        truthy(said:find('it costs $15,000, and you do not have that much', 1, true), said)
+        falsy(said:find('never split', 1, true), said)
     end)
 
     it('is throttled when it is hammered, allowance refunds or not', function()

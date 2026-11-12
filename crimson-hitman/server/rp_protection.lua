@@ -276,8 +276,8 @@ local function payShare(job, who)
         -- later, on the tick.
         if who == 'guard' then
             pcall(Notify.tellOrKeep, cid, L('rp_protection.protection_job_paid'),
-                (L('rp_protection.from_the_protection_job_is_in')):format(amount,
-                    job.account == 'cash' and 'cash' or 'bank'), { bypassBudget = true })
+                (job.account == 'cash' and L('rp_protection.from_the_protection_job_is_in_cash')
+                    or L('rp_protection.from_the_protection_job_is_in_bank')):format(amount), { bypassBudget = true })
         end
         return true
     end

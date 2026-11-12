@@ -214,7 +214,7 @@ function Record.factorFor(contract, hitmanCid, fulfilment)
     local rules = Feature.block(REPUTATION)
     if rules.Enabled ~= true or type(contract) ~= 'table' then return nil end
     local factor = num(rules.BaseFactor)
-    local parts = { { label = 'plain', value = factor } }
+    local parts = { { label = L('record.plain'), value = factor } }
     local function add(label, bonus)
         bonus = num(bonus)
         if bonus <= 0 then return end
@@ -229,7 +229,7 @@ function Record.factorFor(contract, hitmanCid, fulfilment)
             if rows[i].from_cid == hitmanCid then wrote = true break end
         end
     end
-    if wrote then add('thread', rules.ThreadBonus) end
+    if wrote then add(L('record.thread'), rules.ThreadBonus) end
     if contract.meeting_x ~= nil and contract.meeting_y ~= nil then add(L('record.meeting_point'), rules.MeetingBonus) end
     if fulfilment == CH.FULFILMENT.KIDNAPPING then add(L('record.live_handover'), rules.HandoverBonus) end
     if Record.witnessFree(contract, hitmanCid) then add(L('record.no_witnesses'), rules.WitnessFreeBonus) end
@@ -254,8 +254,9 @@ function Record.describe(earned)
     for i, part in ipairs(earned.parts) do
         words[#words + 1] = (i == 1 and '%s %s' or '%s +%s'):format(part.label, tostring(part.value))
     end
-    return (L('record.reputation_x')):format(tostring(earned.factor), table.concat(words, ', '),
-        earned.capped and ', capped' or '')
+    -- Capped or not, each its own sentence.
+    return (L(earned.capped and 'record.reputation_x_capped' or 'record.reputation_x_uncapped'))
+        :format(tostring(earned.factor), table.concat(words, ', '))
 end
 
 --------------------------------------------------------------------------

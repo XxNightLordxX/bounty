@@ -2488,6 +2488,8 @@ describe('what the staff console and the diagnosis say', function()
     --- W126: a citizen id, or anything else, quietly diagnosed the caller.
     it('takes a citizen id for whom to diagnose, and never falls back to the caller', function()
         local s = seeded()
+        -- Citizen ids are shown only to the identity ACE (R85 C2-F1).
+        Env.aces[3] = { [Config.Admin.IdentityAce] = true }
         local out = table.concat(s.admin.diagnose(3, 'TARGET01'), '\n')
         truthy(out:find('identity: Dana Reyes (TARGET01)', 1, true), out)
         out = table.concat(s.admin.diagnose(3, 'target01'), '\n')

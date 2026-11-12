@@ -19,6 +19,7 @@ CrimsonBoot.define('server.police', function() --- Police & press: everything th
 
 local Log = CrimsonBoot.requireShared('log')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local Bridge = CrimsonBoot.require('server.lib.bridge')
 
 local Police = {}
 
@@ -89,7 +90,17 @@ end
 --- filed does nothing.
 ---@param uid string
 function Police.clear(uid)
-    Integrations.call('dispatch', 'ClearNotification', uid, Police.jobs())
+    -- Through every dispatch script that is up, whatever
+    -- Config.Integrations.Dispatch says now: one filed while another was
+    -- chosen, or before staff set it to 'none', was left on the MDT for
+    -- good. Clearing an id never filed does nothing.
+    local jobs, fn = Police.jobs(), 'ClearNotification'
+    for _, name in ipairs(Integrations.names('dispatch')) do
+        local adapter = Integrations.adapter('dispatch', name)
+        if adapter and type(adapter[fn]) == 'function' and Integrations.up(adapter) then
+            Bridge.invoke((adapter.name or name) .. ' ' .. fn, adapter[fn], uid, jobs)
+        end
+    end
 end
 
 --- Post one item to the city's news: lb-phone's PostBirdy as cfg.Account

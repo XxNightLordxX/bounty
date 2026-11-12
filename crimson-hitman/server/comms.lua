@@ -494,11 +494,13 @@ function Comms.requestCall(actor, contractId, threadHandle)
         -- reads the same whether the thread was muted or not.
         local told = Notify.toCitizen(recipient,
             placed and L('comms.incoming_call') or L('comms.call_request'),
-            placed
-                and (L('comms.is_calling_you_about')):format(caller,
-                    ctx.role == 'creator' and 'it' or L('comms.a_contract'))
-                or  (L('comms.wants_to_speak_with_you_about')):format(caller,
-                    ctx.role == 'creator' and 'it' or L('comms.a_contract')),
+            -- Whole sentences: the contract is 'it' to the hitman the
+            -- placer calls, which a translation words itself.
+            ctx.role == 'creator'
+                and (placed and L('comms.is_calling_you_about_it') or L('comms.wants_to_speak_with_you_about_it'))
+                    :format(caller)
+                or (placed and L('comms.is_calling_you_about') or L('comms.wants_to_speak_with_you_about'))
+                    :format(caller, L('comms.a_contract')),
             { relay = true })
 
         -- A named party who was not told either: logged off, or past their

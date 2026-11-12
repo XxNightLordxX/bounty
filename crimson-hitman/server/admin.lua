@@ -23,6 +23,7 @@ local Storage, Identity, Contracts, Escrow, Audit, Notify, App, RateLimit, Death
 local Informant, Kidnap, Mugshot, Photos, Timing, Review, Settings, Playtime
 --- The config check (server/configcheck.lua): /ch-diag config.
 local ConfigCheck
+local Panel
 
 function Admin.init(deps)
     Storage, Identity, Contracts, Escrow, Audit, Notify =
@@ -60,6 +61,9 @@ function Admin.init(deps)
     ConfigCheck = deps.configcheck
     -- The built-in playtime tracker, which the diagnosis reports.
     Playtime = deps.playtime
+    -- The one scrub every staff view without IdentityAce goes through
+    -- (Panel.scrubText), for the diagnosis's lines.
+    Panel = deps.panel
 end
 
 --- The maintenance jobs, slowest first, with their numbers and how often
@@ -247,7 +251,7 @@ function Admin.timeline(contractId, source)
             -- Names, not citizen ids: this view is for reading a history,
             -- and the identity lookup is a separate, separately gated command.
             target = contract.target_name,
-            creator = contract.anon_creator and '(anonymous)' or contract.creator_name,
+            creator = contract.anon_creator and L('admin.anonymous_bracketed') or contract.creator_name,
         },
         escrow = Storage.readEscrow(contractId),
         hitmen = Storage.readHitmen(contractId),
@@ -771,7 +775,7 @@ end
 
 --- A party to a contract by role, for staff who may not see who they are.
 function Admin.partyRole(contract, cid)
-    if not cid then return '(nobody)' end
+    if not cid then return L('admin.nobody_bracketed') end
     if not contract then return L('admin.a_player') end
     if cid == contract.creator_cid then return L('admin.the_placer') end
     if cid == contract.target_cid then return L('admin.the_target') end
@@ -2164,7 +2168,7 @@ local function sayPlaytime(say, actor)
         say(L('admin.this_player_their_counted_time_could'))
     elseif view then
         local decided = view.grandfathered == true and L('admin.yes_from_before_the_tracker')
-            or view.grandfathered == false and 'no' or L('admin.not_decided_yet')
+            or view.grandfathered == false and L('admin.no_word') or L('admin.not_decided_yet')
         say((L('admin.this_player_counted_by_the_tracker'))
             :format(Words.hours(view.hours), decided))
     end
@@ -2194,10 +2198,41 @@ function Admin.diagnose(source, subjectId, later, opts)
     -- here, by the line that writes it, so the overview never reads the
     -- words (they are in the language Config.Locale names). [i] = mark
     local marks = {}
+    -- Scrubbed here, once, for every caller: the report keeps console
+    -- lines (a staff alert naming a placer), the page faults with each
+    -- reporter's citizen id and the subject's identity line, and the F8
+    -- command printed them whole to staff the panel scrubs them for.
+    -- Staff without IdentityAce read them as every other staff view does
+    -- (Panel.scrubText); so does whatever arrives later (the reach check,
+    -- the subject's page log).
+    local canIdentify = source == nil or source == 0
+        or Admin.allowed(source, Config.Admin.IdentityAce, true)
+    local function shown(line)
+        if canIdentify then return line end
+        line = tostring(line or '')
+        if Panel and Panel.scrubText then return Panel.scrubText(line, false) or '' end
+        return (line:gsub('%f[%w][%u%d]+%f[%W]', function(word)
+            if #word >= 5 and #word <= 32 and word:find('%u') and word:find('%d') then
+                return L('panel.a_player')
+            end
+        end))
+    end
+    if later and not canIdentify then
+        local deliver = later
+        later = function(said)
+            if type(said) == 'table' then
+                local clean = {}
+                for i = 1, #said do clean[i] = shown(said[i]) end
+                return deliver(clean)
+            end
+            return deliver(shown(said))
+        end
+    end
     -- In the panel, a line kept from the console that names a command
     -- (a review left for staff: "see /ch-stuck") names the panel's place
     -- for it instead (Admin.panelWords).
     local function say(line, mark)
+        line = shown(line)
         out[#out + 1] = panel and Admin.panelWords(line) or line
         marks[#out] = mark
     end
@@ -2288,8 +2323,9 @@ function Admin.diagnose(source, subjectId, later, opts)
     --- every way it ends. Marked with a dot, which the admin panel's
     --- overview does not take for something to act on.
     local function consoleNotes()
-        say((L('admin.console_debug_output_config_debug_what')):format(kept.debug and 'on' or L('admin.off_so_only_what_needs_you')), 'console')
-        if #kept.boot == 0 and #kept.recent == 0 then say('  · nothing') end
+        say((L('admin.console_debug_output_config_debug_what')):format(kept.debug and L('admin.on_word')
+            or L('admin.off_so_only_what_needs_you')), 'console')
+        if #kept.boot == 0 and #kept.recent == 0 then say(L('admin.console_nothing')) end
         for _, text in ipairs(kept.boot) do say('  · ' .. text) end
         if (kept.bootLeft or 0) > 0 then
             say((L('admin.and_more_line_the_start_said')):format(kept.bootLeft))

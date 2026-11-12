@@ -2834,7 +2834,16 @@ local function retryPending(mine, cid)
                 line.owed_to = line.owed_to or cid
                 line.releasing_to = cid
                 Storage.writeEscrow(line.contract_id, { line })
+                -- What had arrived before this give, so the notice and the
+                -- audit row say what this one handed over: not the line's
+                -- whole amount, which also counts the part already with them
+                -- and the organisation's cut (Escrow.orgTaken), read after
+                -- the give because the give itself may take it.
+                local hadArrived = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
                 if Escrow.deliver(cid, line) then
+                    local money = line.source == 'cash' or line.source == 'bank'
+                    local gave = math.max(0, math.floor(tonumber(line.amount) or 0) - hadArrived
+                        - (money and Escrow.orgTaken and (tonumber((Escrow.orgTaken(line))) or 0) or 0))
                     if not Storage.settleEscrowLine(line.id, cid) then
                         Audit.financial('escrow_settle_lost', cid, line.contract_id,
                             { line = line.id })
@@ -2854,11 +2863,12 @@ local function retryPending(mine, cid)
                     -- ended at the release that queued it and never said it
                     -- arrived.
                     Audit.financial('escrow_delivered_late', cid, line.contract_id, {
-                        line = line.id, source = line.source, amount = line.amount,
+                        line = line.id, source = line.source, amount = money and gave or line.amount,
+                        of = money and gave ~= tonumber(line.amount) and line.amount or nil,
                         item = line.item, count = line.quantity,
                     })
-                    if line.source == 'cash' or line.source == 'bank' then
-                        summary.money = summary.money + (tonumber(line.amount) or 0)
+                    if money then
+                        summary.money = summary.money + gave
                     else
                         summary.goods = summary.goods + 1
                     end

@@ -36,6 +36,12 @@ local tokens = {}
 --- [contractId .. ':' .. hitmanCid] = true. The claim awaits on mysql, and
 --- the same request sent again in that gap would pass every check too.
 local verifying = {}
+--- Kills whose claim raised part-way, by the same key: [key] = { at, slot }
+--- (the death's time, the collection on offer when the claim began).
+--- Written before the claim's first await, cleared once it answers. One
+--- left behind is a claim that may have moved money, decided from what the
+--- store holds before that kill is claimed again (settleDoubt).
+local inDoubt = {}
 --- Where a photo may come from. Two kinds, as lb-phone itself keeps them:
 --- domains, which also cover every subdomain (lb-phone's
 --- Config.UploadWhitelistedDomains, plus Config.Completion.ExtraPhotoHosts),
@@ -58,6 +64,7 @@ function Photo.init(deps)
         deps.death, deps.notify, deps.ledger
     tokens = {}
     verifying = {}
+    inDoubt = {}
     -- Not with kill photos off: the list says where a photo may come from,
     -- and lb-phone is not asked for it while none can. Read when they are
     -- turned on (Bridges' settings hook) and by the tick after that.
@@ -561,6 +568,55 @@ local function afterPaid(actor, contractId, fallback, capture, result)
     end
 end
 
+--- A kill whose claim raised part-way, decided from what the store holds.
+---
+--- A claim that raises after its lock may have paid the collection, or
+--- part of it, and the kill was still waiting: claimed again, by the same
+--- token or a fresh one, it paid the next collection too. While the
+--- contract is still held by that claim (COMPLETING, which the claim
+--- recovery finishes) nothing is claimed: busy. Once it is not, a
+--- collection past the one on offer means the claim went through, and the
+--- kill it was for is spent; otherwise nothing moved and it stands.
+---@return string|nil err BUSY while undecided, ALREADY_SETTLED for a kill spent
+local function settleDoubt(contractId, cid)
+    local key = contractId .. ':' .. cid
+    local doubt = inDoubt[key]
+    if not doubt then return nil end
+    local read, contract = pcall(Storage.readContract, contractId)
+    if not read then return CH.ERR.BUSY end
+    -- Asked again after the read: another request may have decided it.
+    if inDoubt[key] ~= doubt then return settleDoubt(contractId, cid) end
+    if contract and contract.state == CH.STATE.COMPLETING then return CH.ERR.BUSY end
+    inDoubt[key] = nil
+    local spent = not contract or CH.TERMINAL[contract.state]
+        or (tonumber(contract.next_slot) or 1) > doubt.slot
+    if not spent then return nil end
+    local kill = Death.getPending(contractId, cid)
+    if kill and kill.at ~= doubt.at then return nil end
+    if kill then Death.clearPending(contractId, cid) end
+    for token, existing in pairs(tokens) do
+        if existing.contractId == contractId and existing.hitmanCid == cid then tokens[token] = nil end
+    end
+    Audit.action('kill_claim_spent', cid, contractId, { slot = doubt.slot })
+    return CH.ERR.ALREADY_SETTLED
+end
+
+--- One claim of one kill, by either route (a photo, or Verify kill at the
+--- scene). The kill's key is taken before the claim's first await, and the
+--- marker that it may move money written with it; a claim that answers
+--- clears both, one that raises leaves the marker (settleDoubt).
+local function claimKill(contractId, cid, deathAt, slot, opts)
+    local key = contractId .. ':' .. cid
+    verifying[key] = true
+    inDoubt[key] = { at = deathAt, slot = tonumber(slot) or 1 }
+    local ran, ok, err, result = pcall(Contracts.claimSlot,
+        contractId, cid, CH.FULFILMENT.ELIMINATION, opts)
+    verifying[key] = nil
+    if ran then inDoubt[key] = nil end
+    if not ran then error(ok, 0) end
+    return ok, err, result
+end
+
 --- Verify a kill without a photo, where kill photos are switched off
 --- (Config.Completion.KillPhotos): at the scene, on the server's own facts
 --- alone, and claim a payout slot if they hold.
@@ -597,11 +653,14 @@ function Photo.verifyAtScene(actor, rawId)
     -- One claim on a kill at a time, as one on a token (Photo.submit).
     local key = contractId .. ':' .. actor.cid
     if verifying[key] then return false, CH.ERR.BUSY end
-    verifying[key] = true
-    local ran, ok, claimErr, result = pcall(Contracts.claimSlot,
-        contractId, actor.cid, CH.FULFILMENT.ELIMINATION, { deathAt = record.at, deathCoords = record.coords })
-    verifying[key] = nil
-    if not ran then error(ok, 0) end
+    -- A claim of this kill that raised part-way is decided first.
+    local doubt = settleDoubt(contractId, actor.cid)
+    if doubt then return false, doubt end
+    if verifying[key] or inDoubt[key] then return false, CH.ERR.BUSY end
+    local waiting = Death.getPending(contractId, actor.cid)
+    if not waiting or waiting.at ~= record.at then return false, CH.ERR.NO_KILL_TO_VERIFY end
+    local ok, claimErr, result = claimKill(contractId, actor.cid, record.at, placed and placed.next_slot,
+        { deathAt = record.at, deathCoords = record.coords })
 
     if not ok then
         Audit.rejected('kill_claim_failed', actor.cid, contractId, { reason = claimErr })
@@ -626,8 +685,19 @@ function Photo.issue(actor, contractId)
     contractId = Util.toId(contractId)
     if not contractId then return nil, CH.ERR.INVALID_INPUT end
 
+    -- A claim of this kill that raised part-way is decided first: a token
+    -- for a kill that claim paid would pay it again.
+    local doubt = settleDoubt(contractId, actor.cid)
+    if doubt then return nil, doubt end
+
     local record, err = pendingKill(actor, contractId)
     if not record then return nil, err end
+    -- Not while that kill is being claimed (Photo.submit, verifyAtScene).
+    -- The claim awaits on mysql and the kill is cleared only after it, so
+    -- a token minted in that gap was a fresh proof of the same kill: its
+    -- own claim took the next collection, and one kill paid two. Asked
+    -- after the reads above, with nothing below that yields.
+    if verifying[contractId .. ':' .. actor.cid] then return nil, CH.ERR.BUSY end
 
     for token, existing in pairs(tokens) do
         if existing.contractId == contractId and existing.hitmanCid == actor.cid then
@@ -768,6 +838,14 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
     -- a second decode; nothing between here and the claim yields.
     if record.used then return false, CH.ERR.TOKEN_INVALID end
     if record.claiming then return false, CH.ERR.BUSY end
+    if verifying[record.contractId .. ':' .. actor.cid] then return false, CH.ERR.BUSY end
+    local doubt = settleDoubt(record.contractId, actor.cid)
+    if doubt then
+        if doubt == CH.ERR.ALREADY_SETTLED then tokens[token] = nil end
+        return false, doubt
+    end
+    if record.used then return false, CH.ERR.TOKEN_INVALID end
+    if record.claiming then return false, CH.ERR.BUSY end
 
     -- The photo itself. On 'server' storage a refusal from here on read the
     -- picture, and says so fourth: the allowance it was sent under is kept,
@@ -791,10 +869,26 @@ function Photo.submit(actor, rawToken, rawUrl, rawImage)
         capture = image
     end
 
+    -- One claim on a kill at a time, whatever token it comes with. The
+    -- guard above is the token's own, and a token reissued while this
+    -- one's claim waited on mysql was a fresh record: two claims of one
+    -- kill, two collections paid. The kill's key is the one verifyAtScene
+    -- takes, so the two routes exclude each other too. Asked again here,
+    -- where nothing yields before the claim: the token still the hitman's
+    -- current one (a reissue drops the old) and the kill it proves still
+    -- the one waiting, not one a claim in the gap already paid and cleared.
+    local key = record.contractId .. ':' .. actor.cid
+    if verifying[key] then return false, CH.ERR.BUSY end
+    if tokens[token] ~= record then return false, CH.ERR.TOKEN_INVALID end
+    local waiting = Death.getPending(record.contractId, actor.cid)
+    if not waiting or (record.diedAt and waiting.at ~= record.diedAt) then
+        tokens[token] = nil
+        return false, CH.ERR.TOKEN_INVALID
+    end
+    if inDoubt[key] then return false, CH.ERR.BUSY end
     record.claiming = true
-    local ran, ok, err, result = pcall(Contracts.claimSlot,
-        record.contractId, actor.cid, CH.FULFILMENT.ELIMINATION,
-        { deathAt = record.diedAt, deathCoords = record.coords })
+    local ran, ok, err, result = pcall(claimKill, record.contractId, actor.cid, record.diedAt,
+        placed and placed.next_slot, { deathAt = record.diedAt, deathCoords = record.coords })
     record.claiming = nil
     if not ran then error(ok, 0) end
 

@@ -19,6 +19,7 @@ CrimsonBoot.define('server.imp_weekly', function() --- Weekly stats to Discord (
 --- after the hour, with that week's post not made, posts it then; a week
 --- the server was down for the whole day after the hour is not caught up.
 
+local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Words = CrimsonBoot.requireShared('words')
 local Db = CrimsonBoot.require('server.lib.db')
@@ -128,7 +129,13 @@ function Weekly.totals(now)
         local contract = byId[id]
         for _, line in ipairs(list or {}) do
             local at = tonumber(line.settled_at) or 0
-            if contract and CH.MONEY_SOURCES[line.source] and line.state == CH.ESCROW_STATE.SETTLED
+            -- Only a payout: a reward's baseline or bonus, or the part of
+            -- one paid early (Util.payoutPortion), or a stake that went to
+            -- somebody else. Every other owed line is a refund (a buyout's,
+            -- an informant's, going dark, a stake split), counted as a
+            -- payout to hitmen whoever it went to.
+            local payout = Util.payoutPortion(line) ~= nil or line.portion == CH.PORTION.STAKE
+            if payout and contract and CH.MONEY_SOURCES[line.source] and line.state == CH.ESCROW_STATE.SETTLED
                 and at > since and at <= now and line.settled_to ~= nil
                 and line.settled_to ~= contract.creator_cid and line.settled_to ~= line.taken_from
                 and line.settled_to ~= line.staker then

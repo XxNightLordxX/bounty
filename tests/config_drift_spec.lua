@@ -949,6 +949,8 @@ describe('diagnosing an app that shows nothing', function()
     it('names the storage mode and who is asking', function()
         local s = newStack()
         fixture(s)
+        -- Citizen ids are shown only to the identity ACE (R85 C2-F1).
+        Env.aces[1] = { [Config.Admin.IdentityAce] = true }
         local out = said(s.admin.diagnose(1))
         truthy(out:find('Vic Marlowe', 1, true), out)
         truthy(out:find('CREATOR1', 1, true), out)

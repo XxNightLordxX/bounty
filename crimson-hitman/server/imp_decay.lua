@@ -187,7 +187,12 @@ end
 local function stop(row, contract, why, text)
     row.stopped = why
     write(row)
-    Notify.toCitizen(contract.creator_cid, L('imp_decay.contract_reward'), text)
+    -- Titled by what it is about: the deadline in 'shorten', the reward
+    -- otherwise. No notice at all where there is nothing to say.
+    if text then
+        Notify.toCitizen(contract.creator_cid,
+            why == 'shortest' and L('imp_decay.contract_time') or L('imp_decay.contract_reward'), text)
+    end
     Audit.action('imp_decay_stopped', contract.creator_cid, contract.id, { why = why })
 end
 
@@ -201,7 +206,13 @@ local function rise(cfg, row, contract, now)
     local cap = math.floor(base * num(cfg.MaxIncreasePercent) / 100)
     local amount = math.min(math.floor(base * num(cfg.Percent) / 100), cap - (row.added or 0))
     if amount <= 0 then
-        return stop(row, contract, 'cap', L('imp_decay.your_untaken_contracts_reward_has_risen'))
+        -- Risen as far as it will only where it rose. A step of nothing
+        -- from the first (MaxIncreasePercent 0, or a reward too small for
+        -- Percent to make a dollar) never raised it, and the placer was
+        -- told it had.
+        return stop(row, contract, 'cap', (row.added or 0) > 0
+            and L('imp_decay.your_untaken_contracts_reward_has_risen')
+            or L('imp_decay.your_untaken_contracts_reward_will_not_rise'))
     end
     -- Only a placer in the city can be charged; the step waits for them.
     local placer = Identity.byCitizenId(contract.creator_cid)

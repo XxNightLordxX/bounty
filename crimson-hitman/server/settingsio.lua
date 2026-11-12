@@ -87,6 +87,13 @@ local function decode(text)
         return nil, L('settingsio.that_export_is_from_a_version')
     end
     if body.settings ~= nil and type(body.settings) ~= 'table' then return nil, L('settingsio.its_settings_are_not_a_list') end
+    -- A list ([1, 2]) or numbers for names is a damaged text, not one
+    -- holding secrets, which is what each of its entries was refused as.
+    if type(body.settings) == 'table' then
+        for key in pairs(body.settings) do
+            if type(key) ~= 'string' then return nil, L('settingsio.its_settings_are_not_named') end
+        end
+    end
     if body.presets ~= nil and type(body.presets) ~= 'table' then return nil, L('settingsio.its_presets_are_not_a_list') end
     return body
 end
@@ -114,13 +121,15 @@ function SettingsIO.preview(text)
     keys = named
     local out = { changes = {}, refused = {}, same = 0, presets = {}, resource = body.resource,
                   values = {} }
-    local with = {}
+    local checkable, labels = {}, {}
     for _, key in ipairs(keys) do
-        local raw = body.settings[key]
         local entry = type(key) == 'string' and Settings.entry(key) or nil
         local label = entry and entry.label or tostring(key)
         local deny = type(key) == 'string' and Settings.DENY and Settings.DENY[key] or nil
-        if type(key) ~= 'string' or Settings.secretKey(key) then
+        if type(key) ~= 'string' then
+            out.refused[#out.refused + 1] = { key = tostring(key), label = label,
+                why = L('settingsio.not_a_setting_this_version_has') }
+        elseif Settings.secretKey(key) then
             out.refused[#out.refused + 1] = { key = tostring(key), label = label,
                 why = L('settingsio.a_secret_never_imported') }
         elseif deny then
@@ -132,19 +141,29 @@ function SettingsIO.preview(text)
         elseif entry.readonly then
             out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(entry.readonly) }
         else
-            local value, _, refusal = Settings.check(key, Util.copy(raw), with)
-            if value == nil then
-                out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(refusal or 'refused') }
-            elseif Settings.same(Settings.valueOf(key), value) then
-                out.same = out.same + 1
-                with[key] = value
-            else
-                with[key] = value
-                out.changes[#out.changes + 1] = { key = key, label = label,
-                    from = Settings.describe(Settings.valueOf(key)), to = Settings.describe(value) }
-                out.values[key] = raw
-            end
+            labels[key] = label
+            checkable[#checkable + 1] = key
         end
+    end
+    -- In passes, as Settings.boot loads them (Settings.checkInPasses): a
+    -- key refused against a value the same text also changes (one of a
+    -- linked pair, Buyout pricing's least and most) is checked again once
+    -- the other is accepted. Checked once, in name order, the import
+    -- applied half the pair and told staff to change first a key already
+    -- in the text. `changes` is in the order each was accepted, the order
+    -- apply sets them, so each set sees the ones before it live.
+    local accepted, refused = Settings.checkInPasses(checkable, function(key) return body.settings[key] end)
+    for _, a in ipairs(accepted) do
+        if Settings.same(Settings.valueOf(a.key), a.value) then
+            out.same = out.same + 1
+        else
+            out.changes[#out.changes + 1] = { key = a.key, label = labels[a.key],
+                from = Settings.describe(Settings.valueOf(a.key)), to = Settings.describe(a.value) }
+            out.values[a.key] = body.settings[a.key]
+        end
+    end
+    for _, r in ipairs(refused) do
+        out.refused[#out.refused + 1] = { key = r.key, label = labels[r.key], why = r.why }
     end
     for _, preset in ipairs(type(body.presets) == 'table' and body.presets or {}) do
         local name = type(preset) == 'table' and preset.name or nil
@@ -203,10 +222,13 @@ function SettingsIO.apply(text, expect, staff, actorCid)
     end
     pcall(deps.audit.staff, 'admin_settings_imported', actorCid, nil,
         { keys = applied, refused = #refused + #preview.refused, presets = added, by = staff })
-    return true, nil, (L('settingsio.imported_setting_changed_each_is_in'))
-        :format(#applied, #applied == 1 and '' or 's',
-            #refused > 0 and (', ' .. #refused .. ' refused') or '',
-            #added > 0 and ('; ' .. #added .. ' preset' .. (#added == 1 and '' or 's') .. ' added') or ''),
+    -- Whole clauses, each with its own count and its own plural.
+    local refusedText = #refused > 0 and (L('settingsio.import_refused_n')):format(#refused) or ''
+    local presetText = #added == 0 and ''
+        or (L(#added == 1 and 'settingsio.import_presets_added_one' or 'settingsio.import_presets_added_n'))
+            :format(#added)
+    return true, nil, (L(#applied == 1 and 'settingsio.imported_settings_changed_one'
+            or 'settingsio.imported_settings_changed_n')):format(#applied, refusedText, presetText),
         { applied = applied, refused = refused, presets = added }
 end
 

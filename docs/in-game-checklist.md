@@ -902,6 +902,19 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Staff panel: open a dropdown (Contracts › state) and press Escape: the dropdown closes, the panel stays
 - [ ] Organisation › Money (a boss holding View funds): each row says what moved the money in words and how long ago
 
+## 39. Review 85 server checks
+
+- [ ] Two payout slots and `Config.Limits.SlotCooldownSeconds = 0`: make one kill, send the photo and, while it is being claimed, take another photo of the same body: the second is refused as busy and only one collection is paid
+- [ ] Staff with `crimson.admin` only: with a staff alert in the console, run `/ch-diag` and `/ch-diag <id>` in F8: no citizen id is printed; the same with `crimson.identity` shows them
+- [ ] Organisation with a 20% payout cut: pay a member while their pockets are full, then free them: the *Outstanding payment* notice names what arrived after the cut
+- [ ] `Config.Intel.PlacerInformant.RevealMode = 'description'`: buy a look-up as the placer, then switch it to `'name'` in the panel: the card still shows the description, never the name; with an operative in a job with a label, the description names the label
+- [ ] Staff switch a meeting spot off under Locations; the boss moves it with Place here: it stays off. Remove a boss's spot as staff without `crimson.identity`: the reply names nobody
+- [ ] `Config.Roleplay.ReasonQuality.Enabled = true`: place a contract with the reason *Долг не оплачен уже месяц*: it is accepted
+- [ ] Export settings with Buyout pricing 0.5 / 0.8 and import them on a server at 1.0 / 3.0: both apply in one import
+- [ ] Body disposal on: tap *Load the body* from 4-5 m away: you are told to stand right by the body; with `PayNowPercent = 40`, `OnTimeout = 'reduced'`, `ReducedPercent = 50`, let a $5,000 step time out: the hitman ends with $2,500, the placer gets $2,500 back
+- [ ] `/cleanse <id>` with less than the buyout across bank and cash: it says you do not have that much, not to move money into one account
+- [ ] `Config.Locale` set to a copy of `en.lua` with `meeting.placer_point_set` and `bridges.role_client` changed: the meeting notice and `/ch-contracts <player>` read in the copy's words
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

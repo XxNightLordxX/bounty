@@ -1171,9 +1171,11 @@ local function exactSpan(seconds)
     seconds = math.max(0, math.floor(tonumber(seconds) or 0))
     local h, m, s = seconds // 3600, (seconds % 3600) // 60, seconds % 60
     local out = {}
-    if h > 0 then out[#out + 1] = h .. ' h' end
-    if m > 0 or (h > 0 and s > 0) then out[#out + 1] = (h > 0 and ('%02d'):format(m) or tostring(m)) .. ' min' end
-    if s > 0 or #out == 0 then out[#out + 1] = s .. ' s' end
+    if h > 0 then out[#out + 1] = (L('panel.span_hours')):format(h) end
+    if m > 0 or (h > 0 and s > 0) then
+        out[#out + 1] = (L('panel.span_minutes')):format(h > 0 and ('%02d'):format(m) or tostring(m))
+    end
+    if s > 0 or #out == 0 then out[#out + 1] = (L('panel.span_seconds')):format(s) end
     return table.concat(out, ' ')
 end
 
@@ -2347,7 +2349,7 @@ end
 local function warned(detail)
     local lines = type(detail) == 'table' and detail.warnings or nil
     if type(lines) ~= 'table' or #lines == 0 then return '' end
-    return ' Note: ' .. table.concat(lines, '. ') .. '.'
+    return (L('panel.note_warnings')):format(table.concat(lines, '. '))
 end
 
 H.setSetting = function(src, data)
@@ -3031,7 +3033,7 @@ local function exportText(view)
             c.anonymous and L('panel.export_anonymous') or ''))
         add(L('panel.export_target'):format(person(c.target),
             c.target_protected and L('panel.whitelisted_job') or ''))
-        add(('Placed: %s | Deadline: %s | Expires: %s'):format(stamp(c.created_at), stamp(c.deadline_at),
+        add((L('panel.export_placed_deadline_expires')):format(stamp(c.created_at), stamp(c.deadline_at),
             stamp(c.expires_at)))
         add(L('panel.export_ended'):format(c.resolved_at
             and (tostring(c.resolution or '') .. ' ' .. stamp(c.resolved_at)) or L('panel.not_yet')))
@@ -3041,8 +3043,8 @@ local function exportText(view)
             c.buyout_queued and L('panel.a_buyout_is_queued') or ''))
     end
     add('')
-    add('Operatives:')
-    if #(view.hitmen or {}) == 0 then add('- none') end
+    add(L('panel.export_operatives'))
+    if #(view.hitmen or {}) == 0 then add(L('panel.export_none')) end
     for _, m in ipairs(view.hitmen or {}) do
         add(L('panel.accepted_left_claims_stake'):format(
             tostring(m.alias or '-'), tostring(m.name or '-'), m.cid and (' [' .. m.cid .. ']') or '',
@@ -3051,24 +3053,24 @@ local function exportText(view)
     end
     add('')
     add(L('panel.payments_escrow_lines'))
-    if #(view.escrow or {}) == 0 then add('- none') end
+    if #(view.escrow or {}) == 0 then add(L('panel.export_none')) end
     for _, line in ipairs(view.escrow or {}) do
         local to = line.owed_to or line.releasing_to or line.settled_to
         add(L('panel.payout'):format(tostring(line.id), tostring(line.slot or '-'),
             tostring(line.portion or '-'), holdsText(line), tostring(line.state),
-            to and (' | to ' .. tostring(to)) or '',
-            line.settled_at and (' | settled ' .. stamp(line.settled_at)) or ''))
+            to and (L('panel.export_to')):format(tostring(to)) or '',
+            line.settled_at and (L('panel.export_settled')):format(stamp(line.settled_at)) or ''))
     end
     add('')
     add(L('panel.open_proposals'))
-    if #(view.amendments or {}) == 0 then add('- none') end
+    if #(view.amendments or {}) == 0 then add(L('panel.export_none')) end
     for _, a in ipairs(view.amendments or {}) do
         add(L('panel.by_runs_out'):format(tostring(a.kind), tostring(a.proposer or '-'),
             stamp(a.expires_at), flat(a.payload or {})))
     end
     add('')
     add(L('panel.staff_notes'))
-    if #(staff.notes or {}) == 0 then add('- none') end
+    if #(staff.notes or {}) == 0 then add(L('panel.export_none')) end
     for _, note in ipairs(staff.notes or {}) do
         add(('- %s | %s | %s'):format(stamp(note.at), tostring(note.by), tostring(note.text)))
     end
@@ -3191,14 +3193,16 @@ local function actionSubject(data, src)
     return who
 end
 
---- A span in words: days where it is whole days, otherwise hours.
-local function spanWords(seconds)
+--- How long a measure runs, as the phrase its sentence takes: 'for 2
+--- days' where it is whole days, otherwise hours. Whole phrases with their
+--- plurals, so a translation words them itself.
+local function forSpan(seconds)
     if seconds % 86400 == 0 then
         local days = seconds // 86400
-        return days == 1 and '1 day' or (days .. ' days')
+        return (L(days == 1 and 'panel.for_days_one' or 'panel.for_days_many')):format(days)
     end
     local hours = seconds // 3600
-    return hours == 1 and '1 hour' or (hours .. ' hours')
+    return (L(hours == 1 and 'panel.for_hours_one' or 'panel.for_hours_many')):format(hours)
 end
 
 --- What a refused suspension or protection says.
@@ -3253,7 +3257,7 @@ H.suspend = function(src, data)
         return sanctionRefusal(err, L('panel.they_are_suspended_already_lift_it'))
     end
     return true, nil, (L('panel.is_suspended_from_placing_and_accepting'))
-        :format(who.name or L('panel.they'), days > 0 and ('for ' .. spanWords(days * 86400)) or L('panel.until_you_lift_it')),
+        :format(who.name or L('panel.they'), days > 0 and forSpan(days * 86400) or L('panel.until_you_lift_it')),
         { suspended = Measures.view('suspend', who.cid, identifies(src)) }
 end
 
@@ -3287,7 +3291,7 @@ H.protect = function(src, data)
         return sanctionRefusal(err, L('panel.they_are_protected_already_lift_it'))
     end
     return true, nil, (L('panel.is_protected_from_new_contracts_contracts'))
-        :format(who.name or L('panel.they'), hours > 0 and ('for ' .. spanWords(hours * 3600)) or L('panel.for_good')),
+        :format(who.name or L('panel.they'), hours > 0 and forSpan(hours * 3600) or L('panel.for_good')),
         { protected = Measures.view('protect', who.cid, identifies(src)) }
 end
 
@@ -3329,7 +3333,7 @@ H.manualPay = function(src, data)
         end
         return false, result, L('panel.not_paid_the_server_could_not')
     end
-    local whom = who.name or 'them'
+    local whom = who.name or L('panel.them')
     if result.paid then
         return true, nil, L('panel.paid_in_to'):format(amount, account, whom),
             { paid = true, owed = false }
@@ -3637,7 +3641,8 @@ H.targetReset = function(src, data)
         local held = deps.targetLimits.extendedUntil(row)
         if held then
             return (L('panel.their_cooldown_is_cleared_but_a'))
-                :format(math.max(1, math.ceil((held - os.time()) / 60)) .. ' min', BUYOUT_KEPT)
+                :format((L('panel.span_minutes')):format(tostring(math.max(1, math.ceil((held - os.time()) / 60)))),
+                    BUYOUT_KEPT)
         end
         return L('panel.their_cooldown_is_cleared_the_same') .. BUYOUT_KEPT
     end)

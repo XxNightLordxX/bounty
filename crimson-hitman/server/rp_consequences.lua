@@ -132,7 +132,11 @@ local function coordsOf(src)
     return { x = x, y = y, z = z or 0.0 }
 end
 
-local COMPASS = { 'north', 'north-east', 'east', 'south-east', 'south', 'south-west', 'west', 'north-west' }
+--- The eight points, by their locale keys (rp_consequences.dir_*): read when
+--- a report is made, so the words are the language in force.
+local COMPASS = { 'rp_consequences.dir_north', 'rp_consequences.dir_north_east', 'rp_consequences.dir_east',
+    'rp_consequences.dir_south_east', 'rp_consequences.dir_south', 'rp_consequences.dir_south_west',
+    'rp_consequences.dir_west', 'rp_consequences.dir_north_west' }
 
 --- Where somebody is going, as a compass point: from how they are moving
 --- when they are (faster than a walk), and from the way they face when they
@@ -151,7 +155,7 @@ function RpConsequences.directionOf(src)
         bearing = 360 - ((okH and tonumber(heading)) or 0)
     end
     bearing = bearing % 360
-    return COMPASS[(math.floor((bearing + 22.5) / 45) % 8) + 1]
+    return L(COMPASS[(math.floor((bearing + 22.5) / 45) % 8) + 1])
 end
 
 --- The area list, parsed once per list it is given.
@@ -248,7 +252,8 @@ local function witnessAlert(contract, hitmanCid, slot)
 
     local area = RpConsequences.areaOf(at)
     local phrase = pick(cfg.Phrases) or L('rp_consequences.a_person_was_seen_leaving_direction')
-    local said = phrase:gsub('{direction}', RpConsequences.directionOf(hitman.source))
+    local direction = RpConsequences.directionOf(hitman.source)
+    local said = phrase:gsub('{direction}', function() return direction end)
     said = clean((L('rp_consequences.near')):format(said:sub(1, 1):upper(), said:sub(2), area), 200)
     local title = clean(cfg.Title or L('rp_consequences.witness_report'), 60)
 
@@ -422,7 +427,7 @@ function RpConsequences.newsText(contract, hitmanCid)
     local whitelisted, shown = Identity.whitelistedTarget(contract)
     if not whitelisted and cfg.AllTargets ~= true then return nil end
     local job = whitelisted and (shown or contract.target_job) or contract.target_job
-    if type(job) ~= 'string' or job == '' or job == 'unemployed' then job = 'resident' end
+    if type(job) ~= 'string' or job == '' or job == 'unemployed' then job = L('rp_consequences.resident') end
     -- Where the target is, never where the hitman is: the post would say
     -- where the hitman went next. Nobody in the city: 'the city'.
     local target = Identity.byCitizenId(contract.target_cid)

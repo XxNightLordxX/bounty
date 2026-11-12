@@ -181,9 +181,18 @@ function Informant.describe(cid, mode, knownName)
         return { name = (actor and actor.name) or knownName or L('intel_informants.unknown_operative'),
             unknown = not ((actor and actor.name) or knownName) or nil }
     end
+    -- Where they were seen, by their job's label ('LS Customs'): the job's
+    -- internal name ('mechanic', 'unemployed') is no place a player knows.
+    -- Out of work, or a job with no label: the city.
+    local job = actor and actor.job
+    local place = nil
+    if actor then
+        local idle = type(job) ~= 'table' or job.name == 'unemployed' or job.type == 'none'
+        place = (not idle and Identity.jobLabel and Identity.jobLabel(job)) or L('intel_informants.the_city')
+    end
     return {
-        description = actor
-            and (L('intel_informants.seen_recently_around')):format(actor.job and actor.job.name or L('intel_informants.the_city'))
+        description = place
+            and (L('intel_informants.seen_recently_around')):format(place)
             or L('intel_informants.a_face_you_have_seen_before'),
     }
 end
@@ -191,6 +200,18 @@ end
 --- The words an answer is shown in.
 local function answerText(answer)
     return type(answer) == 'table' and (answer.name or answer.description) or nil
+end
+
+--- A placer look-up's answer as the store keeps it (JSON text, or the table
+--- itself on the memory store), or nil for a row that kept none.
+local function storedAnswer(raw)
+    if type(raw) == 'string' and raw ~= '' then
+        local ok, decoded = pcall(json.decode, raw)
+        raw = ok and decoded or nil
+    end
+    if type(raw) ~= 'table' then return nil end
+    if type(raw.name) ~= 'string' and type(raw.description) ~= 'string' then return nil end
+    return raw
 end
 
 --- Whether a contract is still one an informant can be bought on.
@@ -547,6 +568,8 @@ local function boughtBy(contractId, cid)
                 revealed = r.revealed == true or (tonumber(r.revealed) or 0) ~= 0,
                 alerted = r.alerted == true or (tonumber(r.alerted) or 0) ~= 0,
                 seq = tonumber(r.seq) or (#rows + 1),
+                -- What it found, as it was told (nil on a row from before).
+                answer = storedAnswer(r.answer),
             }
         end
     end
@@ -658,13 +681,18 @@ PLACER_LOOKUP = Intel.define('placerInformant', {
         local revealed = roll(rules.RevealChancePercent)
         local alerted = revealed and roll(rules.AlertChancePercent) or false
 
+        -- The answer, as it is now: kept with the purchase and shown from
+        -- there. Worked out again on every card, it followed today's
+        -- RevealMode, and a staff switch took a paid name away or turned a
+        -- description bought into the operative's name.
+        local answer = revealed and Informant.describe(row.hitman_cid, rules.RevealMode, row.hitman_name) or nil
         local record = { hitman_cid = row.hitman_cid, bought_at = os.time(), revealed = revealed,
-                         alerted = alerted, seq = #rows + 1 }
+                         alerted = alerted, seq = #rows + 1, answer = answer }
         rows[#rows + 1] = record
         local stored = {
             contract_id = contractId, placer_cid = actor.cid, hitman_cid = row.hitman_cid,
             bought_at = record.bought_at, revealed = revealed, alerted = alerted,
-            seq = record.seq,
+            seq = record.seq, answer = answer and json.encode(answer) or nil,
         }
         local wrote, err = pcall(function()
             if Storage.writePlacerInformant then Storage.writePlacerInformant(stored) end
@@ -687,9 +715,7 @@ PLACER_LOOKUP = Intel.define('placerInformant', {
         local label = labelOf(row)
         if not revealed then return { found = false, label = label, message = PLACER_MISS } end
         local out = { found = true, label = label }
-        for k, v in pairs(Informant.describe(row.hitman_cid, rules.RevealMode, row.hitman_name)) do
-            out[k] = v
-        end
+        for k, v in pairs(answer) do out[k] = v end
         return out
     end,
 })
@@ -712,8 +738,10 @@ function Informant.placerView(contract, cid, hitmen)
     for _, r in ipairs(rows) do
         local h = byCid[r.hitman_cid]
         if r.revealed and h then
-            local answer = Informant.describe(r.hitman_cid, Config.Intel.PlacerInformant.RevealMode,
-                h.hitman_name)
+            -- As it was bought. A row from before answers were kept has
+            -- none, and reads as it always did.
+            local answer = storedAnswer(r.answer)
+                or Informant.describe(r.hitman_cid, Config.Intel.PlacerInformant.RevealMode, h.hitman_name)
             out.found[#out.found + 1] = { label = labelOf(h), text = answerText(answer) }
         end
     end

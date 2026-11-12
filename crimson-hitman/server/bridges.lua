@@ -1087,6 +1087,22 @@ function Bridges.sendOutput(src, lines, notice)
     return events
 end
 
+--- A party's role on a contract (Admin.contractsOf), in words.
+local ROLE_WORDS = { target = 'bridges.role_target', client = 'bridges.role_client', hitman = 'bridges.role_hitman' }
+
+--- How a contract ended, in words: the stored code ('cancelled_by_creator')
+--- is no sentence. A code no locale names (one from a later version, or a
+--- path that writes its own) is shown as it is.
+---@param code any
+---@return string
+local function resolutionWords(code)
+    if type(code) ~= 'string' then return tostring(code) end
+    local key = 'bridges.resolution_' .. code
+    local english = rawget(_G, 'CrimsonLocales') and CrimsonLocales.en
+    if type(english) == 'table' and type(english[key]) == 'string' then return L(key) end
+    return code
+end
+
 --- Print to whoever ran the command — the console when there is no player.
 local function reply(src, line)
     line = plain(line)
@@ -1240,8 +1256,8 @@ function Bridges.installCommands(modules)
         reply(src, ('%s  %s  %s -> %s'):format(c.id, c.state, c.creator, c.target))
         reply(src, (L('bridges.slots_created')):format(
             c.claimed or 0, c.slots or 1, os.date('%Y-%m-%d %H:%M', c.created_at),
-            c.resolved_at and ('  resolved ' .. os.date('%Y-%m-%d %H:%M', c.resolved_at)
-                .. ' (' .. tostring(c.resolution) .. ')') or ''))
+            c.resolved_at and (L('bridges.timeline_resolved')):format(os.date('%Y-%m-%d %H:%M', c.resolved_at),
+                resolutionWords(c.resolution)) or ''))
 
         for i = 1, #view.escrow do
             local line = view.escrow[i]
@@ -1276,12 +1292,13 @@ function Bridges.installCommands(modules)
             for i = 1, #rows do
                 local row = rows[i]
                 reply(src, (L('bridges.10s_6s_on')):format(
-                    row.id, row.state, row.role, row.anonymous and ' (anon)' or '',
+                    row.id, row.state, ROLE_WORDS[row.role] and L(ROLE_WORDS[row.role]) or tostring(row.role),
+                    row.anonymous and L('bridges.contract_anon') or '',
                     tostring(row.target or '?'),
                     row.created_at and os.date('%Y-%m-%d %H:%M', row.created_at) or '',
-                    row.resolution and ('  (resolved: ' .. tostring(row.resolution) .. ')') or ''))
+                    row.resolution and (L('bridges.contract_resolved')):format(resolutionWords(row.resolution)) or ''))
             end
-            reply(src, ('Details: /%s <id>'):format(names.timeline))
+            reply(src, (L('bridges.details_timeline')):format(names.timeline))
         end)
     end
 
@@ -1323,17 +1340,17 @@ function Bridges.installCommands(modules)
             known[#known + 1] = ('%s %s'):format(key, tostring(value))
         end
         table.sort(known)
-        if #known > 0 then reply(src, '    known: ' .. table.concat(known, '; ')) end
+        if #known > 0 then reply(src, (L('bridges.review_known')):format(table.concat(known, '; '))) end
 
         local now = item.now or {}
         local said = {}
-        if now.contract then said[#said + 1] = 'contract ' .. tostring(now.contract) end
-        if now.buyout then said[#said + 1] = 'buyout ' .. tostring(now.buyout) end
+        if now.contract then said[#said + 1] = (L('bridges.review_now_contract')):format(tostring(now.contract)) end
+        if now.buyout then said[#said + 1] = (L('bridges.review_now_buyout')):format(tostring(now.buyout)) end
         if now.lines then
             said[#said + 1] = (L('bridges.lines_held_settled_not_in_the'))
                 :format(now.lines.held, now.lines.settled, now.lines.missing)
         end
-        if #said > 0 then reply(src, '    now: ' .. table.concat(said, '; ')) end
+        if #said > 0 then reply(src, (L('bridges.review_now')):format(table.concat(said, '; '))) end
 
         if item.unwritten then
             reply(src, L('bridges.the_store_has_not_taken_this'))
@@ -1346,7 +1363,7 @@ function Bridges.installCommands(modules)
         elseif item.state == 'resolved' then
             local r = item.resolution or {}
             reply(src, (L('bridges.resolved_by')):format(tostring(r.action),
-                r.cid and (' to ' .. tostring(r.cid)) or '', tostring(item.resolved_by),
+                r.cid and (L('bridges.review_resolved_to')):format(tostring(r.cid)) or '', tostring(item.resolved_by),
                 item.resolved_at and (' ' .. os.date('%Y-%m-%d %H:%M', item.resolved_at)) or '',
                 r.note and (' (' .. r.note .. ')') or ''))
         end
@@ -1629,7 +1646,7 @@ function Bridges.installCommands(modules)
         for i = 1, #who.hitmen do
             local h = who.hitmen[i]
             reply(src, ('%-8s %s  %s%s'):format(
-                h.alias or 'operative', h.cid, h.name,
+                h.alias or L('bridges.operative_fallback'), h.cid, h.name,
                 h.anonymous and L('bridges.listed_anonymously') or ''))
         end
     end, true)
@@ -1892,6 +1909,12 @@ function Bridges.installBuyoutCommand(modules)
             -- printed the raw code, "Could not buy it out: incapacitated".
             modules.ratelimit.refund(actor, 'bailout')
             if err == CH.ERR.INSUFFICIENT and type(third) == 'table' and tonumber(third.need) then
+                -- Short of it even across both accounts: moving money from
+                -- one to the other cannot help, so it is not what they are
+                -- told (the app says the same, ui/app.js).
+                if third.short == true then
+                    return answer(src, (L('bridges.could_not_buy_it_out_short')):format(Words.dollars(third.need, 'none')))
+                end
                 return answer(src, (L('bridges.could_not_buy_it_out_your')):format(Words.dollars(third.need, 'none')))
             end
             if err == CH.ERR.TERMS_CHANGED and type(third) == 'table' and tonumber(third.amount) then

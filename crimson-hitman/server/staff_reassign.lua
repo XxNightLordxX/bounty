@@ -313,6 +313,11 @@ local MESSAGES = {
     [CH.ERR.BLACKLISTED_JOB] = L('staff_reassign.that_players_job_is_barred_from'),
     [CH.ERR.APP_PAUSED] = L('staff_reassign.the_app_is_paused_config_holds'),
     [CH.ERR.ANONYMITY_OFF] = L('staff_reassign.accepting_anonymously_is_off_on_this'),
+    [CH.ERR.RETAKE_TOO_SOON] = L('staff_reassign.that_hitman_walked_away_from_it'),
+    [CH.ERR.TOO_LITTLE_TIME] = L('staff_reassign.it_runs_out_too_soon_to'),
+    [CH.ERR.TERMS_CHANGED] = L('staff_reassign.its_terms_changed_while_it_was'),
+    [CH.ERR.HOLD_RELEASED] = L('staff_reassign.its_hold_was_released_while_it'),
+    [CH.ERR.FEATURE_OFF] = L('staff_reassign.what_it_needs_is_switched_off'),
 }
 
 local function said(err, detail)
@@ -321,7 +326,9 @@ local function said(err, detail)
         local inner = detail and detail.err
         local back = detail and detail.reinstated or 0
         return (L('staff_reassign.the_new_hitman_could_not_be')):format(
-            MESSAGES[inner] or (L('staff_reassign.their_accept_was_refused') .. tostring(inner) .. ').'),
+            -- Never the code: a refusal with no words of its own here is
+            -- said as one that would not go through now.
+            MESSAGES[inner] or L('staff_reassign.their_accept_would_not_go_through'),
             back == (detail and detail.removed or 0)
                 and L('staff_reassign.everybody_taken_off_it_was_put')
                 or (L('staff_reassign.of_operative_taken_off_it_could'))
@@ -331,7 +338,7 @@ local function said(err, detail)
         return (L('staff_reassign.only_operative_were_taken_off_it'))
             :format(detail and detail.removed or 0, detail and detail.assigned and L('staff_reassign.the_new_hitman_is_on_it') or '')
     end
-    return base or (L('staff_reassign.not_reassigned_their_accept_was_refused') .. tostring(err) .. ').')
+    return base or L('staff_reassign.not_reassigned_their_accept_would_not')
 end
 
 local function subjectOf(src, data)
