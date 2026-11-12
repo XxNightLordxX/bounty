@@ -724,7 +724,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
 ## 22. Intel (every paid look-up)
 
-- [ ] Settings, Game rules: one area **Intel** holds every informant, tip, go-dark, informant-in-person and rumours setting; Rewards & money shows their prices under **Intel prices**; Features lists every Intel group after Anonymity and before the advisory.
+- [ ] Game rules: one area **Intel** (after Buyouts) holds every informant, tip, go-dark, informant-in-person and rumours setting; **Rewards & payouts** shows their prices under **Intel prices**.
 - [ ] Turn the target's informant, the placer's informant and the tip on (Intel): each is sold, priced and refused as before; a price changed in the panel while the dialog is open is refused, not charged.
 - [ ] Freeze the target (Players) while a look-up or tip is being bought, or end the contract: the buyer gets the full price back (owed at next login if away; a tip that cannot be credited goes to Needs review).
 - [ ] Turn **Go dark** on: a tipped-off target goes dark from On me; a hitman's tip meanwhile says the informant could not find them and gives the money back.
@@ -748,7 +748,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 
 ## 25. Record & standing
 
-- [ ] Game rules shows one area, **Record & standing**, holding Criminal progression (switch, trust per kill and per handover), Reputation, Tiered board, Hitman heat and Placer record; Features lists the five groups together after Intel; the old Progression, Roleplay: Reputation and Improvements: Placer record / Hitman heat / Tiered board groups are gone.
+- [ ] Game rules shows one area, **Record & standing** (after Intel), holding Criminal progression (switch, trust per kill and per handover), Reputation, Tiered board, Hitman heat and Placer record; the **Switches** filter shows their on/off switches together; the old Progression, Roleplay: Reputation and Improvements: Placer record / Hitman heat / Tiered board groups are gone.
 - [ ] Complete a contract (sc-blackmarket started): trust is given as before (10 a kill, 20 a handover); the hitman's Ledger shows the same record (completed, failed, rate, standing) and the panel's player card the same counters.
 - [ ] Turn each of Reputation, Tiered board, Hitman heat and Placer record on from the panel in turn: each behaves as its own checks above say, with no restart; turned off, each stops at once.
 - [ ] Restart with heat given: it is still there until it cools, and the minute job (`record.tick` in /ch-diag) clears it after.
