@@ -171,13 +171,15 @@ Schema.SQL = {
 Schema.CREATE = {
     -- The organisations: one row each, the job it is in qbx_core, and the
     -- staff's settings for it as JSON (cuts, bounds, the office rule, the
-    -- notice, the boss menu layout).
+    -- notice, the boss menu layout, the activity log and discipline):
+    -- MEDIUMTEXT, since TEXT's 64 KB filled up. Widened on existing
+    -- databases by migrate (Schema.WIDENED).
     [[CREATE TABLE IF NOT EXISTS crimson_orgs (
         id VARCHAR(32) PRIMARY KEY,
         job VARCHAR(32) NOT NULL,
         label VARCHAR(64),
         job_type VARCHAR(32),
-        settings TEXT,
+        settings MEDIUMTEXT,
         created_at INT NOT NULL,
         updated_at INT
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
@@ -259,13 +261,15 @@ Schema.CREATE = {
         shown_name VARCHAR(48),
         INDEX idx_org_splits_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
-    -- Sign-ups waiting for a boss or staff.
+    -- Sign-ups waiting for a boss or staff. The body holds the answers to
+    -- the recruitment form as JSON: TEXT, widened from VARCHAR(255) on
+    -- existing databases by migrate (Schema.WIDENED).
     [[CREATE TABLE IF NOT EXISTS crimson_org_applications (
         id VARCHAR(48) PRIMARY KEY,
         org_id VARCHAR(32) NOT NULL,
         cid VARCHAR(32) NOT NULL,
         name VARCHAR(64),
-        body VARCHAR(255),
+        body TEXT,
         state VARCHAR(12) NOT NULL,
         decided_by VARCHAR(64),
         created_at INT NOT NULL,
@@ -283,6 +287,16 @@ Schema.CREATE = {
         created_at INT NOT NULL,
         INDEX idx_org_messages_org (org_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
+}
+
+--- Columns declared wider than an older version made them: [table] =
+--- { column = the type now }. mysql's migrate widens one the database
+--- reports narrower with MODIFY COLUMN and its declaration above, which
+--- keeps every value (a wider text type holds all the narrower one did).
+--- Only ever widened, never narrowed, and only the columns named here.
+Schema.WIDENED = {
+    crimson_orgs = { settings = 'mediumtext' },
+    crimson_org_applications = { body = 'text' },
 }
 
 --- The short names, for a backend to walk.

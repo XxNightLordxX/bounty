@@ -215,7 +215,9 @@ describe('Review 84 VAR-2: a member is told staff did it, never "a boss"', funct
         truthy(s.org.decideAccept(STAFF, waiting.id, true))
         truthy(has(said.RECRUIT1, 'Your accept was approved by staff: the contract is yours.'))
         -- A dossier staff attach.
-        local c2 = OW.place(s, f.creator, 'LIEUT001')
+        -- On somebody outside the organisation: one on its own member is
+        -- never held for it (Review 85 C7-2).
+        local c2 = OW.place(s, f.creator, 'READER01')
         truthy(s.org.receiveContract(c2.id, 'BOSS0001'))
         truthy(s.org.assignContract(STAFF, c2.id, 'RECRUIT1'))
         truthy(s.org.writeDossier(STAFF, c2.id, { notes = 'Quiet job' }))

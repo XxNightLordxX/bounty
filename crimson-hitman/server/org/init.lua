@@ -515,6 +515,28 @@ function Org.init(d)
     end
 end
 
+--- Whether qbx_core already has a job by this name that is not this
+--- organisation's: one of another type (police, ambulance, ...). Registering
+--- over it would replace its grades and take its holders out of it.
+---@param name string the job
+---@param jobType string|nil the organisation's job type
+---@return boolean
+local function foreignJob(name, jobType)
+    local ok, def = pcall(function() return Framework().GetJob(name) end)
+    if not ok or type(def) ~= 'table' then return false end
+    return def.type ~= (jobType or Config.Organisation.JobType or 'hitman')
+end
+
+--- Player text cut to at most `bytes`, by whole characters: a cut that
+--- split one drops the split half, never leaves it (utf8mb4 refuses a
+--- broken sequence, error 1366, and the page shows it as garbage).
+---@param text string
+---@param bytes integer
+---@return string
+local function cutText(text, bytes)
+    return Util.toValidUtf8(Util.toValidUtf8(text):sub(1, bytes))
+end
+
 --- Register one organisation's job and make sure of its funds account.
 local function bring(org)
     if Jobs.register(org) then
@@ -556,7 +578,13 @@ function Org.boot(live)
         for _, id in ipairs(first.settings.others) do
             if type(id) == 'string' and not Orgs[id] then
                 local okO, other = pcall(load, id)
-                if okO and other then
+                if okO and other and foreignJob(other.job, other.jobType) then
+                    -- Saved by an older build over a framework job: never
+                    -- registered over it again.
+                    Log.always(('the hitman organisation %s is left out: qbx_core already has a job %s of another '
+                        .. 'type, which it would replace; remove it in the panel or rename that job')
+                        :format(id, tostring(other.job)))
+                elseif okO and other then
                     Orgs[id] = other
                     Order[#Order + 1] = id
                 else
@@ -600,7 +628,7 @@ function Org.validate(warn)
         if type(cfg[key]) ~= 'string' or cfg[key] == '' or #cfg[key] > 64 then back(key, L('org.must_be_a_short_text')) end
     end
     if cfg.ExternalChanges ~= 'adopt' and cfg.ExternalChanges ~= 'revert' then
-        back('ExternalChanges', "is 'adopt' or 'revert'")
+        back('ExternalChanges', L('org.is_adopt_or_revert'))
     end
     for _, key in ipairs({ 'OfficeRadius', 'DrawMetres' }) do
         local n = tonumber(cfg[key])
@@ -826,7 +854,7 @@ function Org.authorize(org, who, code)
     if who.staff then return nil end
     if not org.members[who.cid] then return ERR.NOT_MEMBER end
     if not Engine.holds(org, who.cid, code) then return ERR.NO_POWER end
-    if Engine.needsOffice(org, code) and not Org.inOffice(org, who.source) then return ERR.OFFICE end
+    if Engine.needsOffice(org, code, who.cid) and not Org.inOffice(org, who.source) then return ERR.OFFICE end
     return nil
 end
 
@@ -1046,7 +1074,11 @@ function Org.answerInvite(actor, id, accept)
     if org.members[actor.cid] then return fail(ERR.ALREADY) end
     if memberElsewhere(actor.cid, org) then return fail(ERR.OTHER_ORG) end
     local why = bossMayHire(org, invite.by, actor.cid, invite.grade)
-    if why then return fail(why == ERR.LIMIT and ERR.LIMIT or ERR.RULE) end
+    if why == ERR.LIMIT then return fail(ERR.LIMIT) end
+    if why then
+        local msg = L('org.that_invite_can_no_longer_be_accepted')
+        return false, ERR.RULE, { message = msg }, msg
+    end
     local member, code = enrol(org, { cid = actor.cid, name = actor.name, source = actor.source }, invite.grade,
         Config.Organisation.SetPrimaryOnHire ~= false)
     if not member then return fail(ERR.REFUSED, { qbx = code }) end
@@ -1064,7 +1096,7 @@ function Org.fire(who, cid, reason)
     if err then return fail(err) end
     local member = type(cid) == 'string' and org.members[cid]
     if not member then return fail(ERR.NOT_FOUND) end
-    reason = type(reason) == 'string' and Util.toValidUtf8(reason):sub(1, 160) or nil
+    reason = type(reason) == 'string' and cutText(reason, 160) or nil
     if not reason or not reason:find('%S') then return fail(ERR.INVALID) end
     if not who.staff then
         local why = Engine.mayActOn(org, who.cid, cid)
@@ -1111,6 +1143,13 @@ function Org.memberLeft(org, cid)
     if not ok then
         Log.always(('organisation %s: handing over the dead drops of a member who left raised: %s; '
             .. 'they are paid when the drop runs out'):format(tostring(org.id), tostring(err)))
+    end
+    -- Their internal-contract requests withdrawn: never placed in their
+    -- name once they are gone.
+    local okR, errR = pcall(Extras3.requestsLeft, org, cid)
+    if not okR then
+        Log.always(('organisation %s: withdrawing the requests of a member who left raised: %s'):format(
+            tostring(org.id), tostring(errR)))
     end
 end
 
@@ -1170,7 +1209,7 @@ function Org.suspend(who, cid, hours, reason)
     end
     member.suspended_until = hours > 0 and (now() + hours * 3600) or nil
     saveMember(member)
-    reason = type(reason) == 'string' and Util.toValidUtf8(reason):sub(1, 160) or nil
+    reason = type(reason) == 'string' and cutText(reason, 160) or nil
     record('org_member_suspended', who, { member = cid, hours = hours, reason = reason })
     if hours > 0 then
         tell(cid, L('org.you_are_suspended_from_taking_contracts'):format(hours,
@@ -1457,7 +1496,7 @@ end
 ---@param codename string
 ---@return string
 function Org.codenameLabel(codename)
-    return codename .. ' (codename)'
+    return (L('org.codename_shown')):format(codename)
 end
 
 --- The split kept for one hitman on one contract, if any (the name shown
@@ -1835,7 +1874,16 @@ function Org.officeRule(who, code, on)
         if not Engine.holds(org, who.cid, code) then return fail(ERR.NOT_HELD) end
         local staff = type(org.settings.officeStaff) == 'table' and org.settings.officeStaff or Powers.officeDefaults()
         if not on and staff[code] then return fail(ERR.LOCKED) end
+        -- A rule a boss above them set is theirs to keep: never lifted, nor
+        -- taken over, from below.
+        local grades = type(org.settings.officeBossGrade) == 'table' and org.settings.officeBossGrade or {}
+        local mine = org.members[who.cid].grade
+        if org.settings.officeBoss[code] and tonumber(grades[code]) and tonumber(grades[code]) > mine then
+            return fail(ERR.RANK)
+        end
         org.settings.officeBoss[code] = on or nil
+        grades[code] = on and mine or nil
+        org.settings.officeBossGrade = grades
     end
     saveOrgRow()
     record('org_office_rule', who, { power = code, on = on })
@@ -2174,7 +2222,9 @@ function Org.setAccess(who, grade, spec, code)
             access.rule = value
         elseif key == 'whitelisted' then
             if type(value) ~= 'boolean' then return fail(ERR.INVALID) end
-            access.whitelisted = value == false and false or nil
+            -- 'Not allowed' is kept as false; allowed is the default (nil).
+            -- (`value == false and false or nil` can only ever give nil.)
+            if value == false then access.whitelisted = false else access.whitelisted = nil end
         elseif key == 'maxAtOnce' then
             access.maxAtOnce = whole(value, 1, 50)
             if not access.maxAtOnce then return fail(ERR.INVALID) end
@@ -2508,7 +2558,7 @@ function Org.deposit(who, amount, account, nonce)
         else
             depositOwed(org, who, ref, amount, account, charged, raised, arrived, before)
         end
-        return fail(ferr == 'busy' and ERR.BUSY or ferr == 'bank_down' and ERR.BANK_DOWN or ERR.BANK_REFUSED)
+        return fail(fundsErr(ferr, org))
     end
     Funds.settled(charged)
     record('org_funds_deposit', who, { amount = amount, account = account }, nil, true)
@@ -2815,7 +2865,7 @@ local function payOne(org, member, amount, period)
     if Paying[ref] then return 'repeat' end
     Paying[ref] = true
     local ok, ferr, repeated = Funds.debit(org, amount, { ref = ref, kind = 'salary', actor = member.cid,
-        reason = 'grade ' .. tostring(member.grade), title = L('org.salary') })
+        reason = (L('org.salary_grade_reason')):format(tostring(member.grade)), title = L('org.salary') })
     if repeated then
         local how, why, debited = settleRepeat(org, member, amount, period, ref)
         Paying[ref] = nil
@@ -2981,7 +3031,7 @@ Org.SPOTS = {
     npc = { power = nil, max = function() return 20 end, everyone = false,
         label = L('org.npc_spots'), one = L('org.npc_spot'), icon = 'user-tie' },
     place = { power = nil, max = function() return 50 end, everyone = false,
-        label = L('org.other_organisation_places'), one = 'place', icon = 'location-dot' },
+        label = L('org.other_organisation_places'), one = L('org.place_one'), icon = 'location-dot' },
     -- Organisation extras 3 (server/org/extras3.lua): staff only. A
     -- territory is never sent to any game (hidden).
     deaddrop = { power = nil, max = function() return 3 end, everyone = false,
@@ -2989,7 +3039,7 @@ Org.SPOTS = {
     garage = { power = nil, max = function() return 1 end, everyone = false,
         label = L('org.garage'), one = L('org.garage_spot'), icon = 'warehouse' },
     territory = { power = nil, max = function() return 10 end, everyone = false, hidden = true,
-        label = L('org.territory'), one = 'territory', icon = 'map', radius = { min = 10, max = 1000, default = 150 } },
+        label = L('org.territory'), one = L('org.territory_one'), icon = 'map', radius = { min = 10, max = 1000, default = 150 } },
 }
 Org.SPOT_ORDER = { 'office', 'signup', 'meeting', 'npc', 'place', 'deaddrop', 'garage', 'territory' }
 
@@ -3033,7 +3083,7 @@ registerSpots = function()
         Places.kind(kind, {
             group = 'org', label = def.label, one = def.one, icon = def.icon,
             fields = { label = true, radius = true, blip = true, enabled = true }, labelMax = 64,
-            defaultLabel = kind, single = kind == 'office' or kind == 'garage',
+            defaultLabel = def.one or kind, single = kind == 'office' or kind == 'garage',
             radius = def.radius or { min = 0.5, max = 50, default = 2.0 },
             owner = function() return Org.current() and Cur().id or nil end,
             ready = function()
@@ -3245,7 +3295,7 @@ function Org.apply(actor, text, answers)
     end
     for _, a in pairs(org.applications) do if a.cid == actor.cid then return fail(ERR.ALREADY) end end
     if text ~= nil and type(text) ~= 'string' then return fail(ERR.INVALID) end
-    text = text and Util.toValidUtf8(text):gsub('%c', ' '):sub(1, 255) or nil
+    text = text and cutText((Util.toValidUtf8(text):gsub('%c', ' ')), 255) or nil
     if text and text:find('[<>]') then return fail(ERR.INVALID) end
     if Config.Organisation.ApplyAtSignupOnly ~= false and not atSignup(org, actor.source) then
         return fail(ERR.RULE, { message = L('org.applications_are_taken_only_at_a') })
@@ -3363,6 +3413,11 @@ function Org.layout(who, spec)
     if err then return fail(err) end
     if type(spec) ~= 'table' then return fail(ERR.INVALID) end
     local layout = { labels = {}, hidden = {} }
+    -- A boss hides tabs only from the grades below their own: what is set
+    -- for their grade and above stays as it is.
+    local mine = not who.staff and org.members[who.cid].grade or nil
+    local before = type(org.settings.layout) == 'table' and type(org.settings.layout.hidden) == 'table'
+        and org.settings.layout.hidden or {}
     for tab, text in pairs(type(spec.labels) == 'table' and spec.labels or {}) do
         if not TABS[tab] then return fail(ERR.INVALID) end
         if text ~= false then
@@ -3377,9 +3432,23 @@ function Org.layout(who, spec)
         for _, g in ipairs(grades) do
             g = tonumber(g)
             if not g or not org.roles[g] then return fail(ERR.INVALID) end
-            list[#list + 1] = g
+            -- Their own grade and above: kept as it was (below), whatever
+            -- the page sent back.
+            if not (mine and g >= mine) then list[#list + 1] = g end
         end
         layout.hidden[tab] = list
+    end
+    if mine then
+        for tab, grades in pairs(before) do
+            if TABS[tab] and type(grades) == 'table' then
+                for _, g in ipairs(grades) do
+                    if tonumber(g) and tonumber(g) >= mine then
+                        layout.hidden[tab] = layout.hidden[tab] or {}
+                        table.insert(layout.hidden[tab], tonumber(g))
+                    end
+                end
+            end
+        end
     end
     org.settings.layout = layout
     saveOrgRow()
@@ -3482,7 +3551,7 @@ function Org.mine(actor)
     local office, bounds = {}, {}
     local out
     for code in pairs(held) do
-        if Engine.needsOffice(org, code) then office[code] = true end
+        if Engine.needsOffice(org, code, actor.cid) then office[code] = true end
         -- The staff bounds of the powers they hold, for the boss menu to
         -- say before it is asked (the server checks them again).
         local spec = Powers.BY_CODE[code]
@@ -3693,12 +3762,23 @@ function Org.create(who, spec)
     local label = cleanName(spec.label, 64)
     if not label then return fail(ERR.INVALID, { message = L('org.a_label_of_1_64_characters') }) end
     if #Order >= Org.maxOrgs() then
-        return fail(ERR.LIMIT, { message = (L('org.at_the_most_organisations_staff_set')
-            .. 'MaxOrganisations).'):format(Org.maxOrgs()) })
+        local msg = (L('org.at_the_most_organisations_staff_set')):format(Org.maxOrgs())
+        return false, ERR.LIMIT, { message = msg }, msg
     end
     for _, o in pairs(Orgs) do
         if o.id == job or o.job == job then
             return fail(ERR.ALREADY, { message = L('org.another_organisation_already_uses_that_job') })
+        end
+    end
+    -- Never a job qbx_core already has that this resource did not make: only
+    -- one of this resource's own stored organisations (its type, its row)
+    -- being brought back may be registered again.
+    local exists = select(2, pcall(function() return Framework().GetJob(job) end))
+    if type(exists) == 'table' then
+        local stored = select(2, pcall(deps.storage.readOrgRow, 'orgs', job))
+        if foreignJob(job, Config.Organisation.JobType) or not (type(stored) == 'table' or RegisteredSeq[job]) then
+            local msg = L('org.qbx_core_already_has_a_job')
+            return false, ERR.ALREADY, { message = msg }, msg
         end
     end
     local ok, org = pcall(load, job, { job = job, label = label, jobType = Config.Organisation.JobType })

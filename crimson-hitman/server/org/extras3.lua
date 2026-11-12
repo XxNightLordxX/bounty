@@ -60,6 +60,7 @@ local Window = CrimsonBoot.require('server.lib.window')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Util = CrimsonBoot.requireShared('util')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local Log = CrimsonBoot.requireShared('log')
 local L = CrimsonBoot.requireShared('locale').t
 
 local Extras3 = {}
@@ -79,7 +80,7 @@ Extras3.API = Org
 --- escrow's gate pays one next().
 local Drops = {}
 
---- Vehicles out of the garage: [cid] = { entity, org, model, plate, at }.
+--- Vehicles out of the garage: [cid] = { entity, org, model, plate, at, adapter }.
 --- Kept in memory: a restart takes every one away (onResourceStop).
 local Vehicles = {}
 
@@ -195,7 +196,13 @@ function Extras3.logAction(action, who, detail)
     local by = who.staff and 'staff' or who.cid
     local member = type(detail) == 'table' and type(detail.member) == 'string' and detail.member or nil
     keep(org, action, by, member, detail)
-    kit.save()
+    -- The action itself is already saved: a log line the store refuses is
+    -- said in the console, never the boss's action refused for it.
+    local saved, err = pcall(kit.save)
+    if not saved then
+        Log.always(('organisation %s: the activity log could not be saved: %s'):format(tostring(org.id),
+            Util.dbError and Util.dbError(err) or tostring(err)))
+    end
 end
 
 --- An accept by a member (Org.afterAccept). Not an anonymous one: the
@@ -577,6 +584,25 @@ function Extras3.memberLeft(org, cid)
     return n
 end
 
+--- Somebody no longer a member: every internal-contract request they asked
+--- for is declined (`left`), so staff cannot place it in their name later
+--- and the slot frees up.
+---@param org table
+---@param cid string
+---@return integer how many
+function Extras3.requestsLeft(org, cid)
+    if type(org) ~= 'table' or type(cid) ~= 'string' or type(org.settings.internal) ~= 'table' then return 0 end
+    local n = 0
+    for _, r in pairs(org.settings.internal) do
+        if r.state == 'pending' and r.by == cid then
+            r.state, r.decided, r.why = 'declined', now(), 'left'
+            n = n + 1
+        end
+    end
+    if n > 0 then kit.save() end
+    return n
+end
+
 --- Staff settle a drop now: 'release' (handed over) or 'refund'.
 function Org.dropSettle(who, handle, how)
     local org = O.current()
@@ -702,12 +728,19 @@ local function plate()
     return s
 end
 
+--- Take a vehicle away: through the adapter it was made with (kept on it),
+--- whatever Integrations.Garage says now. With no adapter at all the entry
+--- is kept, so the car is never left in the world untracked; it goes once
+--- an adapter is back.
+---@return boolean removed
 local function removeVehicle(cid)
     local v = Vehicles[cid]
-    if not v then return end
+    if not v then return true end
+    local g = v.adapter or garage()
+    if not g then return false end
     Vehicles[cid] = nil
-    local g = garage()
-    if g and v.entity then pcall(g.remove, v.entity) end
+    if v.entity then pcall(g.remove, v.entity) end
+    return true
 end
 
 local function atGarage(org, src, extra)
@@ -774,7 +807,7 @@ function Org.garageTake(who, model)
     pcall(g.prepare, entity, p, who.source)
     local k = keys()
     if k and k.GiveKeys then pcall(k.GiveKeys, who.source, entity) end
-    Vehicles[who.cid] = { entity = entity, org = org.id, model = model, plate = p, at = now() }
+    Vehicles[who.cid] = { entity = entity, org = org.id, model = model, plate = p, at = now(), adapter = g }
     Moves.add(who.cid, now())
     kit.record('org_vehicle_out', { cid = who.cid }, { model = model })
     return true, nil, { model = model, plate = p }
@@ -788,17 +821,20 @@ function Org.garageReturn(who)
     if not on('Garage') then return fail(ERR.FEATURE_OFF) end
     local v = Vehicles[who.cid]
     if not v or v.org ~= org.id then return fail(ERR.NOT_FOUND) end
-    local g = garage()
+    local g = v.adapter or garage()
+    if not g then return fail(ERR.RULE, { message = L('org_extras3.the_garage_needs_a_vehicle_adapter') }) end
     local spot = spotOf(org, 'garage')
     local reach = distanceSetting('GarageReturnMetres', 15.0, 2.0, 200.0)
-    if spot and g then
+    if spot then
         local okC, at = pcall(g.coords, v.entity)
         local exists = select(2, pcall(g.exists, v.entity))
         if exists and (not okC or not Geo.near(at, spot, reach)) then
             return fail(ERR.RULE, { message = (L('org_extras3.bring_it_within_m_of_the')):format(reach) })
         end
     end
-    removeVehicle(who.cid)
+    if not removeVehicle(who.cid) then
+        return fail(ERR.RULE, { message = L('org_extras3.the_garage_needs_a_vehicle_adapter') })
+    end
     kit.record('org_vehicle_returned', { cid = who.cid }, { model = v.model })
     return true
 end
@@ -832,7 +868,9 @@ function Org.garageRemove(who, cid)
     if not who.staff then return fail(ERR.NO_POWER) end
     local v = type(cid) == 'string' and Vehicles[cid]
     if not v or v.org ~= org.id then return fail(ERR.NOT_FOUND) end
-    removeVehicle(cid)
+    if not removeVehicle(cid) then
+        return fail(ERR.RULE, { message = L('org_extras3.the_garage_needs_a_vehicle_adapter') })
+    end
     kit.record('org_vehicle_removed', who, { member = cid, model = v.model })
     return true
 end
@@ -916,6 +954,15 @@ function Org.internalDecide(who, id, approve)
         kit.save()
         return fail(ERR.RULE, { message = L('org_extras3.they_are_no_longer_a_member') })
     end
+    -- The boss who asked, checked again as at the request: still a member,
+    -- still holding K8 and still above the member.
+    if not org.members[r.by] or not O.Engine.holds(org, r.by, 'K8') or mayActOn(org, { cid = r.by }, r.target) then
+        r.state, r.decided = 'declined', now()
+        kit.save()
+        kit.record('org_internal_decided', who, { member = r.target, state = 'declined', kind = 'asker' })
+        tell(r.by, L('org_extras3.staff_declined_your_request_for_an'))
+        return fail(ERR.RULE, { message = L('org_extras3.the_boss_who_asked_may_no_longer') })
+    end
     -- The boss's reason as given: a marker in it would tell every card the
     -- target's own organisation placed it (staff see that it is internal
     -- from org_internal_decided and the request's row).
@@ -953,7 +1000,11 @@ local function handler(org, actor)
     if not mineId and Config.Organisation.HandlerAssigns ~= false and on('OrgContracts') and onDuty and not suspended then
         local oldest, oldestAt
         for id, entry in pairs(org.settings.orgContracts) do
-            if entry.state == 'waiting' and (not oldestAt or entry.at < oldestAt) then oldest, oldestAt = id, entry.at end
+            -- Never one the member placed or is the target of.
+            if entry.state == 'waiting' and (not oldestAt or entry.at < oldestAt)
+                and not O.Extras.partyTo(actor.cid, id) then
+                oldest, oldestAt = id, entry.at
+            end
         end
         if oldest then
             -- As a boss's K4 would, by the handler: the member then has
@@ -1178,11 +1229,21 @@ function Extras3.init(d)
 end
 
 --- Every organisation (re)loaded: the drops waiting, from their settings.
+--- A vehicle out for an organisation no longer loaded (Organisation or
+--- SeveralOrganisations switched off live) is taken away now: no tick
+--- visits it any more.
 function Extras3.loaded()
     Drops = {}
+    local loaded = {}
     for _, org in ipairs(O.all()) do
+        loaded[org.id] = true
         for key in pairs(org.settings.drops) do Drops[key] = org.id end
     end
+    local gone = {}
+    for cid, v in pairs(Vehicles) do
+        if not loaded[v.org] then gone[#gone + 1] = cid end
+    end
+    for _, cid in ipairs(gone) do removeVehicle(cid) end
 end
 
 --- Everything out of the garage taken away (the resource stopping:

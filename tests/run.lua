@@ -793,6 +793,7 @@ local suites = {
     'release_spec',
     'player_review_spec',
     'review84_fixes2_spec',
+    'review85_org_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

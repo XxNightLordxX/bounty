@@ -87,6 +87,10 @@ function Sim.reset()
     -- declaration, a table here means it was created by an older version.
     Sim.existing = nil
     Sim.existingIndexes = nil
+    -- [table] = { column = data type } an older version made a column in
+    -- ('varchar', 'text'): answered as DATA_TYPE. A column not named here
+    -- answers none, which migrate never widens.
+    Sim.existingTypes = {}
     Sim.altered = {}
 end
 
@@ -137,6 +141,9 @@ local function parseAlter(sql)
     if convertedIn then
         return { table_ = convertedIn, charset = charset, collation = collation, sql = sql }
     end
+
+    local widenedIn, widened, kind = sql:match('^ALTER TABLE ([%w_]+) MODIFY COLUMN ([%w_]+) (%a+)')
+    if widenedIn then return { table_ = widenedIn, modified = widened, kind = kind:lower(), sql = sql } end
 
     local table_, rest = sql:match('^ALTER TABLE ([%w_]+) ADD (.+)$')
     if not table_ then return nil end
@@ -272,8 +279,10 @@ function Sim.install(Natives)
                         collation = charset .. '_general_ci'
                     end
                 end
+                local types = Sim.existing and Sim.existing[table_] and Sim.existingTypes[table_]
                 rows[#rows + 1] = { COLUMN_NAME = column, COLUMN_KEY = '',
-                    CHARACTER_SET_NAME = charset, COLLATION_NAME = collation }
+                    CHARACTER_SET_NAME = charset, COLLATION_NAME = collation,
+                    DATA_TYPE = types and types[column] or nil }
             end
             -- Which column is the table's primary key (COLUMN_KEY 'PRI').
             local key
@@ -351,6 +360,9 @@ function Sim.install(Natives)
                     Sim.existingIndexes[change.table_][change.index] = true
                 end
                 if change.engine then Sim.engines[change.table_] = change.engine end
+                if change.modified and Sim.existingTypes[change.table_] then
+                    Sim.existingTypes[change.table_][change.modified] = change.kind
+                end
             end
         end
 

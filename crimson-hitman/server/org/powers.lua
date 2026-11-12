@@ -28,7 +28,7 @@ Powers.LIST = {
       about = L('org_powers.add_a_player_standing_nearby_to') },
     { code = 'M3', area = 'members', label = L('org_powers.fire'), office = true, limits = { 'FireCooldownMinutes' },
       about = L('org_powers.remove_a_member_of_a_lower') },
-    { code = 'M4', area = 'members', label = 'Promote / demote', limits = { 'PromotionsPerDay' },
+    { code = 'M4', area = 'members', label = L('org_powers.promote_demote'), limits = { 'PromotionsPerDay' },
       about = L('org_powers.change_the_role_of_a_member') },
     { code = 'M5', area = 'members', label = L('org_powers.suspend_from_contracts'), limits = { 'SuspendMaxHours' },
       about = L('org_powers.bar_a_member_from_accepting_contracts') },
@@ -82,7 +82,7 @@ Powers.LIST = {
     -- Contracts
     { code = 'K1', area = 'contracts', label = L('org_powers.contract_access_rules'),
       about = L('org_powers.choose_which_contracts_each_role_may') },
-    { code = 'K2', area = 'contracts', label = 'Assign / recommend', about = L('org_powers.pin_a_contract_to_a_member') },
+    { code = 'K2', area = 'contracts', label = L('org_powers.assign_recommend'), about = L('org_powers.pin_a_contract_to_a_member') },
     { code = 'K3', area = 'contracts', label = L('org_powers.role_cooldowns'), limits = { 'MemberCooldownMaxMinutes' },
       about = L('org_powers.set_the_cooldown_between_accepts_for') },
     { code = 'K4', area = 'contracts', label = L('org_powers.assign_organisation_contracts'), feature = 'OrgContracts',

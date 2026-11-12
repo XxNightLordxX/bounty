@@ -801,6 +801,17 @@ local RENAMED = {
 }
 MySQLStore.RENAMED = RENAMED
 
+--- Text columns declared wider than an older version made them: [table] =
+--- { column = type }, the organisation's from server/org/schema.lua. Widened
+--- with MODIFY COLUMN and the column's own declaration, which keeps every
+--- value, and only when the database reports the column narrower; never
+--- narrowed.
+local WIDENED = CrimsonBoot.require('server.org.schema').WIDENED or {}
+MySQLStore.WIDENED = WIDENED
+
+--- How wide each text type is, to tell narrower from wider.
+local TEXT_WIDTH = { char = 1, varchar = 2, tinytext = 2, text = 3, mediumtext = 4, longtext = 5 }
+
 --- Column and index declarations for one CREATE TABLE statement, and the
 --- column declared PRIMARY KEY.
 ---@return string|nil name
@@ -935,7 +946,7 @@ end
 local function columnsOf(table_, cache)
     if cache[table_] == nil then
         cache[table_] = db.query([[
-            SELECT COLUMN_NAME, COLUMN_KEY, CHARACTER_SET_NAME, COLLATION_NAME FROM information_schema.COLUMNS
+            SELECT COLUMN_NAME, COLUMN_KEY, CHARACTER_SET_NAME, COLLATION_NAME, DATA_TYPE FROM information_schema.COLUMNS
             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?
         ]], { table_ }) or {}
     end
@@ -1132,6 +1143,32 @@ function MySQLStore.migrate(failed, cache)
                             ('column %s.%s'):format(table_, column.name), failed) then
                             Log.debug(('migrated: added %s.%s'):format(table_, column.name))
                             addedColumns = addedColumns + 1
+                        end
+                    end
+                end
+            end
+
+            -- Widened where an older version made the column narrower: a
+            -- value past the old width was refused (Data too long) and the
+            -- write that carried it failed.
+            if next(present) and WIDENED[table_] then
+                local typeOf = {}
+                for j = 1, #rows do
+                    local kind = rows[j].DATA_TYPE or rows[j].data_type
+                    typeOf[tostring(rows[j].COLUMN_NAME or rows[j].column_name):lower()] =
+                        kind ~= nil and tostring(kind):lower() or nil
+                end
+                for j = 1, #columns do
+                    local column = columns[j]
+                    local want = WIDENED[table_][column.name]
+                    local have = typeOf[column.name:lower()]
+                    if want and have and safeIdentifier(column.name) and TEXT_WIDTH[have] and TEXT_WIDTH[want]
+                        and TEXT_WIDTH[have] < TEXT_WIDTH[want] then
+                        if change(('ALTER TABLE %s MODIFY COLUMN %s'):format(table_, column.definition),
+                            ('column %s.%s as %s (it is %s)'):format(table_, column.name, want:upper(),
+                                have:upper()), failed) then
+                            Log.debug(('migrated: widened %s.%s from %s to %s')
+                                :format(table_, column.name, have, want))
                         end
                     end
                 end

@@ -123,8 +123,9 @@ function Engine.inactiveWhy(org, holderCid, entry, code)
     if not granter or not holder then return 'granter_gone' end
     if granter.grade < holder.grade then return 'outranked' end
     if granter.grade == holder.grade and not Engine.holds(org, granter.cid, 'D3') then return 'outranked' end
-    if code == Powers.TAKE then return nil end
-    if not Engine.holds(org, granter.cid, code) then return 'granter_lost' end
+    -- A member's own take grant is in force while the granter holds D2
+    -- (sourceActive's 'via'), as a role's is while they hold R4.
+    if not Engine.holds(org, granter.cid, code == Powers.TAKE and 'D2' or code) then return 'granter_lost' end
     return nil
 end
 
@@ -225,11 +226,22 @@ end
 
 --- Whether a power needs the boss office for this organisation: staff's
 --- list (the defaults until staff change it), plus what bosses added (S3).
-function Engine.needsOffice(org, code)
+--- A boss's rule binds only members up to the grade of the boss who set it
+--- (settings.officeBossGrade): never anybody above them. `actorCid`: whose
+--- use is asked about; nil asks of the rule itself.
+---@param org table
+---@param code string
+---@param actorCid string|nil
+---@return boolean
+function Engine.needsOffice(org, code, actorCid)
     local s = org.settings or {}
     local staff = type(s.officeStaff) == 'table' and s.officeStaff or Powers.officeDefaults()
     if staff[code] then return true end
-    return type(s.officeBoss) == 'table' and s.officeBoss[code] == true
+    if not (type(s.officeBoss) == 'table' and s.officeBoss[code] == true) then return false end
+    local setBy = type(s.officeBossGrade) == 'table' and tonumber(s.officeBossGrade[code]) or nil
+    local actor = actorCid and org.members[actorCid]
+    if setBy and actor and actor.grade > setBy then return false end
+    return true
 end
 
 return Engine

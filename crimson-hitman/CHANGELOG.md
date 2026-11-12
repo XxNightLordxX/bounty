@@ -6,6 +6,57 @@ say how things work now.
 
 ## 1.2.0
 
+**Review 85 fixes (organisation)**
+- A contract on a member of an organisation is no longer held for that
+  organisation when the placer sends it there: it goes on the open board as
+  if unsent. Its target is never told of it, shown it in the work list or
+  shown who hunts them; it is never assigned to its placer or target (nor by
+  its target) and the handler never hands it to either.
+- With `Config.Organisation.AcceptApproval` on, a boss who is a contract's
+  target is no longer told of, shown or able to refuse a member's accept of
+  it; another boss holding Approve accepts, or staff, decide it.
+- Contract access *Targets on whitelisted jobs: Not allowed* is now kept, so
+  that role can no longer take contracts on police or EMS targets.
+- Adding an organisation (`SeveralOrganisations`) with a job name qbx_core
+  already has for another job, such as `police`, is refused; one an older
+  version saved over such a job is left out at the start, so the job and
+  its holders are never touched.
+- `mysql`: an application to the recruitment form no longer fails with a
+  server error, and a long-running organisation no longer stops saving.
+  `crimson_org_applications.body` is `TEXT` and `crimson_orgs.settings`
+  `MEDIUMTEXT`; the next start widens both on an existing database, keeping
+  every value. The discipline record keeps at most 2000 entries (a former
+  member's oldest go first), and an activity-log line the database refuses is
+  said in the console instead of failing the boss's action.
+- Application text and fire and suspend reasons are cut by whole characters,
+  never half of a Polish, Cyrillic or emoji character.
+- Garage vehicles out are taken away when staff switch the organisation (or
+  several organisations) off, and through the adapter they were made with
+  when `Config.Integrations.Garage` was changed since; a return is still
+  checked against the garage spot.
+- Staff approving an internal contract: the boss who asked must still be a
+  member, hold Ask for an internal contract and outrank the target; a member
+  who leaves has their requests declined.
+- The roster shows a member's *Take contracts* grant as not in force once the
+  boss who gave it lost per-member grants.
+- Staff without `crimson.identity`: the organisation's work list names no
+  member who took an organisation contract anonymously, and the organisation
+  log names no citizen id at any depth (a grant's earlier holders, a granter
+  fired since), ties no contract to a member and says *a member* or
+  *a player* for rows a member or applicant wrote.
+- A member muted by staff is told staff muted them when they post; switching
+  approvals off tells a waiting member so, never *Nobody approved*; an invite
+  that can no longer be accepted says so; a deposit the internal ledger
+  refuses is no longer said to be Renewed-Banking's; the organisation-limit
+  refusal says which limit.
+- A boss's menu layout hides tabs only from grades below their own, and an
+  office rule a boss sets binds only up to their grade and cannot be lifted
+  from below.
+- Translations: the stats time bands, the armory stash label, the codename
+  label, two power labels, the strike consequence and overturn notices, the
+  salary ledger reason, two spot names and a config warning come from
+  `locales/en.lua` as whole sentences.
+
 **Review 84 fixes (1)**
 - Body disposal starts in game: a verified kill with `Config.Disposal` on
   waits in escrow until the drop-off, the vehicle is made and the body can be

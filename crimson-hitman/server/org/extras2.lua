@@ -162,7 +162,8 @@ end
 local function ensureStash(org)
     local inv = inventory()
     if not (inv and inv.RegisterStash) then return false end
-    local ok = Integrations.call('inventory', 'RegisterStash', stashId(org), (org.label or L('org_extras2.organisation')) .. ' armory',
+    local ok = Integrations.call('inventory', 'RegisterStash', stashId(org),
+        (L('org_extras2.stash_label')):format(org.label or L('org_extras2.organisation')),
         whole('ArmorySlots', 50, 1, 500), whole('ArmoryWeight', 100000, 1000, 10000000), false,
         { [Extras2.LOCKED_GROUP] = 0 })
     return ok == true
@@ -565,7 +566,7 @@ end
 
 local function minutesText(m)
     if m < 60 or m % 60 ~= 0 then return (L('org_extras2.min')):format(m) end
-    return ('%d h'):format(m // 60)
+    return (L('org_extras2.hours_short')):format(m // 60)
 end
 
 --- A time to complete, in seconds, as a band: never the exact time.
@@ -576,11 +577,13 @@ function Extras2.band(seconds)
     local edges = bandEdges()
     if #edges == 0 then return nil end
     local m = seconds / 60
-    if m < edges[1] then return 'under ' .. minutesText(edges[1]) end
+    if m < edges[1] then return (L('org_extras2.band_under')):format(minutesText(edges[1])) end
     for i = 2, #edges do
-        if m < edges[i] then return minutesText(edges[i - 1]) .. ' to ' .. minutesText(edges[i]) end
+        if m < edges[i] then
+            return (L('org_extras2.band_between')):format(minutesText(edges[i - 1]), minutesText(edges[i]))
+        end
     end
-    return 'over ' .. minutesText(edges[#edges])
+    return (L('org_extras2.band_over')):format(minutesText(edges[#edges]))
 end
 
 local function statsOf(org, cid)
@@ -752,11 +755,50 @@ local function consequences(org, member, entry)
         local lower
         for g in pairs(org.roles) do if g < member.grade and (not lower or g > lower) then lower = g end end
         if lower and not O.Engine.wouldLeaveNoBoss(org, member.cid, lower) and kit.setGrade(org, member.cid, lower) then
-            said[#said + 1] = 'demoted'
+            said[#said + 1] = L('org_extras2.demoted')
         end
     end
     entry.consequence = #said > 0 and table.concat(said, ', ') or nil
 end
+
+--- The most discipline entries the organisation keeps, every member's and
+--- every former member's together. The record lives in the organisation's
+--- settings row, which a record that only ever grew filled up (crimson_orgs
+--- .settings): past this the oldest goes first, a former member's before a
+--- member's, and a strike still standing last of all.
+local RECORD_MOST = 2000
+Extras2.RECORD_MOST = RECORD_MOST
+
+---@param org table
+local function trimRecords(org)
+    local total = 0
+    for _, list in pairs(org.settings.discipline) do
+        if type(list) == 'table' then total = total + #list end
+    end
+    while total > RECORD_MOST do
+        local best, bestCid, bestI
+        for cid, list in pairs(org.settings.discipline) do
+            if type(list) == 'table' then
+                for i, entry in ipairs(list) do
+                    -- Lower goes first: a former member's, then one no
+                    -- longer standing, then the oldest.
+                    local rank = (org.members[cid] and 2 or 0) + (active(entry) and 1 or 0)
+                    local at = tonumber(entry.at) or 0
+                    if not best or rank < best.rank or (rank == best.rank and (at < best.at
+                        or (at == best.at and tostring(cid) < tostring(bestCid)))) then
+                        best, bestCid, bestI = { rank = rank, at = at }, cid, i
+                    end
+                end
+            end
+        end
+        if not best then break end
+        local list = org.settings.discipline[bestCid]
+        table.remove(list, bestI)
+        if #list == 0 then org.settings.discipline[bestCid] = nil end
+        total = total - 1
+    end
+end
+Extras2.trimRecords = trimRecords
 
 --- A strike or a written warning (M11; staff any), with a reason. A boss:
 --- on a member below them, Limits.StrikesPerDay a day. The member is told.
@@ -791,6 +833,7 @@ function Org.discipline(who, cid, kind, reason)
     end
     list[#list + 1] = entry
     while #list > 50 do table.remove(list, 1) end
+    trimRecords(org)
     if kind == 'strike' then consequences(org, member, entry) end
     kit.save()
     kit.record(kind == 'strike' and 'org_strike' or 'org_warning', who, { member = cid, id = entry.id,
@@ -832,8 +875,8 @@ function Org.overturn(who, cid, id, reason)
     kit.save()
     kit.record('org_discipline_overturned', who, { member = cid, id = id, kind = entry.kind, reason = reason,
         lifted = lifted })
-    tell(cid, L('org_extras2.staff_overturned_a') .. (entry.kind == 'strike' and 'strike' or L('org_extras2.written_warning'))
-        .. L('org_extras2.on_your_record') .. (lifted and L('org_extras2.your_suspension_is_lifted') or '.'))
+    tell(cid, L(('org_extras2.staff_overturned_%s%s'):format(entry.kind == 'strike' and 'strike' or 'warning',
+        lifted and '_lifted' or '')))
     return true, nil, { lifted = lifted }
 end
 
@@ -926,13 +969,18 @@ function Extras2.applyBody(org, actor, text, answers)
             form[#form + 1] = { q = q, a = a }
         end
     end
+    -- Built before the hourly slot is taken: a body that cannot be made
+    -- never uses one up.
+    local body = text
+    if #form > 0 then
+        local ok, encoded = pcall(json.encode, { form = form, text = text })
+        if not ok or type(encoded) ~= 'string' then return nil, ERR.INVALID end
+        body = FORM_MARK .. encoded
+    end
     if not Applied.take(org.id, whole('RecruitPerHour', 10, 1, 1000), now()) then
         return nil, ERR.COOLDOWN, { message = L('org_extras2.the_organisation_takes_no_more_applications') }
     end
-    if #form == 0 then return text, nil end
-    local ok, encoded = pcall(json.encode, { form = form, text = text })
-    if not ok or type(encoded) ~= 'string' then return nil, ERR.INVALID end
-    return FORM_MARK .. encoded, nil
+    return body, nil
 end
 
 --- An application's body read back: the free text and the answers.

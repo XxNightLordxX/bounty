@@ -3,7 +3,8 @@
 -- You do not need to import this file. In mysql mode the resource creates
 -- these tables itself on its first start, and adds any column or index a
 -- newer version needs to the tables an older version made (moving one left on
--- another engine to InnoDB). Import it only if your database user may not
+-- another engine to InnoDB, and widening a text column a newer version
+-- declares wider, which keeps every value). Import it only if your database user may not
 -- create or alter tables: then run it once, as a user that may, before the
 -- first start in mysql mode. Each start asks information_schema first and
 -- creates or alters only what is missing, so that user starts on these tables
@@ -458,13 +459,15 @@ CREATE TABLE IF NOT EXISTS crimson_rp_rows (
 
 -- The organisations: one row each, the job it is in qbx_core, and the
 -- staff's settings for it as JSON (cuts, bounds, the office rule, the
--- notice, the boss menu layout).
+-- notice, the boss menu layout, the activity log and discipline):
+-- MEDIUMTEXT, since TEXT's 64 KB filled up. Widened on existing
+-- databases by migrate (Schema.WIDENED).
 CREATE TABLE IF NOT EXISTS crimson_orgs (
     id VARCHAR(32) PRIMARY KEY,
     job VARCHAR(32) NOT NULL,
     label VARCHAR(64),
     job_type VARCHAR(32),
-    settings TEXT,
+    settings MEDIUMTEXT,
     created_at INT NOT NULL,
     updated_at INT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -552,13 +555,15 @@ CREATE TABLE IF NOT EXISTS crimson_org_splits (
     INDEX idx_org_splits_contract (contract_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Sign-ups waiting for a boss or staff.
+-- Sign-ups waiting for a boss or staff. The body holds the answers to
+-- the recruitment form as JSON: TEXT, widened from VARCHAR(255) on
+-- existing databases by migrate (Schema.WIDENED).
 CREATE TABLE IF NOT EXISTS crimson_org_applications (
     id VARCHAR(48) PRIMARY KEY,
     org_id VARCHAR(32) NOT NULL,
     cid VARCHAR(32) NOT NULL,
     name VARCHAR(64),
-    body VARCHAR(255),
+    body TEXT,
     state VARCHAR(12) NOT NULL,
     decided_by VARCHAR(64),
     created_at INT NOT NULL,

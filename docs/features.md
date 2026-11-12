@@ -186,7 +186,9 @@ character that loaded before the job was registered (a late start).
   funds; K1 contract access rules, K2 boss pick, K3 role cooldowns; L1 move the
   office, L2 sign-up spot, L3 meeting spots; N1 notice, N2 applications; S1
   label, S2 boss menu layout, S3 office requirement; D2 per-member grants, D3
-  promote to own rank. A role moved to another rank takes its staff limit, cut,
+  promote to own rank. A boss's S2 layout hides tabs only from grades below
+  their own, and an S3 office rule binds only up to the grade of the boss who
+  set it, who alone (or a boss above) may lift it. A role moved to another rank takes its staff limit, cut,
   access rules, salary, armory limit and hidden tabs with it, and a deleted
   role leaves none behind for the next role made at that rank; a member who
   leaves (fired, or the job taken elsewhere) leaves no own cut, codename
@@ -322,7 +324,11 @@ character that loaded before the job was registered (a late start).
     to one member and that member takes it, `AssignMinutes` each; then it
     goes on the open board and the placer is told. **K5 Reassign** moves it
     to another member or sends it to the open board at once. Only the member
-    it is assigned to sees it on the board and may take it. The organisation
+    it is assigned to sees it on the board and may take it. A contract on one
+    of the organisation's own members is never held for it (it goes on the
+    open board as if unsent), never assigned to its placer or target, nor by
+    its target, nor handed to either by the handler, and never listed to its
+    target. The organisation
     sees what a board card shows (the target's name, the worth, the rule),
     never who placed it, and the placer is never told who took it beyond
     what any contract says.
@@ -330,9 +336,11 @@ character that loaded before the job was registered (a late start).
     `ApprovalAbove` (0: every accept), or any accept of a member on probation
     (`ApprovalProbation`), waits for a boss holding **K6 Approve accepts**
     (never one's own; only below the boss's rank). An anonymous accept is
-    never shown to, nor decided by, a boss who placed the contract or is its
-    target, and staff see who it is only with `IdentityAce`; nor is the member
-    who took an organisation contract named to its placer. Nothing is taken while it
+    never shown to, nor decided by, a boss who placed the contract, and no
+    accept, anonymous or not, to a boss who is its target; staff see who it is
+    only with `IdentityAce` (also on an organisation contract taken
+    anonymously); nor is the member who took an organisation contract named
+    to its placer. Approvals switched off while one waits tell the member so. Nothing is taken while it
     waits. Approved, the accept runs then with every rule checked again, the
     stake and the fee the page showed included; refused, or not answered in
     `ApprovalMinutes`, nothing was ever taken, so the stake stays with the
@@ -426,7 +434,9 @@ character that loaded before the job was registered (a late start).
   - **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`).
     Staff add more hitman organisations (rival crews) in Hitman organisation,
     Setup, **Organisations**: each is its own qbx_core job (the job name staff
-    give, lower case, never another's) with its own roles (made from
+    give, lower case, never another's: a name qbx_core already has for another
+    job, such as `police`, is refused, and one an older version saved over such
+    a job is left out at the start) with its own roles (made from
     `Config.Organisation.Roles`), members, funds (its own society account or
     ledger rows), places, Boss permissions, settings and log, all kept by its id
     (the job name). The card picks which one every Hitman organisation, Boss

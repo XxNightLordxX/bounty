@@ -28,7 +28,10 @@ read and written only with `Config.Organisation.Enabled`). A
 start refuses, changing nothing, where a table of one of these names belongs
 to another resource. Money columns are `INT` (at most $2,147,483,647; the
 start holds every money setting to it), reasons and messages at most 255
-characters, times until 2038-01-19.
+characters, times until 2038-01-19. An organisation's settings (with its
+activity log and discipline record) are `MEDIUMTEXT` and an application's
+answers `TEXT`; a start widens the columns an older version made narrower,
+keeping every value.
 
 `json` mode keeps everything in files under `crimson-hitman/data/`
 (`store.json`, `records.json`, `contracts/`, `audit-<day>.jsonl`,

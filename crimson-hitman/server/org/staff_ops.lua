@@ -110,6 +110,41 @@ OPS.orgFunds = { 'read', function(src, data)
     return said(Org.fundsView(staff(src), tonumber(data.limit), identifies(src)))
 end }
 
+--- Detail keys whose text value is always a person (a citizen id) or one of
+--- ROLE_WORDS: shown as 'a member' without IdentityAce, at any depth. A key
+--- that holds a person only sometimes (`before`, `from`) is caught by the
+--- value instead.
+local PERSON_KEYS = { member = true, granter = true, grant = true, deny = true, cid = true, recipient = true }
+
+--- The words a detail's `by` (and the like) holds that are not a person.
+local ROLE_WORDS = { staff = true, boss = true, handler = true, system = true }
+
+--- Whether a text value looks like a citizen id: letters and digits, with
+--- a digit, of a citizen id's length. A power code (K8), a model, a method
+--- or a contract id is not.
+---@param value string
+---@return boolean
+local function cidShaped(value)
+    return #value >= 6 and #value <= 32 and value:match('^[%u%d]+$') ~= nil and value:find('%d') ~= nil
+end
+
+--- A row's detail with every person in it shown as 'a member': under the
+--- person keys, any citizen id the log knows of (`known`) or anything shaped
+--- like one, at every depth (a grant's `before` is { grant, deny }).
+---@param detail table copied, changed in place
+---@param known table [cid] = true
+local function scrubPeople(detail, known, depth)
+    if depth > 6 then return end
+    for key, value in pairs(detail) do
+        if type(value) == 'table' then
+            scrubPeople(value, known, depth + 1)
+        elseif type(value) == 'string' and not ROLE_WORDS[value] and (PERSON_KEYS[key] or known[value]
+            or cidShaped(value) or (key == 'id' and detail.subject == 'member')) then
+            detail[key] = L('org_staff_ops.a_member')
+        end
+    end
+end
+
 --- Records › Logs, area 'org' (Panel.logArea): every boss and staff
 --- action on the organisation, newest first, at most data.limit (100); one
 --- action with data.action (the grant history: 'org_grant').
@@ -134,23 +169,42 @@ local function orgLog(src, data)
         end
         rows = kept
     end
+    -- Every citizen id the log knows of: today's members and whoever acted
+    -- on or was named by a row (a member fired since is still somebody).
+    local known = {}
+    if not canIdentify then
+        for cid in pairs(Org.current().members) do known[cid] = true end
+        for _, r in ipairs(rows) do
+            if type(r.actor_cid) == 'string' then known[r.actor_cid] = true end
+            local d = type(r.detail) == 'table' and r.detail or {}
+            if type(d.member) == 'string' then known[d.member] = true end
+        end
+    end
     local out = {}
     for i = 1, math.min(#rows, limit) do
         local r = rows[i]
         local detail = Util.copy(type(r.detail) == 'table' and r.detail or {})
+        local by, contract = r.actor_cid, r.contract_id
         if not canIdentify then
             -- No citizen id without IdentityAce: whoever a row names is
-            -- 'a member' or 'a player'.
-            local org = Org.current()
-            for key, value in pairs(detail) do
-                if type(value) == 'string' and (value == r.actor_cid or (org and org.members[value])
-                    or key == 'member' or (key == 'id' and detail.subject == 'member')) then
-                    detail[key] = L('org_staff_ops.a_member')
-                end
+            -- 'a member' or 'a player', at any depth.
+            local how = detail.by
+            scrubPeople(detail, known, 0)
+            if how == 'boss' then
+                by = L('org_staff_ops.a_boss')
+            elseif how == 'staff' or not r.actor_cid then
+                by = L('org_staff_ops.a_staff_member')
+            elseif Org.current().members[r.actor_cid] then
+                by = L('org_staff_ops.a_member')
+            else
+                by = L('org_staff_ops.a_player')
             end
+            -- Nor which contract a person's row is about: a member's accept
+            -- or cut beside its contract names its hitman (as the funds
+            -- ledger hides it).
+            if r.actor_cid or type(r.detail) == 'table' and r.detail.member then contract = nil end
         end
-        out[#out + 1] = { ts = r.ts, action = r.action, kind = r.kind, contract = r.contract_id,
-            by = canIdentify and r.actor_cid or (detail.by == 'boss' and L('org_staff_ops.a_boss') or L('org_staff_ops.a_staff_member')),
+        out[#out + 1] = { ts = r.ts, action = r.action, kind = r.kind, contract = contract, by = by,
             detail = detail }
     end
     return true, nil, nil, { rows = out }

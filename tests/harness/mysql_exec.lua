@@ -143,6 +143,7 @@ end
 
 local INT_RANGE = { INT = { -2147483648, 2147483647 }, TINYINT = { -128, 127 } }
 local TEXT_BYTES = 65535
+local MEDIUMTEXT_BYTES = 16777215
 
 --- A refusal on its way to Exec.run, which puts it in oxmysql's words.
 local Refusal = {}
@@ -172,7 +173,8 @@ local function check(tableName, column, value, rowNumber)
             refuse(("Out of range value for column '%s' at row %d"):format(column, rowNumber or 1))
         end
     elseif (t.base == 'VARCHAR' and t.size and (utf8.len(tostring(value)) or #tostring(value)) > t.size)
-        or (t.base == 'TEXT' and #tostring(value) > TEXT_BYTES) then
+        or (t.base == 'TEXT' and #tostring(value) > TEXT_BYTES)
+        or (t.base == 'MEDIUMTEXT' and #tostring(value) > MEDIUMTEXT_BYTES) then
         refuse(("Data too long for column '%s' at row %d"):format(column, rowNumber or 1))
     end
 end
@@ -1102,6 +1104,15 @@ local function execute(sql, params, flat)
         if Exec.schema[moved] then Exec.engines[moved] = engine end
         return {}
     end
+    -- A column widened (MODIFY COLUMN and its new declaration) keeps its
+    -- values and takes the new type's limits from now on.
+    local modifiedIn, definition = flat:match('^ALTER TABLE ([%w_]+) MODIFY COLUMN (.+)$')
+    if modifiedIn then
+        local declaredNow = Exec.schema[modifiedIn]
+        local column = definition:match('^([%w_]+)')
+        if declaredNow and column and declaredNow.types[column] then declaredNow.types[column] = declared(definition) end
+        return {}
+    end
     if flat:find('^ALTER TABLE') then return {} end
     -- The crimson tables there are, with each one's engine.
     if flat:find('information_schema%.TABLES') and flat:find("TABLE_NAME LIKE 'crimson%%'") then
@@ -1130,10 +1141,11 @@ local function execute(sql, params, flat)
         local rows = {}
         for _, column in ipairs(declared.order) do
             local t = declared.types[column] or {}
-            local text = t.base == 'VARCHAR' or t.base == 'TEXT'
+            local text = t.base == 'VARCHAR' or t.base == 'TEXT' or t.base == 'MEDIUMTEXT'
             rows[#rows + 1] = {
                 COLUMN_NAME = column,
                 COLUMN_KEY = Exec.primary[name] == column and 'PRI' or '',
+                DATA_TYPE = t.base and t.base:lower() or nil,
                 CHARACTER_SET_NAME = text and 'utf8mb4' or nil,
                 COLLATION_NAME = text and 'utf8mb4_unicode_ci' or nil,
             }

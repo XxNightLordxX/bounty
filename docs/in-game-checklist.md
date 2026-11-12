@@ -877,6 +877,21 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Staff with the identity ACE: freeze and suspend a player who is offline by typing their citizen id; staff without it open All measures: the rows say no citizen id
 - [ ] `Config.Locale` set to a copy of `en.lua` with the disposal bands and `bridges.the_buyout_on_is_now_run` changed: the disposal notice and the `/cleanse <id>` price prompt read in the copy's words, end to end
 
+## 37. Review 85 organisation checks
+
+- [ ] Organisation with `OrgContracts` on: place a contract on the boss and tick *Send to the organisation*: the reply says it went to the open board, the boss gets no *A contract was sent* notice and their Work tab does not list it
+- [ ] `AcceptApproval` on, `ApprovalAbove` 0: a recruit accepts a contract on the top boss: the top boss is not told and sees no waiting accept; a lieutenant holding Approve accepts, or staff, decide it
+- [ ] Staff set role 0's *Targets on whitelisted jobs* to *Not allowed*, reopen the role: it still says *Not allowed*; a recruit accepting a contract on a police officer is refused
+- [ ] `SeveralOrganisations` on: add an organisation with job name `police`: refused with *qbx_core already has a job*; the police job and its officers are unchanged
+- [ ] `mysql`, `Recruitment` on with two questions: apply with long answers: the application is listed for the boss; on a database an older version made, the console shows no error at the start and `SHOW COLUMNS FROM crimson_orgs` says `settings mediumtext`
+- [ ] Apply with text ending in a Polish or emoji character at the length limit, and fire a member with such a reason: both go through and read correctly
+- [ ] `Garage` on: take a vehicle out, then switch Organisation off in the panel: the vehicle is gone at once; on again, take one, set `Integrations.Garage` to `none`, return it at the spot: it is taken away
+- [ ] `InternalContracts` on: a lieutenant asks for an internal contract, staff fire the lieutenant: the request shows as declined and cannot be approved
+- [ ] Staff without `crimson.identity`: Records › Logs, area Organisation, after grants and a fire: no citizen id anywhere in the rows, no contract on accept or cut rows, an application says *a player*
+- [ ] Staff mute a member in the channel: posting tells them *Staff muted you*; switch `AcceptApproval` off while an accept waits: the member is told approvals were switched off
+- [ ] A lieutenant holding Boss menu layout hides a tab from the top boss's grade: the top boss still sees it; a lieutenant's office rule does not bind the top boss
+- [ ] `Config.Locale` set to a copy of `en.lua` with the band, stash label and codename keys changed: the stats bands, the armory stash and a codename on a contract read in the copy's words
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

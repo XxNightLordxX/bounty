@@ -196,6 +196,13 @@ end
 function Org.receiveContract(contractId, placerCid)
     local org = O.current()
     if not org or not on('OrgContracts') or type(contractId) ~= 'string' then return false end
+    -- Never held for the organisation its target belongs to (as a territory
+    -- hold never is): its bosses would learn of it at once, see who hunts
+    -- them and choose who gets it. It stays on the open board, under the
+    -- reveal rules every other contract keeps.
+    local read, contract = pcall(deps().storage.readContract, contractId)
+    if not read or type(contract) ~= 'table' then return false end
+    if contract.target_cid and org.members[contract.target_cid] then return false end
     local wait = minutes('AssignMinutes', 30, 1440)
     org.settings.orgContracts[contractId] = { state = 'waiting', at = now(), expires = now() + wait * 60 }
     kit.save()
@@ -209,6 +216,35 @@ function Org.receiveContract(contractId, placerCid)
     end
     return true
 end
+
+--- Whether a member is a party to a contract: its placer or its target.
+--- An anonymous accept is never shown to either, nor decided by them: the
+--- member's name beside the contract would tell its placer exactly who
+--- chose not to be named.
+---@param cid string|nil
+---@param contractId string
+---@return boolean
+local function partyTo(cid, contractId)
+    if type(cid) ~= 'string' then return false end
+    local ok, contract = pcall(deps().storage.readContract, contractId)
+    if not ok or type(contract) ~= 'table' then return false end
+    return contract.creator_cid == cid or contract.target_cid == cid
+end
+Extras.partyTo = partyTo
+
+--- Whether a member is the contract's target. The target is never told of
+--- an accept on themselves, never shown who hunts them and never decides
+--- it, anonymous or not.
+---@param cid string|nil
+---@param contractId string
+---@return boolean
+local function targetOf(cid, contractId)
+    if type(cid) ~= 'string' then return false end
+    local ok, contract = pcall(deps().storage.readContract, contractId)
+    if not ok or type(contract) ~= 'table' then return false end
+    return contract.target_cid == cid
+end
+Extras.targetOf = targetOf
 
 --- Assign an organisation contract to a member (K4), or move it to another
 --- (K5 for one already assigned). The member then has AssignMinutes to
@@ -224,6 +260,11 @@ function Org.assignContract(who, contractId, cid)
     if err then return fail(err) end
     local member = type(cid) == 'string' and org.members[cid]
     if not member then return fail(ERR.NOT_FOUND) end
+    -- Never decided by its target, nor given to its placer or its target.
+    if not who.staff and Extras.targetOf(who.cid, contractId) then return fail(ERR.NOT_FOUND) end
+    if Extras.partyTo(cid, contractId) then
+        return fail(ERR.RULE, { message = L('org_extras.that_member_is_a_party_to') })
+    end
     if entry.cid == cid then return fail(ERR.ALREADY) end
     if member.suspended_until and member.suspended_until > now() then
         return fail(ERR.RULE, { message = L('org_extras.that_member_is_suspended_from_contracts') })
@@ -411,17 +452,6 @@ function Extras.probationGate(org, member, actor, contractId, contract, opts, ga
     return nil
 end
 
---- Whether a member is a party to a contract: its placer or its target.
---- An anonymous accept is never shown to either, nor decided by them: the
---- member's name beside the contract would tell its placer exactly who
---- chose not to be named.
-local function partyTo(cid, contractId)
-    if type(cid) ~= 'string' then return false end
-    local ok, contract = pcall(deps().storage.readContract, contractId)
-    if not ok or type(contract) ~= 'table' then return false end
-    return contract.creator_cid == cid or contract.target_cid == cid
-end
-
 --- After every other rule of the organisation passed: the accept held for
 --- a boss's approval where it needs one (AcceptApproval).
 ---@return string|nil err
@@ -463,7 +493,7 @@ function Extras.approvalGate(org, member, actor, contractId, opts, gate)
     d.audit.action('org_accept_requested', actor.cid, contractId, { org = org.id, worth = value() })
     for cid in pairs(org.members) do
         if cid ~= actor.cid and O.Engine.holds(org, cid, 'K6')
-            and not (Pending[k].anonymous and partyTo(cid, contractId)) then
+            and not ((Pending[k].anonymous and partyTo(cid, contractId)) or targetOf(cid, contractId)) then
             tell(cid, L('org_extras.a_member_asks_to_take_a'))
         end
     end
@@ -526,7 +556,9 @@ function Org.decideAccept(who, id, approve)
         Pending[k] = nil
         return fail(ERR.NOT_FOUND)
     end
-    if p.anonymous and not who.staff and partyTo(who.cid, p.contractId) then return fail(ERR.NOT_FOUND) end
+    if not who.staff and ((p.anonymous and partyTo(who.cid, p.contractId)) or targetOf(who.cid, p.contractId)) then
+        return fail(ERR.NOT_FOUND)
+    end
     local why = mayActOn(org, who, p.cid)
     if why then return fail(why) end
     Pending[k] = nil
@@ -677,9 +709,15 @@ local function messages(org)
     return rows
 end
 
+--- Until when a member is muted in the channel, and whether staff muted
+--- them. A boss's mute is kept as its end time (as every older one was);
+--- staff's as { at, staff }.
+---@return integer|nil untilAt
+---@return boolean|nil byStaff
 local function muteOf(org, cid)
-    local untilAt = tonumber(org.settings.channelMutes[cid])
-    if untilAt and untilAt > now() then return untilAt end
+    local v = org.settings.channelMutes[cid]
+    local untilAt = type(v) == 'table' and tonumber(v.at) or tonumber(v)
+    if untilAt and untilAt > now() then return untilAt, type(v) == 'table' and v.staff == true or nil end
     return nil
 end
 
@@ -697,9 +735,10 @@ function Org.channelPost(who, text)
         return fail(ERR.INVALID, { message = (L('org_extras.plain_text_up_to_characters_no')):format(max) })
     end
     if member then
-        local muted = muteOf(org, who.cid)
+        local muted, byStaff = muteOf(org, who.cid)
         if muted then
-            return fail(ERR.LOCKED, { message = L('org_extras.a_boss_muted_you_in_the'), untilAt = muted })
+            return fail(ERR.LOCKED, { message = byStaff and L('org_extras.staff_muted_you_in_the')
+                or L('org_extras.a_boss_muted_you_in_the'), untilAt = muted })
         end
         local most = math.max(1, math.floor(tonumber(Config.Organisation.ChannelPerMinute) or 6))
         if not Sent.take(who.cid, most, now()) then return fail(ERR.COOLDOWN) end
@@ -742,7 +781,7 @@ function Org.channelRead(who, limit)
         if who.staff then row.staff = m.cid == 'staff' or nil end
         out[#out + 1] = row
     end
-    return true, nil, { rows = out, muted = not who.staff and muteOf(org, who.cid) or nil,
+    return true, nil, { rows = out, muted = not who.staff and (muteOf(org, who.cid)) or nil,
         maxLength = math.floor(tonumber(Config.Organisation.ChannelMaxLength) or 300) }
 end
 
@@ -790,7 +829,8 @@ function Org.channelMute(who, cid, hours)
     local why = mayActOn(org, who, cid)
     if why then return fail(why) end
     if not who.staff and hours > O.Powers.limit(org, 'ChannelMuteMaxHours') then return fail(ERR.BOUNDS) end
-    org.settings.channelMutes[cid] = hours > 0 and (now() + hours * 3600) or nil
+    org.settings.channelMutes[cid] = hours > 0 and (who.staff and { at = now() + hours * 3600, staff = true }
+        or (now() + hours * 3600)) or nil
     kit.save()
     kit.record('org_channel_mute', who, { member = cid, hours = hours })
     local muted
@@ -889,7 +929,7 @@ end
 --- A contract as the organisation sees it: what any board card shows (the
 --- target's name, the worth, the rule, the mode, whether it is staked),
 --- never who placed it.
-local function contractView(org, viewer, id, entry, contract, party)
+local function contractView(org, viewer, id, entry, contract, party, hideAnon)
     local worth = worthOf(id)
     local member = entry.cid and org.members[entry.cid]
     -- Taken: the member who accepted it is never named to its placer or
@@ -897,6 +937,12 @@ local function contractView(org, viewer, id, entry, contract, party)
     if entry.state == 'taken' and party and contract
         and (contract.creator_cid == party or contract.target_cid == party) then
         member = nil
+    end
+    -- Taken anonymously: staff see who only with IdentityAce, as on the
+    -- contract's own drawer.
+    if member and entry.state == 'taken' and hideAnon then
+        local read, row = pcall(deps().storage.readHitman, id, entry.cid)
+        if not read or type(row) ~= 'table' or row.anon then member = nil end
     end
     return { id = id, state = entry.state, expiresIn = entry.state ~= 'taken' and math.max(0, entry.expires - now())
         or nil, targetName = contract and contract.target_name or nil, worth = worth,
@@ -929,9 +975,14 @@ function Org.work(who)
     if contractsOn and (held.K4 or held.K5 or held.K7) then
         out.contracts = {}
         local d = deps()
+        local hideAnon = who.staff and not who.canIdentify
         for id, entry in pairs(org.settings.orgContracts) do
-            out.contracts[#out.contracts + 1] = contractView(org, viewer, id, entry, d.storage.readContract(id),
-                not who.staff and who.cid or nil)
+            local contract = d.storage.readContract(id)
+            -- A contract on the viewer is never listed to them.
+            if who.staff or not (contract and contract.target_cid == who.cid) then
+                out.contracts[#out.contracts + 1] = contractView(org, viewer, id, entry, contract,
+                    not who.staff and who.cid or nil, hideAnon)
+            end
         end
         table.sort(out.contracts, function(a, b) return a.id < b.id end)
         if held.K4 or held.K5 then
@@ -966,7 +1017,8 @@ function Org.work(who)
         for k, p in pairs(Pending) do
             if p.expires <= now() then
                 Pending[k] = nil
-            elseif org.members[p.cid] and not (p.anonymous and not who.staff and partyTo(who.cid, p.contractId)) then
+            elseif org.members[p.cid] and not (not who.staff and ((p.anonymous and partyTo(who.cid, p.contractId))
+                or targetOf(who.cid, p.contractId))) then
                 local m = org.members[p.cid]
                 -- Anonymous: staff see who only with IdentityAce.
                 local hidden = p.anonymous and who.staff and not who.canIdentify
@@ -1006,8 +1058,9 @@ function Extras.mine(org, member, out)
         if Extras.onDuty(cid) then
             local rows = {}
             for id, entry in pairs(org.settings.orgContracts) do
-                if entry.cid == cid and entry.state ~= 'waiting' then
-                    local contract = deps().storage.readContract(id)
+                local contract = entry.cid == cid and entry.state ~= 'waiting' and deps().storage.readContract(id)
+                -- Never a contract on the member themselves.
+                if entry.cid == cid and entry.state ~= 'waiting' and not (contract and contract.target_cid == cid) then
                     rows[#rows + 1] = { id = id, state = entry.state, targetName = contract and contract.target_name,
                         expiresIn = entry.state == 'assigned' and math.max(0, entry.expires - now()) or nil,
                         dossier = dossierView(org, entry.dossier) }
@@ -1029,7 +1082,7 @@ function Extras.mine(org, member, out)
     end
     if on('Channel') then
         out.channel = true
-        out.channelMuted = muteOf(org, cid)
+        out.channelMuted = (muteOf(org, cid))
     end
 end
 
@@ -1040,7 +1093,7 @@ function Extras.memberView(org, m, out)
         local p = Extras.probation(org, m, false)
         out.probation = p and { done = p.done, need = p.need } or nil
     end
-    if on('Channel') then out.channelMuted = muteOf(org, m.cid) end
+    if on('Channel') then out.channelMuted = (muteOf(org, m.cid)) end
 end
 
 --- What the panel's orgGet adds: each feature on, and its state.
@@ -1144,10 +1197,15 @@ tickOne = function(org, at, prune)
             local contract = d.storage.readContract(p.contractId)
             if contract and not CH.TERMINAL[contract.state] and heldNow(contract) then p.expires = p.expires + span end
         end
-        if (p.org == nil or p.org == org.id) and (p.expires <= at or not on('AcceptApproval')) then
+        if (p.org == nil or p.org == org.id) and p.expires <= at then
             Pending[k] = nil
             d.audit.action('org_accept_expired', p.cid, p.contractId, { org = org.id })
             tell(p.cid, L('org_extras.nobody_approved_your_accept_in_time'))
+        elseif (p.org == nil or p.org == org.id) and not on('AcceptApproval') then
+            -- Staff switched approvals off: nobody refused it.
+            Pending[k] = nil
+            d.audit.action('org_accept_dropped', p.cid, p.contractId, { org = org.id, reason = 'feature_off' })
+            tell(p.cid, L('org_extras.approvals_were_switched_off_your_accept'))
         end
     end
     local changed = false
