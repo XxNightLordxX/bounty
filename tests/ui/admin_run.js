@@ -1264,7 +1264,11 @@ async function main() {
       has(text, '3 × lockpick');
       has(text, 'Payout 2');
       has(text, 'escrow_deliver_parked', 'the timeline');
-      has(text, 'extend_deadline', 'the open proposal');
+      // VISUAL-5: the proposal in words, its time as a duration.
+      has(text, 'Extend the deadline', 'the open proposal');
+      has(text, '1 h', 'how long, as a duration');
+      lacks(text, 'extend_deadline', 'never the internal name');
+      lacks(text, 'seconds: 3600', 'nor the raw payload');
       has(text, 'law enforcement');
       has(text, 'Ghost');
       lacks(text, 'Meeting point', 'no meeting point line where the server sent none');
@@ -2258,7 +2262,7 @@ async function main() {
     app.click(cashSwitch);
     await settled();
     it('the second turns the feature off and shows the answer', function () {
-      eq(app.last('setSetting').data, { key: 'Sources.cash.enabled', value: false });
+      eq(app.last('setSetting').data, { key: 'Sources.cash.enabled', value: false, basis: true });
       has(app.toasts(), 'Sources.cash.enabled is now false.');
       has(app.text(app.byId('st-row-Sources.cash.enabled')), 'Sources.cash.enabled is now false.');
       truthy(app.requests('settings').length >= 2, 'the settings are read again');
@@ -2270,7 +2274,7 @@ async function main() {
     app.click(app.byId('st-row-Bailout.Enabled').querySelector('.switch'));
     await settled();
     it('and back on', function () {
-      eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true });
+      eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true, basis: false });
     });
     const reset = app.button('Reset to config.lua', app.byId('st-row-Bailout.Enabled'));
     app.click(reset);
@@ -2295,7 +2299,7 @@ async function main() {
     await settled();
     it('and the second sets the shipped value through the ordinary change', function () {
       eq(app.requests('setSetting').length, sets0 + 1);
-      eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true });
+      eq(app.last('setSetting').data, { key: 'Bailout.Enabled', value: true, basis: false });
     });
 
     app.nav('rules:limit');
@@ -2327,7 +2331,7 @@ async function main() {
     app.click(either());
     await settled();
     it('Rules: Limits has the choices, and a choice sets one of its choices', function () {
-      eq(app.last('setSetting').data, { key: 'Completion.Fulfilment', value: 'either' });
+      eq(app.last('setSetting').data, { key: 'Completion.Fulfilment', value: 'either', basis: 'alive' });
     });
     it('a key read once at start says it applies after a restart', function () {
       has(app.text(app.byId('st-row-Bailout.Command')), 'applies after restart');
@@ -2346,7 +2350,7 @@ async function main() {
     app.click(app.button('Save', app.byId('st-row-Bailout.Command')));
     await settled();
     it('a text key goes as the word typed', function () {
-      eq(app.last('setSetting').data, { key: 'Bailout.Command', value: 'buyout' });
+      eq(app.last('setSetting').data, { key: 'Bailout.Command', value: 'buyout', basis: 'cleanse' });
     });
     // Sweep 9 ADMIN-3: a text key's own rule, not one rule for every key.
     const title = function () { return app.byId('st-row-Roleplay.WitnessHeat.Title'); };
@@ -2358,7 +2362,7 @@ async function main() {
     app.click(app.button('Save', title()));
     await settled();
     it('a text with spaces is sent, the server checks its rule (sweep 9 ADMIN-3)', function () {
-      eq(app.last('setSetting').data, { key: 'Roleplay.WitnessHeat.Title', value: 'Shots fired downtown' });
+      eq(app.last('setSetting').data, { key: 'Roleplay.WitnessHeat.Title', value: 'Shots fired downtown', basis: 'Witness report' });
     });
     const titleSets = app.requests('setSetting').length;
     app.type(title().querySelector('input'), 'x'.repeat(61));
@@ -2391,7 +2395,7 @@ async function main() {
     app.click(app.button('Save', app.byId('st-row-Limits.MaxAcceptedPerHitman')));
     await settled();
     it('a number goes as a number, and the start-up checks\' refusal is shown on its row', function () {
-      eq(app.last('setSetting').data, { key: 'Limits.MaxAcceptedPerHitman', value: 1 });
+      eq(app.last('setSetting').data, { key: 'Limits.MaxAcceptedPerHitman', value: 1, basis: 3 });
       has(app.text(app.byId('st-row-Limits.MaxAcceptedPerHitman')), 'above what the start allows');
     });
     server.setSetting = standardServer().setSetting;
@@ -2407,7 +2411,7 @@ async function main() {
     app.click(app.button('Save', app.byId('st-row-Penalty.MaxFractionOfEscrow')));
     await settled();
     it('a fraction goes where the key takes one', function () {
-      eq(app.last('setSetting').data, { key: 'Penalty.MaxFractionOfEscrow', value: 0.75 });
+      eq(app.last('setSetting').data, { key: 'Penalty.MaxFractionOfEscrow', value: 0.75, basis: 0.5 });
     });
 
     // A job list: names added and removed, saved on the second click.
@@ -2444,7 +2448,7 @@ async function main() {
     app.click(app.byId('st-save-Advisory.RecipientJobNames'));
     await settled();
     it('and the second sends the list as names', function () {
-      eq(app.last('setSetting').data, { key: 'Advisory.RecipientJobNames', value: ['sheriff', 'bcso'] });
+      eq(app.last('setSetting').data, { key: 'Advisory.RecipientJobNames', value: ['sheriff', 'bcso'], basis: ['police'] });
     });
     server.setSetting = { ok: false, err: 'invalid_value',
       message: 'Not changed: Advisory.RecipientJobNames names letters, digits, - and _ only, up to 32 long.' };
@@ -2478,7 +2482,7 @@ async function main() {
     app.click(app.byId('st-save-Notifications.ParanoidAlertJitter'));
     await settled();
     it('and a good one goes as from and to, on the second click', function () {
-      eq(app.last('setSetting').data, { key: 'Notifications.ParanoidAlertJitter', value: { min: 30, max: 300 } });
+      eq(app.last('setSetting').data, { key: 'Notifications.ParanoidAlertJitter', value: { min: 30, max: 300 }, basis: { min: 60, max: 600 } });
     });
 
     // Search: label, key, description and group.
@@ -2569,7 +2573,7 @@ async function main() {
     await settled();
     it('and sends only what changed, as its own setting', function () {
       eq(app.requests('setSetting').length, mapSets + 1);
-      eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1 });
+      eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1, basis: 2 });
     });
     clean(app, 'settings');
   })();
@@ -2766,7 +2770,7 @@ async function main() {
     await settled();
     it('and sends it', function () {
       eq(app.requests('setSetting').length, sets + 1);
-      eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1 });
+      eq(app.last('setSetting').data, { key: 'Cooldowns.create.burst', value: 1, basis: 2 });
     });
     app.nav('rules:switch');
     await settled();
@@ -2928,7 +2932,7 @@ async function main() {
     await settled();
     it('the second lowers it', function () {
       eq(app.requests('setSetting').length, sets + 1);
-      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 1 });
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 1, basis: 30 });
     });
     app.type(row().querySelector('input'), '60');
     app.click(app.button('Save', row()));
@@ -2943,7 +2947,7 @@ async function main() {
     await settled();
     it('and the second click saves it', function () {
       eq(app.requests('setSetting').length, sets + 2);
-      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 60 });
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 60, basis: 30 });
     });
     app.type(row().querySelector('input'), '0');
     app.key(row().querySelector('input'), 'Enter');
@@ -2956,7 +2960,7 @@ async function main() {
     await settled();
     it('and so does 0, which keeps every photo', function () {
       eq(app.requests('setSetting').length, sets + 3);
-      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 0 });
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 0, basis: 30 });
     });
     clean(app, 'a setting that deletes');
   })();
@@ -3649,7 +3653,7 @@ async function main() {
     app.click(app.byId('st-save-Ledger.PhotoRetentionDays'));
     await settled();
     it('and the next click saves that value', function () {
-      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 1 });
+      eq(app.last('setSetting').data, { key: 'Ledger.PhotoRetentionDays', value: 1, basis: 30 });
     });
     const before = app.requests('setSetting').length;
     app.type(row('Cooldowns.load.burst').querySelector('input'), '6');
@@ -3662,7 +3666,7 @@ async function main() {
     app.click(app.byId('st-save-Cooldowns.load.burst'));
     await settled();
     it('(the second saves it)', function () {
-      eq(app.last('setSetting').data, { key: 'Cooldowns.load.burst', value: 6 });
+      eq(app.last('setSetting').data, { key: 'Cooldowns.load.burst', value: 6, basis: 20 });
     });
     clean(app, 'two clicks');
   })();
@@ -4805,7 +4809,7 @@ async function main() {
     await settled();
     it('a list of phrases takes the line as typed, spaces and commas kept, on two clicks', function () {
       eq(app.last('setSetting').data, { key: 'Roleplay.WitnessHeat.Phrases',
-        value: ['a person in dark clothing fled {direction}', 'a tall man, in a cap, ran {direction}'] });
+        value: ['a person in dark clothing fled {direction}', 'a tall man, in a cap, ran {direction}'], basis: ['a person in dark clothing fled {direction}'] });
     });
     app.nav('help');
     await settled();
@@ -4902,7 +4906,7 @@ async function main() {
     await settled();
     it('a place is added whole, commas and spaces kept', function () {
       eq(app.last('setSetting').data, { key: 'Intel.Rumours.Locations',
-        value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'] });
+        value: ['-1171.0, -1572.5, 4.66, 125.0', '1240.6, -3179.2, 7.1, 270.0'], basis: ['-1171.0, -1572.5, 4.66, 125.0'] });
     });
     app.nav('inbox:reviews');
     await settled();
@@ -5026,7 +5030,7 @@ async function main() {
     await settled();
     it('a safe zone is added whole, commas and spaces kept', function () {
       eq(app.last('setSetting').data, { key: 'Intel.SafeZones.Zones',
-        value: ['300, -590, 80, Pillbox Hill'] });
+        value: ['300, -590, 80, Pillbox Hill'], basis: {} });
     });
     app.nav('help');
     await settled();
@@ -5070,7 +5074,7 @@ async function main() {
     await settled();
     it('a tier is added whole, its commas and spaces kept', function () {
       eq(app.last('setSetting').data, { key: 'Record.Tiers.Tiers',
-        value: ['Professional, 50000, 2', 'Elite, 150000, 4'] });
+        value: ['Professional, 50000, 2', 'Elite, 150000, 4'], basis: ['Professional, 50000, 2'] });
     });
     app.nav('help');
     await settled();
@@ -6591,7 +6595,7 @@ async function main() {
     app.click(sw);
     await settled();
     it('and once it is on, the organisation is read again and drawn', function () {
-      eq(app.last('setSetting').data, { key: 'Organisation.Enabled', value: true });
+      eq(app.last('setSetting').data, { key: 'Organisation.Enabled', value: true, basis: false });
       truthy(app.requests('orgGet').length > asked, 'read again');
       has(app.main(), 'The job');
       has(app.main(), 'Create / sync job');
@@ -8295,6 +8299,144 @@ async function main() {
     it('workflow screen:admin.view:announce — staff send an announcement', function () {
       eq(sentAnnounce, true, 'announce was sent');
     });
+  })();
+
+  /* ---- player review 2: Escape, toasts, stale saves, Reassign's anonymity ---- */
+
+  // VISUAL-1: Escape closes the innermost layer first.
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    const box = inDrawer(app, 'dr.dl.reason') || app.drawer().querySelector('input');
+    if (box) app.type(box, 'ticket 7');
+    app.key(box || app.body, 'Escape');
+    app.keyUp(box || app.body, 'Escape');
+    await settled();
+    it('PR2 Escape with the drawer open closes the drawer, and the panel stays', function () {
+      eq(app.drawer().hidden, true, 'drawer closed');
+      eq(app.byId('panel').hidden, false, 'panel open');
+      falsy(app.sent.some(function (s) { return s.event === 'adminClose'; }), 'no adminClose');
+    });
+    // (Opened again where an Escape closed it, so what follows still runs.)
+    if (app.byId('panel').hidden) { app.open(ADMIN); await settled(); }
+    app.nav('rules:switch');
+    await settled();
+    const save = app.byId('st-row-Sources.cash.enabled').querySelector('.switch');
+    app.click(save);
+    await settled();
+    it('PR2 (a switch armed)', function () { truthy(save.classList.contains('is-armed')); });
+    app.keyUp(app.body, 'Escape');
+    await settled();
+    it('PR2 Escape with a button armed disarms it, and the panel stays', function () {
+      falsy(save.classList.contains('is-armed'));
+      eq(app.byId('panel').hidden, false);
+    });
+    app.keyUp(app.body, 'Escape');
+    await settled();
+    it('PR2 and with nothing open Escape closes the panel', function () {
+      eq(app.byId('panel').hidden, true);
+      truthy(app.sent.some(function (s) { return s.event === 'adminClose'; }));
+    });
+    clean(app, 'escape layers');
+  })();
+
+  // VISUAL-3: one toast for the same words; one overview read at open.
+  await (async function () {
+    const slow = { ok: false, err: 'rate_limited', message: 'Slow down: too many requests. Try again in a moment.' };
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('inbox');
+    await settled();
+    app.click(app.byId('close'));
+    await settled();
+    const before = app.requests('overview').length;
+    app.open(ADMIN);
+    await settled();
+    it('PR2 opening the panel on Home\'s inbox reads the overview once', function () {
+      eq(app.requests('overview').length - before, 1);
+    });
+    app.server.reviews = slow;
+    app.server.stuck = slow;
+    app.server.alerts = slow;
+    app.server.overview = slow;
+    app.click(app.byId('refresh-btn'));
+    await settled();
+    it('PR2 several reads refused with the same words show one toast', function () {
+      const shown = app.byId('toasts').children.filter(function (n) { return /Slow down/.test(n.textContent); });
+      eq(shown.length, 1);
+    });
+    clean(app, 'toasts');
+  })();
+
+  // STAFF-2: a save refused as changed since it was read reads the settings again.
+  await (async function () {
+    const server = standardServer();
+    const app = boot(server);
+    app.open(ADMIN);
+    await settled();
+    app.nav('rules');
+    await settled();
+    app.type_('');
+    app.area('police');
+    const jobs = function () { return app.byId('st-row-Advisory.RecipientJobNames'); };
+    app.type(jobs().querySelector('input'), 'doj');
+    app.click(app.button('Add', jobs()));
+    await settled();
+    server.setSetting = { ok: false, err: 'changed_since', data: { key: 'Advisory.RecipientJobNames', value: ['lspd', 'police'] },
+      message: 'Not changed: another staff member changed Advisory.RecipientJobNames since you read it; it is now [lspd, police].' };
+    const reads = app.requests('settings').length;
+    app.click(app.byId('st-save-Advisory.RecipientJobNames'));
+    app.click(app.byId('st-save-Advisory.RecipientJobNames'));
+    await settled();
+    it('PR2 the save sends what the page read, as basis', function () {
+      eq(app.last('setSetting').data, { key: 'Advisory.RecipientJobNames', value: ['police', 'doj'], basis: ['police'] });
+    });
+    it('PR2 refused as changed since: says so, reads the settings again, and drops the stale edit', function () {
+      has(app.toasts(), 'another staff member changed');
+      truthy(app.requests('settings').length > reads, 'read again');
+      lacks(app.text(jobs()), 'doj');
+    });
+    clean(app, 'stale save');
+  })();
+
+  // STAFF-4: Reassign with anonymous hitmen off for the target.
+  await (async function () {
+    const app = boot(rewardServer({
+      reassignPreview: { ok: true, data: { stakeWaived: true, stake: 2500, operatives: ['Ghost'], anonymous: false,
+        anonymousAllowed: false } }
+    }));
+    app.open(ADMIN);
+    await settled();
+    app.nav('players');
+    await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter');
+    await settled();
+    await openDrawer(app);
+    app.tab('people');
+    await settled();
+    it('PR2 anonymous off: Anonymous and As before are disabled, Named is chosen, and the drawer says why', function () {
+      eq(app.button('Anonymous (no fee)', app.drawer()).disabled, true);
+      eq(app.button('As they chose before', app.drawer()).disabled, true);
+      truthy(app.button('Named to the placer', app.drawer()).classList.contains('is-on')
+        || app.button('Named to the placer', app.drawer()).getAttribute('aria-pressed') === 'true', 'named chosen');
+      has(app.text(app.drawer()), 'Anonymous hitmen are off for this target');
+    });
+    app.type(inDrawer(app, 'dr.ra.reason.ct00000001'), 'ticket 9');
+    const go = app.button('Reassign', app.drawer());
+    app.click(go);
+    await settled();
+    it('PR2 the armed button says named', function () { has(app.text(go), 'named to the placer'); });
+    app.click(go);
+    await settled();
+    it('PR2 and it goes as named', function () { eq(app.last('reassignHitman').data.identity, 'named'); });
+    clean(app, 'reassign anonymity');
   })();
 
   console.log('');

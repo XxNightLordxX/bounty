@@ -128,6 +128,25 @@ function Engine.inactiveWhy(org, holderCid, entry, code)
     return nil
 end
 
+--- Why a boss's grant of a power to a role is not in force, for the Roles
+--- screen: nil when it is, as a member of the role would hold it (the
+--- granter still a member, above the role, or level with D3, and holding
+--- the power, or R4 for the take power).
+---@param org table
+---@param grade integer the role's
+---@param entry table { by = 'staff' | cid }
+---@param code string
+---@return string|nil 'granter_gone' | 'outranked' | 'granter_lost'
+function Engine.roleInactiveWhy(org, grade, entry, code)
+    if type(entry) ~= 'table' or entry.by == 'staff' then return nil end
+    local granter = type(entry.by) == 'string' and org.members[entry.by] or nil
+    if not granter then return 'granter_gone' end
+    if granter.grade < grade then return 'outranked' end
+    if granter.grade == grade and not Engine.holds(org, granter.cid, 'D3') then return 'outranked' end
+    if not Engine.holds(org, granter.cid, code == Powers.TAKE and 'R4' or code) then return 'granter_lost' end
+    return nil
+end
+
 --- The top boss grade: the highest grade marked boss, or nil.
 ---@return integer|nil
 function Engine.topBossGrade(org)

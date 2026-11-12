@@ -2383,7 +2383,7 @@ local function committed(entry, action, actorCid, detail)
     end
 end
 
-local function setKey(key, raw, staff, actorCid)
+local function setKey(key, raw, staff, actorCid, basis)
     local value, err, why, warnings = Settings.check(key, raw)
     if value == nil then return false, err, why end
     local entry = byKey[key]
@@ -2397,6 +2397,14 @@ local function setKey(key, raw, staff, actorCid)
     if same(value, old) and not ignored[key] and not unknown[key] then
         return true, nil, { key = key, value = copyOf(value), old = old, unchanged = true,
                             source = overrides[key] and 'panel' or 'config', warnings = warnings }
+    end
+
+    -- Made from a value that is no longer the one in force (another staff
+    -- member changed it since this page read it, an Undo of an older row):
+    -- refused, never written over the newer change. Checked under the save
+    -- lock, so two saves from the same page read cannot both pass.
+    if basis ~= nil and not same(normalise(entry, basis) or basis, old) then
+        return false, 'changed_since', { key = key, value = old }
     end
 
     local backToConfig = same(value, defaults[key])
@@ -2445,11 +2453,13 @@ end
 ---@param raw any
 ---@param staff string|nil who, for the record ('console' at the console)
 ---@param actorCid string|nil their citizen id, for the audit row
+---@param basis any|nil the value the change was made from (the page's read):
+---     refused with 'changed_since' when it is no longer the one in force
 ---@return boolean ok
 ---@return string|nil err also 'busy' while another change is being saved
 ---@return any detail the reason, or { key, value, old, source } on success
-function Settings.set(key, raw, staff, actorCid)
-    return SaveLock.run(SAVING, setKey, key, raw, staff, actorCid)
+function Settings.set(key, raw, staff, actorCid, basis)
+    return SaveLock.run(SAVING, setKey, key, raw, staff, actorCid, basis)
 end
 
 --- One key back to what config.lua says. A key read-only now whose stored
@@ -2993,15 +3003,18 @@ end
 local HISTORY_ACTION = 'admin_setting'
 
 --- Whether a key's values are never shown: a secret on the deny list (a
---- webhook), or a key whose name says it holds one. Neither is changeable
---- from the panel, so neither should ever be in a row; this is the guard
---- should one be.
+--- webhook), or a key the catalogue does not list whose name says it holds
+--- one. Neither is changeable from the panel, so neither should ever be in a
+--- row; this is the guard should one be. A key the catalogue lists is an
+--- ordinary setting whatever its name (Completion.PhotoTokenLifetimeSeconds
+--- is a time): config.lua, where every one lives, goes to every client.
 ---@param key any
 ---@return boolean
 function Settings.secretKey(key)
     if type(key) ~= 'string' then return true end
     local rule = DENY[key]
     if rule and rule.secret then return true end
+    if byKey[key] then return false end
     local lowered = key:lower()
     return lowered:find('webhook', 1, true) ~= nil or lowered:find('secret', 1, true) ~= nil
         or lowered:find('password', 1, true) ~= nil or lowered:find('token', 1, true) ~= nil

@@ -20,7 +20,6 @@ CrimsonBoot.define('server.org.init', function() --[[
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
 local Geo = CrimsonBoot.requireShared('geo')
-local Window = CrimsonBoot.require('server.lib.window')
 local Powers = CrimsonBoot.require('server.org.powers')
 local Engine = CrimsonBoot.require('server.org.engine')
 local Jobs = CrimsonBoot.require('server.org.jobs')
@@ -87,11 +86,9 @@ local Paying, PaidHere = {}, {}
 --- When each member last accepted, for the cooldowns: [cid] = os.time().
 local LastAccept = {}
 
---- When each boss last fired a member, for FireCooldownMinutes: [cid] = os.time().
-local LastFire = {}
-
---- Each boss's role moves in the last day, for PromotionsPerDay (Window.new).
-local Promotions = Window.new(86400)
+--- When each boss last fired a member (FireCooldownMinutes) and their role
+--- moves (PromotionsPerDay): day counts kept in the organisation's settings
+--- (DAY COUNTS, below).
 
 --- Hires a boss offered, waiting for the player to accept them in the app:
 --- [cid] = { id, cid, grade, by (the boss's cid), at, expires }. Kept in
@@ -127,7 +124,7 @@ local ERR = Org.ERR
 local MESSAGES = {
     org_off = L('org.the_organisation_is_switched_off'),
     org_not_member = L('org.not_a_member_of_the_organisation'),
-    org_no_power = L('org.staff_have_not_given_you_this'),
+    org_no_power = L('org.not_given_to_you_a_boss_above'),
     org_office = L('org.that_needs_the_boss_office_go'),
     org_rank = L('org.only_below_your_own_rank'),
     org_self = L('org.not_on_yourself'),
@@ -158,6 +155,8 @@ local MESSAGES = {
     org_bank_refused = L('org.renewed_banking_refused_it_nothing_was'),
     org_no_account = L('org.renewed_banking_has_no_account_for'),
     org_left_for_staff = L('org.handing_it_over_raised_and_what'),
+    -- A deposit of more than the member carries (Util.charge refused it).
+    [CH.ERR.INSUFFICIENT] = L('org.you_do_not_have_that_much'),
 }
 
 ---@param err string
@@ -166,6 +165,68 @@ function Org.message(err) return MESSAGES[err] or L('org.not_done') end
 
 local function fail(err, extra)
     return false, err, extra, MESSAGES[err] or L('org.not_done')
+end
+
+--- A notice to one member in the city, under the organisation's name.
+local function tell(cid, text)
+    if deps.notify and deps.notify.toCitizen and deps.identity.byCitizenId(cid) then
+        pcall(deps.notify.toCitizen, cid, (Cur() and Cur().label) or L('org.organisation'), text)
+    end
+end
+
+-- ============================================================================
+--                              DAY COUNTS
+-- ============================================================================
+
+--- The counts behind the per-day caps (an armory role's limit and
+--- ArmoryManagePerDay, StrikesPerDay, PromotionsPerDay) and the fire
+--- cooldown (FireCooldownMinutes), kept in the organisation's settings
+--- (org.settings.caps[kind][key] = { { at, n }, ... }, oldest first) and
+--- so saved with its row: a restart, scheduled or a crash, never hands
+--- anybody a fresh day. Whoever adds saves the row.
+local CAP_KEEP = { armory = 86400, managed = 86400, strikes = 86400, promotions = 86400, fire = 7 * 86400 }
+
+---@param org table
+---@param kind string a CAP_KEEP key
+---@param key string whose (a cid)
+---@param span integer seconds back from now
+---@return integer
+local function capCount(org, kind, key, span)
+    local book = org.settings.caps[kind]
+    local list = type(book) == 'table' and book[key]
+    if type(list) ~= 'table' then return 0 end
+    local at, n = os.time(), 0
+    for _, e in ipairs(list) do
+        if type(e) == 'table' and at - (tonumber(e.at) or 0) < span then n = n + (tonumber(e.n) or 0) end
+    end
+    return n
+end
+
+--- Count n now for key; every entry of the kind older than it keeps dropped.
+local function capAdd(org, kind, key, n, at)
+    if not n or n <= 0 then return end
+    at = at or os.time()
+    local keep = CAP_KEEP[kind] or 86400
+    org.settings.caps[kind] = type(org.settings.caps[kind]) == 'table' and org.settings.caps[kind] or {}
+    local book = org.settings.caps[kind]
+    for k, list in pairs(book) do
+        local kept = {}
+        for _, e in ipairs(type(list) == 'table' and list or {}) do
+            if type(e) == 'table' and at - (tonumber(e.at) or 0) < keep then kept[#kept + 1] = e end
+        end
+        book[k] = #kept > 0 and kept or nil
+    end
+    local list = book[key] or {}
+    list[#list + 1] = { at = at, n = n }
+    book[key] = list
+end
+
+--- When key last counted one of a kind (the fire cooldown), or nil.
+local function capLast(org, kind, key)
+    local book = org.settings.caps[kind]
+    local list = type(book) == 'table' and book[key]
+    local last = type(list) == 'table' and list[#list]
+    return type(last) == 'table' and tonumber(last.at) or nil
 end
 
 -- ============================================================================
@@ -312,6 +373,8 @@ local function settingsOf(raw)
     s.recruit.questions = type(s.recruit.questions) == 'table' and s.recruit.questions or {}
     s.recruit.cooldowns = type(s.recruit.cooldowns) == 'table' and s.recruit.cooldowns or {}
     s.recruit.notes = type(s.recruit.notes) == 'table' and s.recruit.notes or {}
+    -- The day counts behind the per-day caps (DAY COUNTS).
+    s.caps = type(s.caps) == 'table' and s.caps or {}
     -- Several organisations (the first one's row only): the ids of the
     -- others staff made, in the order they were made.
     s.others = type(s.others) == 'table' and s.others or {}
@@ -415,9 +478,8 @@ function Org.init(d)
     deps = d
     -- A member's codename where a hitman's name is shown (Org.shownName).
     Util.shownHitmanName = function(cid, name, contractId) return Org.shownName(cid, name, contractId) end
-    Orgs, Order, Splits, LastAccept, LastFire, Refs, RefSeq = {}, {}, {}, {}, {}, {}, 0
+    Orgs, Order, Splits, LastAccept, Refs, RefSeq = {}, {}, {}, {}, {}, 0
     Ctx = setmetatable({}, { __mode = 'k' })
-    Promotions.reset()
     NoSplit, NoSplitCount = {}, 0
     Invites, LoadedSeq, RegisteredSeq, Seq = {}, {}, {}, 0
     Paying, PaidHere = {}, {}
@@ -659,6 +721,7 @@ function Org.external(actor, grade)
             org.members[actor.cid] = nil
             org.ceiling.member[actor.cid] = nil
             Invites[actor.cid] = nil
+            Org.memberLeft(org, actor.cid)
             pcall(deps.storage.deleteOrgRow, 'members', memberId(actor.cid))
             pcall(function()
                 for _, g in ipairs(deps.storage.readOrgRows('grants', org.id) or {}) do
@@ -1007,7 +1070,7 @@ function Org.fire(who, cid, reason)
         local why = Engine.mayActOn(org, who.cid, cid)
         if why then return fail(why == 'self' and ERR.SELF or why == 'locked' and ERR.LOCKED or ERR.RANK) end
         if Engine.wouldLeaveNoBoss(org, cid) then return fail(ERR.LAST_BOSS) end
-        local last = LastFire[who.cid]
+        local last = capLast(org, 'fire', who.cid)
         if last and now() - last < Powers.limit(org, 'FireCooldownMinutes') * 60 then
             return fail(ERR.COOLDOWN)
         end
@@ -1021,11 +1084,34 @@ function Org.fire(who, cid, reason)
         if g.subject == 'member' and g.subject_id == cid then deps.storage.deleteOrgRow('grants', g.id) end
     end
     forgetMember(org, cid)
-    if not who.staff then LastFire[who.cid] = now() end
+    if not who.staff then
+        -- Kept with the row; a store that raises here stops nothing below.
+        capAdd(org, 'fire', who.cid, 1)
+        pcall(saveOrgRow, org)
+    end
     record('org_member_fired', who, { member = cid, grade = member.grade, reason = reason })
+    -- Told, with the reason the boss gave; by whom only as "a boss" or
+    -- "staff", as the activity log names them.
+    tell(cid, L('org.you_were_removed_from_the_organisation'):format(
+        who.staff and L('org.by_staff') or L('org.by_a_boss'), reason))
+    -- Nothing they earned waits at a dead drop they may no longer use.
+    Org.memberLeft(org, cid)
     local actor = deps.identity.byCitizenId(cid)
     if actor then Org.pushSpots(actor.source) end
     return true
+end
+
+--- Somebody stopped being a member (fired, or out of the job by another
+--- script): every dead drop of theirs handed over now (Extras3), never
+--- left for the placer. Never stops what removed them.
+---@param org table
+---@param cid string
+function Org.memberLeft(org, cid)
+    local ok, err = pcall(Extras3.memberLeft, org, cid)
+    if not ok then
+        Log.always(('organisation %s: handing over the dead drops of a member who left raised: %s; '
+            .. 'they are paid when the drop runs out'):format(tostring(org.id), tostring(err)))
+    end
 end
 
 --- Move a member to another role. A boss (M4): a member below them, into
@@ -1045,7 +1131,7 @@ function Org.setRole(who, cid, grade)
         if why then return fail(why == 'self' and ERR.SELF or why == 'locked' and ERR.LOCKED or ERR.RANK) end
         if Engine.mayAssignGrade(org, who.cid, grade) then return fail(ERR.RANK) end
         if Engine.wouldLeaveNoBoss(org, cid, grade) then return fail(ERR.LAST_BOSS) end
-        if Promotions.count(who.cid, now()) >= Powers.limit(org, 'PromotionsPerDay') then
+        if capCount(org, 'promotions', who.cid, 86400) >= Powers.limit(org, 'PromotionsPerDay') then
             return fail(ERR.LIMIT)
         end
     elseif Engine.wouldLeaveNoBoss(org, cid, grade) then
@@ -1056,8 +1142,13 @@ function Org.setRole(who, cid, grade)
     local from = member.grade
     member.grade = grade
     saveMember(member)
-    if not who.staff then Promotions.add(who.cid, now()) end
+    if not who.staff then
+        capAdd(org, 'promotions', who.cid, 1)
+        pcall(saveOrgRow, org)
+    end
     record('org_member_role', who, { member = cid, from = from, to = grade })
+    local role = org.roles[grade]
+    tell(cid, L('org.your_role_in_the_organisation_is'):format(tostring(role.label or role.name or grade)))
     return true, nil, { from = from, to = grade }
 end
 
@@ -1079,8 +1170,14 @@ function Org.suspend(who, cid, hours, reason)
     end
     member.suspended_until = hours > 0 and (now() + hours * 3600) or nil
     saveMember(member)
-    record('org_member_suspended', who, { member = cid, hours = hours,
-        reason = type(reason) == 'string' and Util.toValidUtf8(reason):sub(1, 160) or nil })
+    reason = type(reason) == 'string' and Util.toValidUtf8(reason):sub(1, 160) or nil
+    record('org_member_suspended', who, { member = cid, hours = hours, reason = reason })
+    if hours > 0 then
+        tell(cid, L('org.you_are_suspended_from_taking_contracts'):format(hours,
+            (reason and reason:find('%S')) and L('org.reason_x'):format(reason) or ''))
+    else
+        tell(cid, L('org.your_suspension_was_lifted_you_may'))
+    end
     return true, nil, { untilAt = member.suspended_until }
 end
 
@@ -1563,7 +1660,10 @@ function Org.roleDelete(who, grade)
     grade = math.floor(tonumber(grade) or -1)
     local role = org.roles[grade]
     if not role then return fail(ERR.NOT_FOUND) end
-    if Engine.countAt(org, grade) > 0 then return fail(ERR.LIMIT) end
+    if Engine.countAt(org, grade) > 0 then
+        local says = L('org.only_an_empty_role_can_be_deleted')
+        return false, ERR.RULE, { message = says }, says
+    end
     if not who.staff then
         if role.is_boss then return fail(ERR.LOCKED) end
         local why = Engine.mayEditRole(org, who.cid, grade)
@@ -2640,12 +2740,6 @@ function Org.setSalaryMax(who, grade, amount)
     return true
 end
 
-local function tell(cid, text)
-    if deps.notify and deps.notify.toCitizen and deps.identity.byCitizenId(cid) then
-        pcall(deps.notify.toCitizen, cid, (Cur() and Cur().label) or L('org.organisation'), text)
-    end
-end
-
 --- Hand a salary the funds have already paid out to the member's bank,
 --- marked paid; given back to the funds if the bank refuses it. The give
 --- is kept before the marker is awaited (Funds.willMark), so a crash in
@@ -3443,7 +3537,10 @@ function Org.roles(who)
     for grade, r in pairs(org.roles) do
         local powers = {}
         for code, entry in pairs(r.powers) do
-            powers[code] = { by = entry.by == 'staff' and 'staff' or 'boss' }
+            -- A boss's grant no longer in force (they left, were moved below
+            -- the role, or lost the power): shown as such, to be given again.
+            powers[code] = { by = entry.by == 'staff' and 'staff' or 'boss',
+                inactive = Engine.roleInactiveWhy(org, grade, entry, code) }
         end
         out[#out + 1] = { grade = grade, name = r.name, label = r.label, pay = r.pay, boss = r.is_boss or nil,
             locked = r.locked or nil, members = Engine.countAt(org, grade), powers = powers,
@@ -3537,7 +3634,7 @@ end
 
 Extras2.attach(Org, {
     fail = fail, record = record, save = function() saveOrgRow() end, deps = function() return deps end,
-    saveMember = saveMember, setGrade = setGrade,
+    saveMember = saveMember, setGrade = setGrade, capCount = capCount, capAdd = capAdd,
 })
 
 Extras3.attach(Org, {

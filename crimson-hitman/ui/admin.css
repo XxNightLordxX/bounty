@@ -718,6 +718,14 @@ ul, ol { list-style: none; }
 .ctx-open { padding: 0 0.4rem 0 0.7rem; min-width: 0; }
 .ctx-open .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14rem; }
 .ctx-left { color: var(--ink-faint); font-weight: 400; white-space: nowrap; }
+/* On a laptop screen (1280 and 1366 wide) the header stays one row with a
+   contract or a player open: the search and the context pill give way
+   before Help and Close wrap under the title. */
+@media (min-width: 1181px) and (max-width: 1500px) {
+  .bar { column-gap: 0.75rem; }
+  .gs { flex: 1 1 7rem; min-width: 7rem; }
+  .ctx-open .lbl { max-width: 8rem; }
+}
 .ctx-chip.is-stale .ctx-left { color: var(--gold); }
 .ctx-x { padding: 0 0.55rem; min-width: 2.1rem; justify-content: center; color: var(--ink-faint); }
 .ctx-x .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }

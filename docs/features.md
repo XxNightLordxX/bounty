@@ -193,6 +193,12 @@ character that loaded before the job was registered (a late start).
   record, probation, strike suspension or channel mute behind for a re-hire
   (their discipline and counts stay as the record). Hire, fire, role edits, cuts and withdrawals need the
   **boss office** by default (the server's own position, `OfficeRadius`).
+  Every day count (an armory role's limit and `ArmoryManagePerDay`,
+  `StrikesPerDay`, `PromotionsPerDay`) and `FireCooldownMinutes` are kept
+  with the organisation's settings, so a restart or a crash never starts a
+  fresh day. A member is told when they are fired (with the boss's reason),
+  suspended or lifted, and moved to another role: by *a boss* or *staff*,
+  never by name.
   Every bound is `Config.Organisation.Limits`, and staff may set an
   organisation's own.
 - **Funds.** Renewed-Banking's society account for the job when it is
@@ -244,7 +250,9 @@ character that loaded before the job was registered (a late start).
   ID over a nearby player's head, fire, set a role, suspend, limits, a
   codename, their own grants and denies), **Roles** (create, rename, delete,
   pay, salary, and a powers checklist where a power they do not hold is
-  greyed as *Staff have not given you this*), **Money** (the funds and ledger,
+  greyed as *Staff have not given you this*, and one a boss gave who can no
+  longer pass it on (gone, moved below the role, or no longer holding it)
+  reads *not in force* with **Give** to give it again), **Money** (the funds and ledger,
   deposit, withdraw, bonus, every cut with its staff bound), **Contracts**
   (access rules, cooldowns, boss picks), **Places** (the office, sign-up and
   meeting spots, placed where they stand: the server reads the position, the
@@ -453,7 +461,10 @@ character that loaded before the job was registered (a late start).
     (`'refund'`). It is a payout check (server/payout.lua) on the escrow's own
     give, so only the escrow's paths move money: what was escrowed is what the
     member (and the funds' cut) or the placer receive. A restart keeps every
-    drop. Staff hand one over or refund it at once.
+    drop. Staff hand one over or refund it at once. A member who stops being
+    one (fired, or out of the job by another script) is paid every drop
+    waiting for them at once and told, never refunded to the placer; the
+    hitman's receipt says where the payout waits and for how long.
   - **Territory** (`Territory`, `TerritoryMinutes`, `TerritorySightMetres`;
     needs `OrgContracts`). Staff draw zones in Locations (**Territory**: a
     centre and a radius). A contract placed (not sent anywhere) on somebody

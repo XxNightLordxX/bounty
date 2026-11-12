@@ -4502,9 +4502,13 @@
       var has = r.powers || {};
       orgPowerList().forEach(function (p) {
         var line = el('div', 'org-power');
-        var on = !!has[p.code];
+        // Given by a boss who can no longer pass it on (gone, moved below
+        // the role, or no longer holding it): not in force, so offered as
+        // Give, which gives it again as this boss's own.
+        var stale = !!(has[p.code] && has[p.code].inactive);
+        var on = !!has[p.code] && !stale;
         line.appendChild(el('div', p.held ? 'org-power-name' : 'org-power-name org-grey',
-          p.label + (on ? t('app.given') : '')));
+          p.label + (stale ? t('app.given_by_a_former_boss') : on ? t('app.given') : '')));
         if (!p.held) {
           line.appendChild(el('div', 'hint', t('app.staff_have_not_given_you_this')));
         } else {

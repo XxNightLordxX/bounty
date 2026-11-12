@@ -1599,8 +1599,13 @@ local function playerSubject(subject, src)
             or #(deps.storage.contractsInvolving(cid) or {}) > 0 then
             return { cid = cid, actor = actor, typed = true }
         end
-        local named = byName(text, canIdentify)
+        local named, namedErr, namedSays = byName(text, canIdentify)
         if named then return named end
+        -- Several people by that name: said, not read as an id.
+        if namedErr == CH.ERR.INVALID_INPUT then return nil, namedErr, namedSays end
+        -- Text with a digit in it reads as a citizen id typed; a word with
+        -- none is a name nobody has.
+        if not text:find('%d') then return nil, namedErr, namedSays end
         return { cid = cid, actor = nil, typed = true }
     end
     return byName(text, canIdentify)
@@ -2317,6 +2322,10 @@ local function settingRefusal(key, err, why)
     if err == 'not_allowed' then return L('panel.not_a_setting_the_panel_may') end
     if err == 'read_only' then return L('panel.not_changed'):format(tostring(why)) end
     if err == 'not_overridden' then return L('panel.is_what_config_lua_says_already'):format(key) end
+    if err == 'changed_since' then
+        return L('panel.not_changed_was_changed_since_you'):format(key,
+            deps.settings.describe(type(why) == 'table' and why.value or nil))
+    end
     if err == CH.ERR.BUSY then
         return L('panel.not_changed_another_change_to_the')
     end
@@ -2341,8 +2350,10 @@ H.setSetting = function(src, data)
     local key = type(data.key) == 'string' and #data.key <= 64 and data.key or nil
     if not key then return false, CH.ERR.INVALID_INPUT, L('panel.name_a_setting') end
     local cid, who = staffOf(src)
-    local ok, err, detail = deps.settings.set(key, data.value, who, cid)
-    if not ok then return false, err, settingRefusal(key, err, detail) end
+    -- The value the page made the change from (what it read): a save over a
+    -- change another staff member made since is refused, not written over it.
+    local ok, err, detail = deps.settings.set(key, data.value, who, cid, data.basis)
+    if not ok then return false, err, settingRefusal(key, err, detail), err == 'changed_since' and detail or nil end
     if detail.unchanged then
         return true, nil, (L('panel.is_already_nothing_changed'))
             :format(key, deps.settings.describe(detail.value), warned(detail)), detail
@@ -3354,17 +3365,17 @@ H.announce = function(src, data)
 end
 
 --- The handles the history gives its rows, so Undo names a change without
---- the page holding the value it puts back: [ref] = { key, value }. Kept
+--- the page holding the value it puts back: [ref] = { key, value, after }. Kept
 --- for the life of the process, at most HISTORY_REFS_MAX.
 local historyRefs, historyRefSeq, historyRefCount = {}, 0, 0
 local HISTORY_REFS_MAX = 5000
 
-local function historyRef(key, value)
+local function historyRef(key, value, after)
     if historyRefCount >= HISTORY_REFS_MAX then historyRefs, historyRefCount = {}, 0 end
     historyRefSeq = historyRefSeq + 1
     historyRefCount = historyRefCount + 1
     local ref = 'h' .. historyRefSeq
-    historyRefs[ref] = { key = key, value = value }
+    historyRefs[ref] = { key = key, value = value, after = after }
     return ref
 end
 
@@ -3393,7 +3404,7 @@ LOG_AREAS.settings = function(src, data)
                 old = row.old, new = row.new, secret = row.secret,
                 reset = row.source == 'config' or nil,
                 by = canIdentify and (row.actor or row.by) or L('panel.a_staff_member'),
-                ref = (row.undoable and canUndo) and historyRef(row.key, row.old) or nil,
+                ref = (row.undoable and canUndo) and historyRef(row.key, row.old, row.new) or nil,
             }
         end
     end
@@ -3414,7 +3425,9 @@ H.undoSetting = function(src, data)
         return false, 'developer_required', deps.admin.howToAuthorise(developerAce(), true)
     end
     local cid, who = staffOf(src)
-    local ok, err, detail = deps.settings.set(key, held.value, who, cid)
+    -- Only over the value this row left: a newer change since is refused,
+    -- never undone along with it.
+    local ok, err, detail = deps.settings.set(key, held.value, who, cid, held.after)
     if not ok then return false, err, settingRefusal(key, err, detail) end
     deps.audit.staff('admin_undo_setting', cid, nil,
         { key = key, to = detail.value, from = detail.old, unchanged = detail.unchanged or nil })

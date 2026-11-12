@@ -3532,13 +3532,17 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- the escrow's give, so nothing below changes), and how the trust it
     -- earns is scaled (Record.factorFor, server/record/). Neither may stop a
     -- claim.
-    local intentHold, reputation
+    local intentHold, dropHold, reputation
     if Contracts.payoutOnClaim then
         -- The payout checks (server/payout.lua), with the claim's options,
         -- so a step that waits on the payout (the body's disposal,
         -- server/disposal.lua) can tell a proof item apart.
-        local asked, hold = pcall(Contracts.payoutOnClaim, contract, hitmanCid, fulfilment, opts)
-        if asked then intentHold = hold end
+        local asked, hold, named = pcall(Contracts.payoutOnClaim, contract, hitmanCid, fulfilment, opts)
+        if asked then
+            intentHold = hold
+            -- Waiting at the organisation's dead drop (server/org/extras3.lua).
+            dropHold = type(named) == 'table' and type(named.dropHold) == 'table' and named.dropHold or nil
+        end
     end
     if Record then
         local asked, earned = pcall(Record.factorFor, contract, hitmanCid, fulfilment)
@@ -3696,6 +3700,8 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
         -- and how (both nil with the roleplay features off).
         intentHold = intentHold,
         reputation = reputation,
+        -- Waiting at the organisation's dead drop: { spot, minutes }.
+        dropHold = dropHold,
     }
 end
 

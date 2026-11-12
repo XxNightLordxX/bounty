@@ -1286,8 +1286,17 @@ function Notify.hitmanReceipt(contract, delivered, result)
         what = L('notify.item'):format(goods)
     end
 
+    -- Waiting at the organisation's dead drop (server/org/extras3.lua): the
+    -- whole payout is there, not released, and has nothing to do with room.
+    local drop = type(result.dropHold) == 'table' and result.dropHold or nil
+
     local title, body
-    if result.recovered then
+    if drop then
+        title = delivered and L('notify.handover_paid') or L('notify.kill_paid')
+        body = (delivered and L('notify.delivered_alive') or L('notify.kill_verified'))
+            .. L('notify.your_payout_waits_at_the_dead_drop'):format(what and (' (' .. what .. ')') or '',
+                tostring(drop.spot or ''), math.floor(tonumber(drop.minutes) or 0))
+    elseif result.recovered then
         title = L('notify.payout_recorded')
         body = (L('notify.your_payout_on_the_contract_on'))
             :format(contract.target_name or L('notify.your_target'))
@@ -1311,7 +1320,7 @@ function Notify.hitmanReceipt(contract, delivered, result)
         body = body .. L('notify.your_payout_is_held_until_you'):format(tostring(held.missing or L('notify.proof_of_intent')),
             math.floor(tonumber(held.minutes) or 0))
     end
-    if (tonumber(result.pending) or 0) > 0 and not held then
+    if (tonumber(result.pending) or 0) > 0 and not held and not drop then
         body = body .. (result.recovered
             and L('notify.part_of_it_is_held_for')
             or L('notify.part_of_it_is_held_until'))

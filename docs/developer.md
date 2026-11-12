@@ -252,7 +252,13 @@ to `settings.drops[contract:cid]` (and the in-memory index `Drops`, rebuilt by
 lines owed and queued (one `next()` while none waits), the drop's ox_target use
 (`Org.useSpot`) or the tick ends it, and `escrow.retryPending` hands it over;
 `'refund'` gives every held line back with `escrow.release`, as body disposal
-does. Territory is the `territory` place kind (hidden: `Org.spotsFor` never
+does. `onClaim` answers `{ spot, minutes }`, filed by `Payout.onClaim` under the
+check's `answer = 'dropHold'` as the claim's `dropHold` (the receipt's words).
+`Org.memberLeft` (`Org.fire`, and `Org.external` taking a member out) ends every
+drop of theirs as released (`Extras3.memberLeft`, audited `why = 'left'`).
+The per-day caps are `org.settings.caps[kind][cid] = { { at, n } }`
+(`capCount` / `capAdd` in server/org/init.lua, given to extras 2 by its kit),
+saved with the organisation's row. Territory is the `territory` place kind (hidden: `Org.spotsFor` never
 sends it), read by `Org.territoryClaim` (asked by `server/app.lua` after a
 placement not sent anywhere): the target's server position, a zone, and a
 member of that organisation within `TerritorySightMetres` in the same routing
@@ -695,7 +701,7 @@ resource (`GetParentResourceName()`):
 | `player` | read | `{ subject }` (a server id, a citizen id or a name), or `{ ref }` to read the same player again | `{ player = { cid?, name, online, server, ref }, contracts = [{ id, state, role, anonymous, target, created_at, resolution }], stats = { completed, failed, placed, survived, rate, standing }` (with `crimson.identity` only)`, owed = [line + queued], pending, notices = { count, titles }, frozen?, suspended?, protected?, payMax }` (`suspended` and `protected` are `{ since, until?, reason, by? }`, `by` with `crimson.identity` only); `not_found` for a citizen id nobody in the city has and nothing shown names |
 | `whois` | identity | `{ id }` | `{ creator = { cid, name, anonymous }, target = { cid, name }, hitmen = [{ alias, cid, name, anonymous, state }] }` |
 | `settings` | read | — | each `setting` carries its `category` (`rules-timers`, `rules-rewards`, `rules-limits`, `rules-targeting`, `features`, `developer`), `money` (its Rewards & money group), and `shipped`/`hasShipped` (defaults.lua's value); developer rows only for staff with the developer ACE. `{ features = [setting], limits = [setting], readonly = [setting], overrides, keptPhotos? = { count, open, links, files, waiting } }` (`keptPhotos` only while kill photos are off and some are kept from before) |
-| `setSetting` | write | `{ key, value }` (a boolean, a number, one of `choices`, a word for a `text` key, a list of names, or `{ min, max }` for a `range` key; a key on `Settings.DENY` is refused `read_only`, and a developer-category key needs the developer ACE) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed` or `busy` (another change is being saved), with why in `message` |
+| `setSetting` | write | `{ key, value, basis }` (a boolean, a number, one of `choices`, a word for a `text` key, a list of names, or `{ min, max }` for a `range` key; a key on `Settings.DENY` is refused `read_only`, and a developer-category key needs the developer ACE; `basis`, optional, is the value the page read: `Settings.set` compares it under its save lock) | `{ key, value, old, source }`; refused `not_allowed`, `read_only`, `invalid_value`, `store_failed`, `busy` (another change is being saved) or `changed_since` (the value in force is no longer `basis`; `{ key, value }` is what it is now; an Undo of an older row is refused the same way), with why in `message` |
 | `resetSetting` | write | `{ key }` | `{ key, value, old, source }`; also `not_overridden` and `busy` |
 | `resetSettings` | write | — | `{ keys }` |
 | `presets` | read | — | `{ presets = [{ name, about, builtIn, at?, changes = [{ key, label, from, to }], refused = [{ key, label, why }], same }] }`: every preset (server/presets.lua: the shipped Strict, Relaxed, Roleplay-heavy, and Current from the store, rp row kind `settings_preset`) against the settings in force now; reading changes nothing |

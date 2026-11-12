@@ -381,6 +381,9 @@ local function opPreview(src, data)
                 local identity = StaffReassign.IDENTITIES[data.identity] and data.identity or nil
                 local anonymous = anonymousFor(contract, actor, identity)
                 view.anonymous = anonymous
+                -- Whether the server lets a hitman be anonymous on this
+                -- target at all: off, the page offers only named.
+                view.anonymousAllowed = Util.targetRule('AllowAnonymousHitman', contract.target_protected == true)
                 local ok, acceptErr = deps.contracts.acceptHeld(actor, id, anonymous,
                     { staffAssigned = true, waiveStake = StaffReassign.waived(), waiveFee = true,
                       vacating = vacating, dryRun = true })

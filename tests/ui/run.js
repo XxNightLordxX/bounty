@@ -15079,6 +15079,29 @@ async function main() {
       eq(sentP[0].body.on, false);
     });
 
+    // BOSS-4: a power given by a boss who can no longer pass it on.
+    const staleRoles = { ok: true, data: { rows: [
+      { grade: 3, name: 'boss', label: 'Boss', pay: 0, boss: true, members: 1, powers: {} },
+      { grade: 2, name: 'lieutenant', label: 'Lieutenant', pay: 10, members: 1,
+        powers: { M1: { by: 'boss', inactive: 'granter_gone' } }, editable: true }] } };
+    const stale = await openOrg(memberMine(['R4', 'M1']), { orgRoles: staleRoles });
+    await screen(stale, 'Roles');
+    click(stale, 'Lieutenant · rank 2');
+    await settle(); await settle();
+    const staleText = stale.view.textContent;
+    click(stale, 'Give');
+    await settle();
+    click(stale, 'Tap again to give it');
+    await settle(); await settle(); await settle();
+    it('ORG TAB: a power given by a former boss reads as not in force, and Give gives it again', function () {
+      truthy(staleText.indexOf('Power M1 — given by a boss who can no longer pass it on: not in force') !== -1,
+        staleText);
+      const sentS = stale.orgSent.filter(function (s) { return s.name === 'orgRolePowers'; });
+      eq(sentS.length, 1);
+      eq(sentS[0].body.power, 'M1');
+      eq(sentS[0].body.on, true);
+    });
+
     // Money writes carry a nonce and only the fields the server reads.
     await screen(all, 'Money');
     type(all, 'wd-amount', '300');

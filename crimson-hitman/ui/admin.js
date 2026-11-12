@@ -390,6 +390,44 @@
     return shortValue(value);
   }
 
+  /** A proposal's kind in words (the server's CH.AMENDMENT names), or the
+      name as sent for one this page does not know. */
+  function proposalKind(kind) {
+    var said = Text.section('admin')['proposal_' + String(kind || '')];
+    return typeof said === 'string' ? said : String(kind || t('admin.proposal'));
+  }
+
+  /** How long a number of seconds is: '1 h 30 min'. */
+  function durationText(seconds) {
+    var n = Math.max(0, Math.floor(Number(seconds) || 0));
+    var parts = [];
+    var d = Math.floor(n / 86400), hr = Math.floor((n % 86400) / 3600), mi = Math.floor((n % 3600) / 60), se = n % 60;
+    if (d) parts.push(t('admin.n_d', d));
+    if (hr) parts.push(t('admin.n_h', hr));
+    if (mi) parts.push(t('admin.n_min', mi));
+    if (se || !parts.length) parts.push(t('admin.n_s', se));
+    return parts.join(' ');
+  }
+
+  /** What a proposal changes, in words: a time as a duration, an amount as
+      money, a reason quoted; anything else as the log shows it. */
+  function proposalTerms(payload) {
+    if (!payload || typeof payload !== 'object') return payload == null ? '' : String(payload);
+    var said = [], rest = {}, any = false;
+    Object.keys(payload).sort().forEach(function (k) {
+      var v = payload[k];
+      if (k === 'seconds') said.push(durationText(v));
+      else if (k === 'amount') said.push(money(v));
+      else if (k === 'reason') said.push('\u201c' + String(v) + '\u201d');
+      else if (k === 'slot') said.push(t('admin.proposal_terms_slot', v));
+      else if (k === 'mode') said.push(String(v));
+      else if (k === 'raise') return;
+      else { rest[k] = v; any = true; }
+    });
+    if (any) said.push(detailText(rest));
+    return said.join(' \u00b7 ');
+  }
+
   function detailText(detail) {
     if (detail === null || detail === undefined) return '';
     if (typeof detail !== 'object') return String(detail);
@@ -630,7 +668,15 @@
     var box = byId('toasts');
     if (!box || !text) return;
     kind = kind || 'info';
+    // The same words already showing (several reads refused together): one
+    // toast, kept up for as long as the newest of them.
+    var same = kind + '|' + String(text);
+    for (var i = 0; i < box.children.length; i++) {
+      var shown = box.children[i];
+      if (shown._said === same && shown._restart) { shown._restart(); return; }
+    }
     var node = document.createElement('div');
+    node._said = same;
     node.className = 'toast is-' + kind;
     node.setAttribute('role', kind === 'error' ? 'alert' : 'status');
     node.setAttribute('data-act', 'toast-close');
@@ -640,7 +686,12 @@
       h('span.toast-text', String(text))));
     box.appendChild(node);
     while (box.children.length > TOASTS_MAX) box.removeChild(box.children[0]);
-    setTimeout(function () { node.remove(); }, kind === 'error' ? TOAST_ERROR_MS : TOAST_MS);
+    var timer = null;
+    node._restart = function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () { node._restart = null; node.remove(); }, kind === 'error' ? TOAST_ERROR_MS : TOAST_MS);
+    };
+    node._restart();
   }
 
   /* ---------- requests ------------------------------------------------- */
@@ -1342,7 +1393,11 @@
   function pollMs() { return fastPace(S.section) ? refreshMs() : Math.max(refreshMs(), AWAY_MS); }
 
   function loadOverview(manual) {
-    return ask('overview', {}, 'overview').then(function (reply) {
+    // One read at a time: opening the panel (Home's own read, then the
+    // refresh's) asked twice at once for the same answer.
+    if (!manual && S.overviewAsking) return S.overviewAsking;
+    var asking = ask('overview', {}, 'overview').then(function (reply) {
+      if (S.overviewAsking === asking) S.overviewAsking = null;
       if (!reply) return;
       // The timed refresh (and opening the section, drawn just before from
       // what is held) with the answer it already shows, word for word: only
@@ -1370,6 +1425,8 @@
       if (at) { at.textContent = overviewStamp(); return; }
       setHtml(byId(S.section === 'health' ? 'dg' : 'ov'), S.section === 'health' ? healthBody() : overviewBody());
     });
+    S.overviewAsking = asking;
+    return asking;
   }
 
   /** The overview's foot: when it was read and how often it is. */
@@ -2154,9 +2211,10 @@
       })))) : empty(t('admin.nobody_has_taken_it')));
 
     var proposals = amendments.length ? card(t('admin.open_proposals'), h('ul.plain', amendments.map(function (a) {
-      return h('li', h('b', String(a.kind || 'proposal')), t('admin.by_x', String(a.proposer || '—')),
+      var what = proposalTerms(a.payload);
+      return h('li', h('b', proposalKind(a.kind)), t('admin.by_x', String(a.proposer || '—')),
         a.expires_at ? t('admin.runs_out') + when(a.expires_at) : '',
-        a.payload ? h('span.detail', ' ' + detailText(a.payload)) : null);
+        what ? h('span.detail', ' ' + what) : null);
     }))) : null;
 
     var staff = d.staff;
@@ -4258,11 +4316,28 @@
     return { error: t('admin.not_a_setting_the_panel_may') };
   }
 
+  /* Each change carries the value this page read (`basis`): the server
+     refuses one made over a change another staff member saved since
+     (changed_since), and the row is read again, never written over theirs. */
+  function settingBasis(key) {
+    var entry = settingEntry(key);
+    return entry ? entry.value : undefined;
+  }
+
   function setSetting(key, value, node) {
-    write('setSetting', { key: key, value: value }, 'set:' + key, node).then(function (reply) {
+    write('setSetting', { key: key, value: value, basis: settingBasis(key) }, 'set:' + key, node).then(function (reply) {
       if (!reply) return;
       S.settings.answers[key] = { ok: reply.ok, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
+      if (!reply.ok && reply.err === 'changed_since') {
+        // What is in force now, drawn: the edit made on the old one goes.
+        delete S.forms['st.' + key];
+        delete S.forms['st.' + key + '.min'];
+        delete S.forms['st.' + key + '.max'];
+        delete S.settings.drafts[key];
+        loadSettings();
+        return;
+      }
       if (reply.ok) {
         delete S.forms['st.' + key];
         delete S.forms['st.' + key + '.min'];
@@ -5700,7 +5775,8 @@
         loadSettings();
         return;
       }
-      write('setSetting', { key: changes[i].key, value: changes[i].value }, 'set:' + changes[i].key, node)
+      write('setSetting', { key: changes[i].key, value: changes[i].value, basis: settingBasis(changes[i].key) },
+        'set:' + changes[i].key, node)
         .then(function (reply) {
           if (!reply) return;
           said.push(words(reply));
@@ -6135,6 +6211,12 @@
       closeSearch();
       return;
     }
+    // The innermost layer first: a button waiting for its second click,
+    // then the contract drawer (what was typed in it kept until it is
+    // closed), the folded section menu, and only then the panel.
+    if (S.armed) { disarm(); return; }
+    if (S.drawer.id) { closeDrawer(); return; }
+    if (S.navOpen) { S.navOpen = false; drawChrome(); return; }
     close();
   });
 
@@ -6989,6 +7071,10 @@
     var who = String((S.players.data.player || {}).name || 'them');
     var v = st.previewRef === S.players.ref ? st.preview : null;
     var ops = v ? asList(v.operatives) : [];
+    // The server lets no hitman be anonymous on this target: only named is
+    // offered, and the drawer says so before the click, not after.
+    var noAnon = !!v && v.anonymousAllowed === false;
+    var identity = noAnon ? 'named' : st.identity;
     var said = !v ? loading(t('admin.checking_whether') + who + t('admin.can_take_it'))
       : frag(
         h('p', ops.length ? t('admin.taken_off_it') + ops.join(', ') + t('admin.each_as_remove_operative_does')
@@ -7011,10 +7097,13 @@
         ], st.stake)),
       h('div.ct-row', h('span.ct-label', t('admin.the_new_hitman')),
         segmented('ra-identity', [
-          { value: 'anonymous', label: t('admin.anonymous_no_fee'), disabled: !open, title: off.title },
-          { value: 'carry', label: t('admin.as_they_chose_before'), disabled: !open, title: off.title },
+          { value: 'anonymous', label: t('admin.anonymous_no_fee'), disabled: !open || noAnon,
+            title: noAnon ? t('admin.anonymous_hitmen_are_off_for_this') : off.title },
+          { value: 'carry', label: t('admin.as_they_chose_before'), disabled: !open || noAnon,
+            title: noAnon ? t('admin.anonymous_hitmen_are_off_for_this') : off.title },
           { value: 'named', label: t('admin.named_to_the_placer'), disabled: !open, title: off.title }
-        ], st.identity)),
+        ], identity)),
+      noAnon ? h('p.note', t('admin.anonymous_hitmen_are_off_for_this')) : null,
       h('div.inline-form.is-wide',
         field('dr.ra.reason.' + id, { class: 'is-grow', placeholder: t('admin.reason_required_kept_in_the_log'),
           maxlength: '120', disabled: !open, 'aria-label': t('admin.reason_for_reassigning_the_contract') }),
@@ -7049,10 +7138,12 @@
     }
     var who = String((S.players.data.player || {}).name || 'them');
     var n = asList(v.operatives).length;
-    var label = t('admin.click_again_give_it_to') + who + (n ? tn('admin.taking_off_operatives', n) : '');
+    var identity = v.anonymousAllowed === false ? 'named' : (st.identity || 'anonymous');
+    var label = t('admin.click_again_give_it_to') + who + (n ? tn('admin.taking_off_operatives', n) : '')
+      + (identity === 'named' ? t('admin.named_to_the_placer_armed') : '');
     if (!armed(node, label, ['dr.ra.reason.' + id])) return;
     write('reassignHitman', { id: id, ref: ref, reason: reason, block: st.block === 'block',
-      returnStake: st.stake === 'return', identity: st.identity || 'anonymous' }, 'reassign:' + id, node).then(function (reply) {
+      returnStake: st.stake === 'return', identity: identity }, 'reassign:' + id, node).then(function (reply) {
       if (!reply || S.drawer.id !== id) return;
       drawerAnswer(reply);
       if (reply.ok) {

@@ -23,7 +23,9 @@ CrimsonBoot.define('server.payout', function() --- Payout checks: the one ordere
 ---   releasesAt(recipientCid, line) -> int?  when it is released anyway
 ---   onClaim(contract, hitmanCid, fulfilment, opts) -> any
 ---       asked by the claim under its lock, before the money is released;
----       the first answer that is not nil is the claim's intentHold
+---       the first answer that is not nil is the claim's intentHold, or,
+---       for a check with `answer = '<name>'`, the claim's <name> (the
+---       dead drop's dropHold: where the payout waits)
 ---   afterClaim(contractId, hitmanCid, claimed)
 ---       the claim has ended (claimed: it went through, or raised part-way)
 --- Every call is protected: a check that raises holds nothing and stops no
@@ -77,16 +79,22 @@ end
 
 --- The claim is about to release a payout (Contracts.claimSlot, under its
 --- lock): every check is told, in order. The first answer is the hold.
+---@return any hold the claim's intentHold
+---@return table named { [answer] = what the check said } for checks that name theirs
 function Payout.onClaim(contract, hitmanCid, fulfilment, opts)
-    local hold
+    local hold, named = nil, {}
     for _, name in ipairs(Payout.ORDER) do
         local check = checks[name]
         if check and check.onClaim then
             local answer = ask(name, check.onClaim, contract, hitmanCid, fulfilment, opts)
-            if hold == nil then hold = answer end
+            if type(check.answer) == 'string' then
+                if named[check.answer] == nil then named[check.answer] = answer end
+            elseif hold == nil then
+                hold = answer
+            end
         end
     end
-    return hold
+    return hold, named
 end
 
 --- The claim has ended: every check is told, in order.

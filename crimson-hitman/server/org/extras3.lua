@@ -388,7 +388,9 @@ local function onClaim(contract, hitmanCid)
     deps().audit.financial('org_drop_left', hitmanCid, contract.id, { org = org.id, minutes = wait })
     O.within(org, tell, hitmanCid, (L('org_extras3.your_payout_is_left_at_the'))
         :format(spot.label or L('org_extras3.dead_drop'), wait))
-    return nil
+    -- The claim's receipt says where it waits, not "released to you"
+    -- (Payout.onClaim files it as the claim's dropHold).
+    return { spot = spot.label or L('org_extras3.dead_drop'), minutes = wait }
 end
 
 --- The escrow's gate (Escrow.holdBack): the payout of a drop not yet
@@ -465,6 +467,29 @@ local function collect(org, actor, loc)
     end
     tell(actor.cid, n > 0 and (L('org_extras3.you_collected_payout_from_the_dead')):format(n)
         or L('org_extras3.nothing_is_waiting_for_you_at'))
+    return n
+end
+
+--- Somebody no longer a member (Org.memberLeft: fired, or out of the job):
+--- every drop of theirs ends now as staff's Release ends one, the payout
+--- handed to them by the escrow's own retry (at once in the city, else at
+--- their next login). Never the 'refund' rule: they earned it, and only
+--- lost the spot. They are told; the audit row says why ('left').
+---@param org table
+---@param cid string
+---@return integer how many
+function Extras3.memberLeft(org, cid)
+    if type(org) ~= 'table' or type(cid) ~= 'string' or not next(org.settings.drops) then return 0 end
+    local keys = {}
+    for key, drop in pairs(org.settings.drops) do
+        if drop.cid == cid then keys[#keys + 1] = key end
+    end
+    table.sort(keys)
+    local n = 0
+    for _, key in ipairs(keys) do
+        if finish(org, key, 'left') then n = n + 1 end
+    end
+    if n > 0 then tell(cid, (L('org_extras3.you_left_the_organisation_payouts_released')):format(n)) end
     return n
 end
 
@@ -1011,8 +1036,11 @@ function Extras3.tick(org, at)
         end
         for _, key in ipairs(due) do
             local drop = org.settings.drops[key]
-            finish(org, key, on('DeadDrops') and rule or 'pay')
-            tell(drop.cid, rule == 'refund' and on('DeadDrops')
+            -- Never back to the placer for somebody no longer a member, who
+            -- could not reach the spot to collect it.
+            local how = (on('DeadDrops') and org.members[drop.cid]) and rule or 'pay'
+            finish(org, key, how)
+            tell(drop.cid, how == 'refund'
                 and L('org_extras3.you_did_not_collect_your_payout')
                 or L('org_extras3.your_payout_at_the_dead_drop'))
         end
@@ -1060,7 +1088,8 @@ function Extras3.init(d)
     Moves.reset()
     Asked.reset()
     -- Asked for here, at every start, not kept from when this file was read.
-    CrimsonBoot.require('server.payout').add('deaddrop', { holds = holds, releasesAt = releasesAt, onClaim = onClaim },
+    CrimsonBoot.require('server.payout').add('deaddrop', { holds = holds, releasesAt = releasesAt, onClaim = onClaim,
+        answer = 'dropHold' },
         { escrow = d.escrow, contracts = d.contracts })
 end
 

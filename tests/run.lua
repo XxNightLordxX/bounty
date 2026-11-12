@@ -785,6 +785,7 @@ local suites = {
     'adapters_spec',
     'locale_spec',
     'escrow_boot_spec',
+    'player_review2_spec',
     'versioncheck_spec',
     'configcheck_spec', 'settingsio_spec',
     'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.org_extras3_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',

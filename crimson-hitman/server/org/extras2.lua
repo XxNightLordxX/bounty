@@ -67,13 +67,11 @@ Extras2.API = Org
 --                              STATE
 -- ============================================================================
 
---- Items each member took out of the armory in the last day, one entry a
---- unit (their role's limit), and those a boss holding A1 took beyond it.
-local Taken = Window.new(86400)
-local Managed = Window.new(86400)
-
---- Strikes and warnings one boss issued in the last day (StrikesPerDay).
-local Issued = Window.new(86400)
+--- Items each member took out of the armory in the last day (their role's
+--- limit, 'armory'), those a boss holding A1 took beyond it ('managed'), and
+--- the strikes and warnings one boss issued ('strikes', StrikesPerDay):
+--- day counts in the organisation's settings, so a restart keeps them
+--- (kit.capCount / kit.capAdd, server/org/init.lua DAY COUNTS).
 
 --- Applications the organisation took in the last hour (RecruitPerHour).
 local Applied = Window.new(3600)
@@ -273,9 +271,9 @@ end
 --- What a member may still take out today: by their role's limit, and
 --- (A1) beyond it.
 local function leftToday(org, cid, member)
-    local left = math.max(0, roleLimit(org, member.grade) - Taken.count(cid, now()))
+    local left = math.max(0, roleLimit(org, member.grade) - kit.capCount(org, 'armory', cid, 86400))
     local manage = O.Engine.holds(org, cid, 'A1') and math.max(0, O.Powers.limit(org, 'ArmoryManagePerDay')
-        - Managed.count(cid, now())) or 0
+        - kit.capCount(org, 'managed', cid, 86400)) or 0
     return left, manage
 end
 
@@ -433,8 +431,9 @@ function Org.armoryWithdraw(who, slot, n)
         moveUnknown(org, who.cid, s.name, n, 'out')
         -- It may be theirs now: counted against today's limit.
         local t = now()
-        for _ = 1, n - beyond do Taken.add(who.cid, t) end
-        for _ = 1, beyond do Managed.add(who.cid, t) end
+        kit.capAdd(org, 'armory', who.cid, n - beyond, t)
+        kit.capAdd(org, 'managed', who.cid, beyond, t)
+        pcall(kit.save)
         return fail(ERR.REFUSED, { message = L('org_extras2.your_inventory_raised_taking_it_it') })
     end
     if into == 'refused' then
@@ -450,8 +449,8 @@ function Org.armoryWithdraw(who, slot, n)
     end
     Busy = false
     local t = now()
-    for _ = 1, n - beyond do Taken.add(who.cid, t) end
-    for _ = 1, beyond do Managed.add(who.cid, t) end
+    kit.capAdd(org, 'armory', who.cid, n - beyond, t)
+    kit.capAdd(org, 'managed', who.cid, beyond, t)
     logMove(org, { at = t, dir = 'out', item = s.name, count = n, cid = who.cid })
     kit.save()
     kit.record('org_armory_withdraw', who, { item = s.name, count = n, beyond = beyond > 0 and beyond or nil,
@@ -751,8 +750,12 @@ function Org.discipline(who, cid, kind, reason)
     if not reason then return fail(ERR.INVALID, { message = L('org_extras2.a_reason_plain_text_up_to') }) end
     local why = mayActOn(org, who, cid)
     if why then return fail(why) end
-    if not who.staff and not Issued.take(who.cid, O.Powers.limit(org, 'StrikesPerDay'), now()) then
-        return fail(ERR.LIMIT)
+    if not who.staff then
+        if kit.capCount(org, 'strikes', who.cid, 86400) >= O.Powers.limit(org, 'StrikesPerDay') then
+            return fail(ERR.LIMIT)
+        end
+        -- Saved with the entry below.
+        kit.capAdd(org, 'strikes', who.cid, 1)
     end
     Seq = Seq + 1
     local entry = { id = ('dc%d_%d'):format(Seq, math.random(1000, 9999)), kind = kind, reason = reason, at = now(),
@@ -1090,9 +1093,6 @@ end
 
 --- A fresh start (Org.init): the record's outcomes observed.
 function Extras2.init(d)
-    Taken.reset()
-    Managed.reset()
-    Issued.reset()
     Applied.reset()
     Busy, Seq = false, 0
     if d.record then d.record.observer = Extras2.observe end

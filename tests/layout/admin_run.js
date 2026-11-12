@@ -1363,6 +1363,35 @@ async function main() {
     await page.close();
   }
 
+  /* ---- VISUAL-4: at a laptop's 1366 and 1280 wide the header stays one
+     row with a contract open (its context pill added): Help and Close never
+     wrap under the title. ---- */
+  for (const [w, h] of [[1366, 768], [1280, 720]]) {
+    const page = await openAt(browser, w, h);
+    await page.evaluate(function (access) { window.postMessage({ type: 'open', access: access }, '*'); }, ACCESS);
+    await page.waitForTimeout(250);
+    await go(page, 'contracts');
+    await page.waitForTimeout(150);
+    await page.click('#ct-results tr.row');
+    await page.waitForTimeout(200);
+    const bar = await page.evaluate(function () {
+      const b = document.querySelector('.bar').getBoundingClientRect();
+      const brand = document.querySelector('.brand').getBoundingClientRect();
+      const close = document.getElementById('close').getBoundingClientRect();
+      const ctx = document.getElementById('ctx');
+      const search = document.querySelector('.gs').getBoundingClientRect();
+      return { height: b.height, sameRow: Math.abs(close.top - brand.top) < brand.height + 12,
+               ctx: !!ctx && !ctx.hidden && ctx.textContent.length > 0, search: search.width };
+    });
+    it(w + 'x' + h + ': with a contract open the header stays one row, Close beside the title', function () {
+      truthy(bar.ctx, 'the context pill is shown');
+      truthy(bar.sameRow, 'Close wrapped under the title');
+      truthy(bar.height < 80, 'the header is ' + Math.round(bar.height) + 'px tall');
+      truthy(bar.search >= 100, 'the search is ' + Math.round(bar.search) + 'px wide');
+    });
+    await page.close();
+  }
+
   /* ---- one design system: the phone app and the panel draw the same
      components the same way (ui/kit.css) ---- */
   function probeKit() {
