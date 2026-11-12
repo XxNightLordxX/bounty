@@ -175,8 +175,9 @@ character that loaded before the job was registered (a late start).
   it again restores them. The organisation is never left without a member in
   its top boss role, unless staff do it. Every rule is checked on the server
   for every request.
-- **The 35 powers** (the plan's 31 area powers, D2, D3, and M7, P3 for
-  codenames and payroll; D1 is R4):
+- **The powers**: 51 in all, the 35 below (31 area powers, D2, D3, and M7,
+  P3 for codenames and payroll; D1 is R4) and the 16 the organisation extras
+  add (M8 to M12, K4 to K8, N3, N4, A1, A2, P4, V1), each named with its extra:
   M1 view members, M2 hire, M3 fire, M4 promote/demote, M5 suspend from
   contracts, M6 member limits, M7 assign codenames; R1 create, R2 edit, R3
   delete roles, R4 set role powers; P1 role pay, P2 bonus, P3 set salaries; C1 organisation cut, C2 cut by role, C3 cut per

@@ -83,7 +83,7 @@ faster. Use a test server, or a copy of yours, with a database backup.
 - [ ] With a hitman on it, `/cleanse <id>` says *Paid. It closes in about 2 minutes. You are still a target until then; if a hitman finishes first, your money comes back.* With $10,000 in the bank and $10,000 cash against a $15,000 price it says the bank or the cash has to cover the full $15,000 on its own. The buyout dialog and every *Paid* reply, in the app and in chat, end *Closing this one does not mean nobody else is after you.*
 - [ ] A SAST officer who switches their primary job to a civilian one with `sc-multijob` (F9) keeps the view and nothing more, and their phone says once *The app only shows the whitelisted-job screen while you hold the sast job. Quit it from your job menu for the whole app.*; the view's banner says *You hold the sast job, a whitelisted one, …*. Switching back to SAST and out again, or a tick later, says nothing more; relog to a character that holds a barred job it is not working: told again
 - [ ] On the view, **Refresh** reads it again (a colleague's contract placed meanwhile appears). Tapped again at once, it says how many seconds to wait and the screen stays as it was
-- [ ] Take SAST off that character's jobs altogether with the app open: it changes to the whole app (Board, Mine, Place, On Me, Ledger) at once, or within about ten seconds if no job event arrives (the maintenance tick, `Config.Audit.FlushIntervalMs`; an estimate until you time it)
+- [ ] Take SAST off that character's jobs altogether with the app open: it changes to the whole app (Board, Mine, Place, On Me, Ledger) at once, or within about 30 seconds if no job event arrives (the access check on the maintenance tick, every 30 s; an estimate until you time it)
 - [ ] Give a civilian with the app open the `police` job: it changes to the view at once, and nothing of the board, their Place form or Mine remains. A contract they placed or took as a civilian carries on
 - [ ] With `Config.BlockOffDuty = false`, an off-duty officer has the whole app, and an off-duty colleague is still listed on the view, as the advisory names them on duty or off
 - [ ] Run `ch-diag <the SAST character's id>` in F8 with their app open: the report runs `whitelistedView`, says the answer follows here, and their app's log prints in your F8 a moment later
@@ -309,7 +309,7 @@ uploads, and with neither. Restart the resource between them.
 - [ ] The targeted officer is notified directly; logged off at the time, they find it once they have spawned at their next login
 - [ ] With **Always tell the officer** off in the admin panel, the targeted officer gets the ordinary "eyes on you" alert instead
 - [ ] An `sc-dispatch` entry appears in the MDT
-- [ ] With an officer's contract taken, turn **Advisories**, **When accepted** or **Use dispatch** off in the admin panel, then end the contract (void it): both MDT entries are gone
+- [ ] With an officer's contract taken, turn **Advisories**, **When accepted** or **Through sc-dispatch** off in the admin panel, then end the contract (void it): both MDT entries are gone
 - [ ] Accepting raises a second advisory with the operative count
 - [ ] A second acceptance raises another, with the count now 2
 - [ ] The first operative walks away, `restart crimson-hitman`, and takes it again: no second acceptance bulletin, on phones or in the MDT
@@ -452,7 +452,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] **Funds & cuts**: deposit $1,000 with a reason (two clicks): the balance moves once, and a second click after a lag does not move it twice. A cut above the cap on all cuts is refused before anything is sent
 - [ ] **Boss permissions → Matrix**: click a few cells: nothing is saved, each is marked and listed under the grid (*+ Hire for Boss*); **Save N changes** (two clicks) saves them in one go; a refusal keeps them listed. **Grant history** lists every grant, with Undo on a role's cell
 - [ ] **Locations**: stand somewhere in game and press **Use my position** on Sign-up spots: the row fills with where you stand; **Save** (two clicks) puts it on the map. **Use my position for a new line** under Broker NPC places fills a line you add and save as any list
-- [ ] **Players → Suspended** and **Protected** list everybody suspended or protected now, each with **Lift** (two clicks); **Why can't they see…** runs the diagnosis as the player looked up, while they are in the city
+- [ ] **Players → All measures**, **Suspended** and **Protected**, list everybody suspended or protected now, each with **Lift** (two clicks); **Why can't they see…** runs the diagnosis as the player looked up, while they are in the city
 
 - [ ] `/hitmanadmin` opens the panel full screen with a cursor; the phone app still opens from the phone as before. Escape closes it, so does its close button, and the game takes input again at once. `restart crimson-hitman` with it open leaves no cursor behind
 - [ ] With the panel's command renamed in the panel's settings (`Config.Admin.Commands.panel`, applied at the next start), open the panel with the new name and type `/<new name>-close` in F8: it closes and the game takes input again; `/hitmanadmin-close` still works too

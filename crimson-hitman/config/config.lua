@@ -5,12 +5,12 @@
     ╚═══════════════════════════════════════════════════════════════════════════╝
 
     The one file to edit, in the admin panel's order (/hitmanadmin): Debug and
-    storage, Rules, Features, Staff, Roleplay, Improvements, Advanced. Each
-    setting is listed in docs/configuration.md under the same section
-    title. The panel changes most of these live and keeps its changes
-    across restarts, over the value in this file. Every player's game
-    downloads this file, so never put a secret in it: the Discord webhooks
-    are server.cfg convars (README, Main settings).
+    storage, Other scripts, Rules, Features, Staff, Roleplay, Improvements,
+    Organisation, Mission steps, Advanced. Each setting is listed in
+    docs/configuration.md under the same section title. The panel changes
+    most of these live and keeps its changes across restarts, over the value
+    in this file. Every player's game downloads this file, so never put a
+    secret in it: the webhooks are server.cfg convars (README, Main settings).
 ]]
 
 Config = Config or {}
@@ -211,8 +211,8 @@ Config.Ledger = {
 --                              RULES: TARGETING
 -- ============================================================================
 -- Who may open the app and who can be named as a target. Law enforcement,
--- EMS, fire and legal jobs are barred by job type as well as by name; with
--- the whitelisted-job view on they get one read-only screen instead.
+-- EMS and fire jobs are barred by job type and by name, legal jobs by name;
+-- with the whitelisted-job view on they get one read-only screen instead.
 
 Config.BlockedJobTypes = { -- job types barred from the app
     leo = true, police = true, ems = true, fire = true,
@@ -261,8 +261,8 @@ Config.Mugshot = {
 -- ============================================================================
 --                               FEATURES: CORE
 -- ============================================================================
--- The app itself, proposals, notices, messages and calls, progression and
--- the alerts staff get.
+-- The app itself, proposals, notices, messages and calls, and the alerts
+-- staff get.
 
 Config.App = {
     DefaultInstalled = false,  -- true = on every eligible home screen; false = in the App Store
@@ -575,7 +575,7 @@ Config.Admin = {
 
 Config.Staff = {
     ManualPaymentMax      = 100000, -- most one manual staff payment may be ($); 0 = off
-    DailySummary          = false,  -- post one count-only summary a day to the staff Discord
+    DailySummary          = false,  -- post one count-only summary a day to the alert webhook
     DailySummaryHour      = 6,      -- the hour it is posted, server time (0-23)
     AlertPlacedPerHour    = 5,      -- alert past this many placed by one player an hour; 0 = off
     AlertTargetPerDay     = 3,      -- alert past this many on one target a day; 0 = off

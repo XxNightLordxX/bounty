@@ -584,8 +584,10 @@ API, and they may change between versions. What it listens to:
 | `QBCore:Server:OnPlayerUnload`, `qbx_core:server:playerLoggedOut` | `qbx_core`, local | Logout or character switch: cleans up on the first, and again on the second, after `qbx_core` has let the player go |
 | `playerDropped` | FXServer | Disconnect: the same cleanup |
 | `QBCore:Server:OnJobUpdate` (and `qbx_core:server:onSetJob`) | `qbx_core`, local | Re-checks whether the app is closed to the player's jobs, or shows them the whitelisted-job view, and moves an open page between the two at once |
+| `qbx_core:server:onGroupUpdate` | `qbx_core`, local | A job added, regraded or taken away (what `RemovePlayerFromJob` fires instead of `OnJobUpdate`): the organisation adopts or reverts the change |
 | `QBCore:Server:SetDuty` | `qbx_core`, local (`SetJobDuty`) | The same re-check on a duty change, which `Config.BlockOffDuty` reads; the maintenance tick repeats it for everybody every 30 seconds |
 | `qbx_core:server:onSetMetaData` | `qbx_core`, local | An `injail` sentence starting or ending pauses or resumes contract clocks |
+| `txAdmin:events:scheduledRestart`, `txAdmin:events:scheduledRestartSkipped`, `txAdmin:events:skippedNextScheduledRestart` | txAdmin, local | The restart hold (`Config.Holds.RestartPauseBeforeSeconds`): every contract pauses before a scheduled restart, and resumes when it is skipped |
 | `weaponDamageEvent` | FXServer | The damage log kills are attributed from |
 | `sc-ambulance:server:UseDefib` | sc-ambulance's client, net | A defibrillator used on a target, flood-guarded |
 | `lb-phone:deletedFromGallery`, `lb-phone:factoryReset` | `lb-phone`, local | Deletes the file behind a kill photo saved to Photos by link |
@@ -715,6 +717,7 @@ click for, and `ignored` is why a value the store holds was not applied at start
 |---|---|---|
 | `crimson_hitman_webhook` | `set` in `server.cfg`, never `setr` | The staff Discord webhook (optional); the admin panel's alerts go there too when the alert webhook is not set |
 | `crimson_hitman_alert_webhook` | `set` in `server.cfg`, never `setr` | The Discord webhook the admin panel's alerts are posted to (optional) |
+| `crimson_hitman_stats_webhook` | `set` in `server.cfg`, never `setr` | The weekly stats post (`Config.Improvements.WeeklyStats`, optional); the alert webhook, then the staff one, when unset |
 | `crimson_hitman_new_store` | `set crimson_hitman_new_store 1` in the console, once | `json` mode: start an empty store on purpose (see *Updating*) |
 | `web_baseUrl` | read | The public address kill photos are served from when `Config.Completion.PhotoPublicUrl` is unset |
 | `inventory:accounts` | read (`ox_inventory`'s, default `["money"]`) | Items that are money and so are refused as goods |

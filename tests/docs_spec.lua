@@ -10,7 +10,8 @@
 ---   * every feature with a switch has a line in the in-game checklist;
 ---   * the README is the owner's short README, its sections in order, with
 ---     no build history; every link and anchor in every document, every
----     docs/ path named in one and every file:line it cites exists.
+---     docs/ path named in one and every file:line it cites exists;
+---   * every Config key and staff command a current document names exists.
 ---
 --- CH_PRINT_DOCS=1 CH_SUITES=docs_spec lua5.4 tests/run.lua prints the
 --- configuration reference as it should read, to paste over
@@ -436,6 +437,64 @@ describe('the configuration reference and the request tables, against the code',
         end
         eq(#bad, 0, table.concat(bad, '\n'))
         truthy(file('docs/dev/map.md'):find('against `b31d10a`', 1, true), 'the map says which commit it cites')
+    end)
+
+    -- What a document says now, not what an older build had: the map
+    -- (pinned to b31d10a) and the changelog (history) may name what is gone.
+    local function current()
+        local out = {}
+        for _, doc in ipairs(documents()) do
+            if doc ~= 'docs/dev/map.md' and doc ~= 'crimson-hitman/CHANGELOG.md' then out[#out + 1] = doc end
+        end
+        return out
+    end
+
+    it('names only Config keys the configuration has', function()
+        -- A key is in config.lua, in defaults.lua, or in the settings
+        -- catalogue (a setting whose shipped value is nil, such as
+        -- Completion.PhotoPublicUrl). `Config.X.<Feature>` and
+        -- `Config.Staff.Alert*` stand for many; lb-phone's own config
+        -- (UploadMethod, UploadWhitelistedHostnames) is not this resource's.
+        local catalogue = file('crimson-hitman/server/settings.lua')
+        local LB_PHONE = { UploadMethod = true, UploadWhitelistedHostnames = true }
+        local function has(root, path)
+            local t = root
+            for part in path:gmatch('[^.]+') do
+                if type(t) ~= 'table' or t[part] == nil then return false end
+                t = t[part]
+            end
+            return true
+        end
+        local bad, seen = {}, 0
+        for _, doc in ipairs(current()) do
+            for key, after in file(doc):gmatch('Config%.([%a_][%w_.]*[%w_])(.?)') do
+                seen = seen + 1
+                if after ~= '*' and after ~= '<' and not LB_PHONE[key] and not has(Config, key)
+                    and not has(ConfigDefaults, key) and not catalogue:find("['" .. key .. "']", 1, true) then
+                    bad[#bad + 1] = doc .. ': Config.' .. key
+                end
+            end
+        end
+        truthy(seen > 500, seen .. ' Config keys read')
+        eq(#bad, 0, 'keys the configuration does not have:\n' .. table.concat(bad, '\n'))
+    end)
+
+    it('names only staff commands the server registers', function()
+        -- Config.Admin.Commands, the panel's way out (/<panel>-close) and
+        -- the players' buyout command; qbx_core's own (/setjob) and the
+        -- game's are allowed by name.
+        local known = { [Config.Bailout.Command] = true, [Config.Admin.Commands.panel .. '-close'] = true,
+                        setjob = true, jobs = true, reloadskin = true, p = true }
+        for _, name in pairs(Config.Admin.Commands) do known[name] = true end
+        local bad = {}
+        for _, doc in ipairs(current()) do
+            for name in file(doc):gmatch('`/([%w_-]+)') do
+                if (name:find('^ch%-') or name:find('^hitman')) and not known[name] and name ~= 'ch-' then
+                    bad[#bad + 1] = doc .. ': /' .. name
+                end
+            end
+        end
+        eq(#bad, 0, 'commands the server does not register: ' .. table.concat(bad, ', '))
     end)
 end)
 

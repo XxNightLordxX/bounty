@@ -30,11 +30,12 @@ Only `qbx_core` (with `oxmysql`) is required. Every other script is optional:
 | `Renewed-Banking` | Optional: the organisation's funds in a society account | 2.1.4 |
 | `qbx_vehiclekeys` | Optional: keys for the disposal vehicle | |
 | MariaDB or MySQL | `mysql` mode | MariaDB 10.11, MySQL 8 |
-| `ox_lib` | Through `qbx_core` | 3.40.3 |
+| `ox_lib` | Through `qbx_core` (this resource calls none of it) | 3.40.3 |
 | `sc-ambulance` / `qbx_medical` | Optional: death and last-stand state, the defibrillator | |
 | `sc-dispatch` | Optional: advisories and bulletins in the MDT | |
 | `sc-blackmarket` | Optional: criminal progression, selling the burner phone | |
 | `MugShotBase64` | Optional: target headshots | |
+| `qb-clothing` / `illenium-appearance` / `rcore_clothing` | Optional: a change of clothes refreshes the headshot early | |
 
 **Adapters.** Each optional script is reached through an adapter, one per
 kind, chosen in `Config.Integrations`: `'auto'` (as shipped) uses the first
@@ -48,7 +49,7 @@ the developer notes (`docs/dev/adapters.md`).
 ## Install in 5 minutes
 
 1. Copy `crimson-hitman` into your resources folder (another folder name works; use it in the `ensure` line).
-2. Put `ensure crimson-hitman` in `server.cfg`, after `oxmysql`, `qbx_core` and the other scripts you use (`ox_inventory`, `lb-phone`, `ox_target`, ...).
+2. Put `ensure crimson-hitman` in `server.cfg`, after `oxmysql`, `qbx_core` and the other scripts you use (`ox_inventory`, `lb-phone`, `ox_target`, ...); with the organisation on, before `Renewed-Banking` ([features.md](../docs/features.md#organisation)).
 3. Give yourself the panel: `add_ace group.admin crimson.admin allow` in `server.cfg` (the other ACEs: [Permissions](#permissions)).
 4. Open `config/config.lua`: set `Config.Database.Mode` (`'mysql'`, as shipped, or `'json'`). Everything else can wait.
 5. Start the server and type `/hitmanadmin` in game. The **first-start setup** opens: check the other scripts it found, the permissions, the command and the key switches, **Preview**, then **Apply** (two clicks). It opens again from Developer, First-start setup.
@@ -88,11 +89,13 @@ and in `config.lua` under the same section title; what each does is in
 | Feature | Switch | Shipped |
 |---|---|---|
 | Anonymity | `Config.TargetClasses.default.AllowAnonymousPlacer`, `AllowAnonymousHitman` (and `Config.TargetClasses.whitelisted`) | off |
-| Informants (target's, placer's, the tip) | `Config.Intel.Enabled`, then `Config.Intel.Informant.Enabled`, `Config.Intel.PlacerInformant.Enabled`, `Config.Intel.LocationTip.Enabled`, per target class (`Config.TargetClasses`) | off |
+| Informants (target's, placer's, the tip) | `Config.Intel.Enabled` (the master switch, on), then `Config.Intel.Informant.Enabled`, `Config.Intel.PlacerInformant.Enabled`, `Config.Intel.LocationTip.Enabled`, per target class (`Config.TargetClasses`) | each off |
+| Intel rules (tip rules, go dark, the informant in person, rumours) | `Config.Intel.<Feature>.Enabled` | all off |
+| A hitman's record (progression, reputation, tiered board, heat, placer record) | `Config.Record.<Part>.Enabled` | progression on, the rest off |
 | Law enforcement advisory | `Config.Advisory.Enabled` | on |
 | Staff tools (app pause, daily summary, alerts) | `Config.Holds.AppPaused`, `Config.Staff.DailySummary`, `Config.Staff.Alert*`, `Config.Alerts.ToDiscord` | pause and summary off, alerts on |
-| Roleplay (12 features) | `Config.Roleplay.<Feature>.Enabled` | all off |
-| Improvements (13 features and a cooldown) | `Config.Improvements.<Feature>.Enabled`, `Config.Limits.TargetCooldownAfterCompletionSeconds` | all off |
+| Roleplay (10 features) | `Config.Roleplay.<Feature>.Enabled` | all off |
+| Improvements (4 features and a cooldown) | `Config.Improvements.<Feature>.Enabled`, `Config.Limits.TargetCooldownAfterCompletionSeconds` | all off |
 | The hitman organisation | `Config.Organisation.Enabled`, then one switch per extra | off |
 | Step markers, body disposal | `Config.StepMarkers.Enabled`, `Config.Disposal.Enabled` | markers on, disposal off |
 
@@ -110,7 +113,7 @@ button there too. Its sections: **Daily** (Home,
 Players, Contracts, Target limits), **Setup** (Game rules, Hitman
 organisation, Boss permissions, Locations), **Records** (Logs) and
 **Developer** (Health, Engine settings, Console, Test tools, First-start
-setup), with **Help** in the header. How it works and what each section
+setup, Export & import), with **Help** in the header. How it works and what each section
 holds: [docs/admin-panel.md](../docs/admin-panel.md).
 
 The same tools as commands, run in your **F8 console** in game (the answer
@@ -120,11 +123,11 @@ every card and Ledger entry.
 
 | Command | What it does | Needs |
 |---|---|---|
-| `/hitmanadmin` | Opens the admin panel (in game only) | `crimson.admin` or an extra ACE |
-| `/ch-diag [player]` | Why the app is not showing something; the database, the loops and a player's own view | `crimson.admin` or an extra ACE |
-| `/ch-contracts <player>` | A player's contracts with their ids | `crimson.admin` or an extra ACE |
-| `/ch-timeline <contract>` | One contract's state, escrow and audit trail | `crimson.admin` or an extra ACE |
-| `/ch-stuck` | Money waiting for staff, and open review items | `crimson.admin` or an extra ACE |
+| `/hitmanadmin` | Opens the admin panel (in game only) | `crimson.admin`, `crimson.moderator` or an extra ACE |
+| `/ch-diag [player]` | Why the app is not showing something; the database, the loops and a player's own view | `crimson.admin`, `crimson.moderator` or an extra ACE |
+| `/ch-contracts <player>` | A player's contracts with their ids | `crimson.admin`, `crimson.moderator` or an extra ACE |
+| `/ch-timeline <contract>` | One contract's state, escrow and audit trail | `crimson.admin`, `crimson.moderator` or an extra ACE |
+| `/ch-stuck` | Money waiting for staff, and open review items | `crimson.admin`, `crimson.moderator` or an extra ACE |
 | `/ch-whois <contract>` | Who is behind an anonymous party | `crimson.identity` |
 | `/ch-void <contract> [reason]` | Close a contract and refund its placer | `crimson.admin` |
 | `/ch-settle <line> pay [amount] \| return [citizenid] \| delivered` | Finish one stuck payout by hand | `crimson.admin` |
@@ -242,7 +245,7 @@ reads only and changes nothing.
 | A value is refused in the panel with a sentence about another setting | It is checked against everything else in force: change the other one first |
 | `photo hosts: 0`, or kill photos refused as not allowed | `'host'` storage: add the phone's upload host to `Config.Completion.ExtraPhotoHosts` |
 | Save to Photos keeps the photo in the app | `'server'` storage needs a public https address (`Config.Completion.PhotoPublicUrl` or `web_baseUrl`) in lb-phone's upload whitelist |
-| Alerts are not posted to Discord | Set `crimson_hitman_alert_webhook` with `set` and turn on `Config.Alerts.ToDiscord`; **Alerts & Discord** says which webhook it uses |
+| Alerts are not posted to Discord | Set `crimson_hitman_alert_webhook` with `set` and turn on `Config.Alerts.ToDiscord`; **Logs → Alerts** says which webhook it uses |
 | `/ch-settle` says *ending unfinished; it settles itself within a minute* | Nothing to do: the maintenance tick finishes it |
 | `/ch-stuck` lists a line that raised while being given | Check the player's inventory or balance, then **Pay**, **Pay amount** or **Delivered** |
 

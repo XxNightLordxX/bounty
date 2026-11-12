@@ -9,7 +9,7 @@ first table to `server/panel.lua`'s `OPS`.
 ## Panel requests
 
 Every request the panel page sends (`server/panel.lua`), and who may send it.
-*Read*: `crimson.admin` or one of `Config.Admin.ExtraAces`. *Moderate*:
+*Read*: `crimson.admin`, `crimson.moderator` or one of `Config.Admin.ExtraAces`. *Moderate*:
 `crimson.moderator` or `crimson.admin`. *Write*: `crimson.admin` itself.
 *Identity*: `crimson.identity`. *Developer*: `crimson.developer` or
 `crimson.admin`.

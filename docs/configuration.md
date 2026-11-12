@@ -141,7 +141,7 @@ How many contracts a player may place, take or carry, and how one is finished: a
 
 ## Rules: Targeting
 
-Who may open the app and who can be named as a target. Law enforcement, EMS, fire and legal jobs are barred by job type as well as by name; with the whitelisted-job view on they get one read-only screen instead.
+Who may open the app and who can be named as a target. Law enforcement, EMS and fire jobs are barred by job type and by name, legal jobs by name; with the whitelisted-job view on they get one read-only screen instead.
 
 | Setting | Shipped | What it does |
 |---|---|---|
@@ -170,7 +170,7 @@ Who may open the app and who can be named as a target. Law enforcement, EMS, fir
 
 ## Features: Core
 
-The app itself, proposals, notices, messages and calls, progression and the alerts staff get.
+The app itself, proposals, notices, messages and calls, and the alerts staff get.
 
 | Setting | Shipped | What it does |
 |---|---|---|
@@ -360,7 +360,7 @@ The staff tools: /hitmanadmin and the F8 commands. ACE names are never changed f
 | `Config.Admin.PanelRefreshSeconds` | `10` | how often the overview refreshes |
 | `Config.Admin.TimelineRows` | `200` | audit rows read for one timeline |
 | `Config.Staff.ManualPaymentMax` | `100000` | most one manual staff payment may be ($); 0 = off |
-| `Config.Staff.DailySummary` | `false` | post one count-only summary a day to the staff Discord |
+| `Config.Staff.DailySummary` | `false` | post one count-only summary a day to the alert webhook |
 | `Config.Staff.DailySummaryHour` | `6` | the hour it is posted, server time (0-23) |
 | `Config.Staff.AlertPlacedPerHour` | `5` | alert past this many placed by one player an hour; 0 = off |
 | `Config.Staff.AlertTargetPerDay` | `3` | alert past this many on one target a day; 0 = off |

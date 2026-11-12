@@ -67,7 +67,7 @@ documents every function:
 | ambulance | `deathState(source) -> dead, lastStand` (server; leave it out when the server cannot tell) |
 | banking | `installed()`, `CreateJobAccount`, `getAccountMoney`, `addAccountMoney`, `removeAccountMoney`, `handleTransaction` |
 | phone (server) | `GetEquippedPhoneNumber`, `SendNotification`, `ContainsBlacklistedWord`, `IsInCall`, `EndCall`, `GetConfig`, `PostBirdy`, `canCall()`, `CreateCall` |
-| phone (client) | `AddCustomApp`, `RemoveCustomApp`, `SendCustomAppMessage`, `SendNotification`, `SaveToGallery`, `EnableWalkableCam`, `DisableWalkableCam`, `SetCameraComponent` |
+| phone (client) | `AddCustomApp`, `RemoveCustomApp` (and the undocumented `DeleteCustomApp`, `UninstallApp`, tried after it), `SendCustomAppMessage`, `SendNotification`, `SaveToGallery`, `EnableWalkableCam`, `DisableWalkableCam`, `SetCameraComponent` |
 | keys | `GiveKeys(source, vehicle)` |
 | garage | `detect()`, `spawn(model, { x, y, z, h })`, `prepare(vehicle, plate, source)`, `exists(vehicle)`, `coords(vehicle)`, `remove(vehicle)` |
 | target | `addSphereZone`, `removeZone`, `addLocalEntity`, `removeLocalEntity` |

@@ -210,8 +210,8 @@ ConfigDefaults.Ledger = {
 --                              RULES: TARGETING
 -- ============================================================================
 -- Who may open the app and who can be named as a target. Law enforcement,
--- EMS, fire and legal jobs are barred by job type as well as by name; with
--- the whitelisted-job view on they get one read-only screen instead.
+-- EMS and fire jobs are barred by job type and by name, legal jobs by name;
+-- with the whitelisted-job view on they get one read-only screen instead.
 
 ConfigDefaults.BlockedJobTypes = { -- job types barred from the app
     leo = true, police = true, ems = true, fire = true,
@@ -260,8 +260,8 @@ ConfigDefaults.Mugshot = {
 -- ============================================================================
 --                               FEATURES: CORE
 -- ============================================================================
--- The app itself, proposals, notices, messages and calls, progression and
--- the alerts staff get.
+-- The app itself, proposals, notices, messages and calls, and the alerts
+-- staff get.
 
 ConfigDefaults.App = {
     DefaultInstalled = false,  -- true = on every eligible home screen; false = in the App Store
@@ -574,7 +574,7 @@ ConfigDefaults.Admin = {
 
 ConfigDefaults.Staff = {
     ManualPaymentMax      = 100000, -- most one manual staff payment may be ($); 0 = off
-    DailySummary          = false,  -- post one count-only summary a day to the staff Discord
+    DailySummary          = false,  -- post one count-only summary a day to the alert webhook
     DailySummaryHour      = 6,      -- the hour it is posted, server time (0-23)
     AlertPlacedPerHour    = 5,      -- alert past this many placed by one player an hour; 0 = off
     AlertTargetPerDay     = 3,      -- alert past this many on one target a day; 0 = off
