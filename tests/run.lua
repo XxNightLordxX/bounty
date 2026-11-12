@@ -789,6 +789,7 @@ local suites = {
     'configcheck_spec', 'settingsio_spec',
     'workflows.phone_spec', 'workflows.org_phone_spec', 'workflows.org_extras_spec', 'workflows.org_extras2_spec', 'workflows.org_extras3_spec', 'workflows.panel_spec', 'workflows.surface_spec', 'workflows.matrix_spec', 'workflows.coverage_spec',
     'docs_spec',
+    'release_spec',
 }
 
 --- Specs that write rows into the store by hand, rather than through the

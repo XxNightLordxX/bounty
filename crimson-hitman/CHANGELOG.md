@@ -1,7 +1,8 @@
 # Changelog
 
 What changed for server owners, staff and players, newest first. Settings
-are named by their place in `config/config.lua`; the README has the details.
+are named by their place in `config/config.lua`; the README and `docs/`
+say how things work now.
 
 ## 1.2.0
 
@@ -68,7 +69,7 @@ are named by their place in `config/config.lua`; the README has the details.
   language files with the build stamp, so an update is never shown with an
   old copy.
 
-**Fixes (sweep 8: client, pages, clocks)**
+**Fixes: the phone, the pages and the clocks**
 - Agree, Decline and Apply it on a proposed change, and Take back what I
   ticked, take two taps; the second names the change or what comes back.
 - A boss holding Issue strikes or the record power opens a member's
@@ -86,6 +87,56 @@ are named by their place in `config/config.lua`; the README has the details.
   and the freezes coming back after an outage give proposals their time
   back. A stranger's Accept on a frozen contract no longer says which ones a
   frozen player is on.
+
+**Fixes: anonymity and privacy**
+- A contract held for an organisation's territory still shows on its own
+  placer's board.
+- An anonymous accept is left out of the organisation's record,
+  leaderboard, reputation and activity log.
+- Staff without `crimson.identity` no longer read which staff member saved
+  a preset or the setup, which boss asked anonymously for an internal
+  contract, or which contract a dead drop is for (dead drops are settled by
+  a handle of their own).
+- An internal contract keeps the boss's reason as written.
+- The organisation's map spots answer only the players they are drawn for,
+  and their ids cannot be guessed.
+- Presets hide the Developer section's settings from staff who cannot open
+  it; Check the config no longer repeats other scripts' console errors (the
+  Developer console keeps them, scrubbed); the version check refuses absurd
+  version numbers and a broken answer cannot raise.
+
+**Fixes: organisation money and crashes**
+- Each organisation keeps its own funds side (ledger or Renewed-Banking):
+  moving one leaves the others where they are, and an organisation is
+  removed only with both sides empty.
+- Moving the funds to Renewed-Banking makes the job's society account
+  first; a bank refusal is named as Renewed-Banking's. A move cut short by a
+  crash is finished at the next start, so the money is never on both sides
+  or on neither, and a bank balance that cannot be read is never carried as
+  $0.
+- Bonuses, salaries and withdrawals are checked by the balance before and
+  after: arrived is marked paid, refused is given back, unclear is left for
+  staff, never given back blind. A give-back the funds refuse is tried
+  again every tick. One interrupted by a crash, or retried, is paid once or
+  left for staff, never twice; while staff hold one, neither a retry nor
+  **Pay** pays it.
+- A deposit whose give-back fails is owed to the member (or left for staff),
+  recorded before anything else is tried. An armory move whose result
+  cannot be told is left as it is and logged.
+- A cut taken on a payout that never reached the member goes back, so the
+  placer gets it whole; the part of a payout paid at the kill (body
+  disposal) is cut and held like the rest. A dead drop holds a payout only
+  while dead drops and the organisation are on.
+- Every organisation money and goods move is a money audit row, whatever
+  `Config.Audit.LogAllActions` says.
+
+**Fixes: the last review**
+- A kill's photo is accepted after a staff freeze or a restart hold longer
+  than two photo windows: the kill keeps the time it was given back.
+- After a refused take-back, the button reads *Take back what I ticked*
+  again.
+- More of the pages' words are whole sentences in the language file
+  (counts, *about N min*, *N days ago*); English reads as it did.
 
 **Organisation extras 3** (each its own switch under `Config.Organisation`, off as shipped)
 - **Several organisations** (`SeveralOrganisations`, `MaxOrganisations`):

@@ -6,11 +6,11 @@
 
     The one file to edit, in the admin panel's order (/hitmanadmin): Debug and
     storage, Rules, Features, Staff, Roleplay, Improvements, Advanced. Each
-    setting is explained in README.md, "Configuration reference", under the
-    same section title. The panel changes most of these live and keeps its
-    changes across restarts, over the value in this file. Every player's
-    game downloads this file, so never put a secret in it: the Discord
-    webhooks are server.cfg convars (README, Admin panel).
+    setting is listed in docs/configuration.md under the same section
+    title. The panel changes most of these live and keeps its changes
+    across restarts, over the value in this file. Every player's game
+    downloads this file, so never put a secret in it: the Discord webhooks
+    are server.cfg convars (README, Main settings).
 ]]
 
 Config = Config or {}
@@ -20,7 +20,7 @@ Config = Config or {}
 -- ============================================================================
 -- The console output, and where contracts and money are kept. Switching
 -- storage mode starts empty in the new one and refuses to start while the
--- old one still holds money (README).
+-- old one still holds money (README, Changing storage mode).
 
 Config.Debug = true  -- debug lines in the console and F8; false = only what needs you
 
@@ -339,10 +339,11 @@ Config.TargetClasses = { -- by target: default, or whitelisted (on a whitelisted
 -- ============================================================================
 --                              FEATURES: INTEL
 -- ============================================================================
--- Everything a player can learn for money, in one place (README, Intel):
--- three paid look-ups, the target's (who is after me), the placer's (who
--- took it) and the hitman's tip (the target's rough area), the rules over
--- them, going dark, the informant in person and the rumours. Each ships off.
+-- Everything a player can learn for money, in one place (docs/features.md,
+-- Intel): three paid look-ups, the target's (who is after me), the placer's
+-- (who took it) and the hitman's tip (the target's rough area), the rules
+-- over them, going dark, the informant in person and the rumours. Each
+-- ships off.
 
 Config.Intel = {
     Enabled = true,  -- master switch over the three look-ups; on, each one's own switch decides
@@ -458,8 +459,9 @@ Config.Intel.Rumours = {
 -- ============================================================================
 --                              FEATURES: RECORD
 -- ============================================================================
--- A character's record (README, A hitman's record): the trust a completion
--- earns and how it is scaled, the tiered board, heat and the placer's record.
+-- A character's record (docs/features.md, A hitman's record): the trust a
+-- completion earns and how it is scaled, the tiered board, heat and the
+-- placer's record.
 
 Config.Record = {}  -- one block each below
 
@@ -585,7 +587,7 @@ Config.Staff = {
 --                                 ROLEPLAY
 -- ============================================================================
 -- Optional roleplay features, each its own block and each off as shipped
--- (README, Optional features). All of them are changed from the admin panel.
+-- (docs/features.md). All of them are changed from the admin panel.
 -- Places (the broker's and the informant's) are 'x, y, z, heading'.
 
 Config.Roleplay = Config.Roleplay or {}  -- the roleplay features, one block each
@@ -684,7 +686,7 @@ Config.Roleplay.ReasonQuality = {
 --                               IMPROVEMENTS
 -- ============================================================================
 -- Optional changes to existing features, each its own block and each off as
--- shipped (README, Optional features). All are changed from the panel.
+-- shipped (docs/features.md). All are changed from the panel.
 
 Config.Improvements = Config.Improvements or {}  -- the improvements, one block each
 
@@ -719,7 +721,7 @@ Config.Limits.TargetCooldownAfterCompletionSeconds = 0  -- wait after a complete
 --                               ORGANISATION
 -- ============================================================================
 -- The hitman organisation: a real qbx_core job with roles, a boss menu and
--- Boss permissions (README, Optional features). Off as shipped: while it is
+-- Boss permissions (docs/features.md). Off as shipped: while it is
 -- off no job is registered, nothing is read or written, nothing changes.
 
 Config.Organisation = {
@@ -745,7 +747,7 @@ Config.Organisation = {
     Payroll            = false,                  -- a salary per role, paid from the funds every pay day
     PayrollDays        = 7,                      -- days between two pay days
     PaySuspended       = false,                  -- suspended members are paid their salary too
-    -- Organisation extras (README, Organisation extras), each its own switch, off.
+    -- Organisation extras (docs/features.md), each its own switch, off.
     OrgContracts       = false,                  -- placers may send a contract to the organisation
     AssignMinutes      = 30,                     -- minutes to assign it, then to take it, before the open board
     AcceptApproval     = false,                  -- members' bigger accepts wait for a boss's approval
@@ -765,7 +767,7 @@ Config.Organisation = {
     ChannelPerMinute   = 6,                      -- messages one member sends a minute
     Dossiers           = false,                  -- briefings on assigned organisation contracts
     DossierMaxLength   = 600,                    -- characters in a dossier's notes
-    -- Organisation extras 2 (README, Organisation extras), each its own switch, off.
+    -- Organisation extras 2 (docs/features.md), each its own switch, off.
     Armory             = false,                  -- an ox_inventory stash of the organisation's, through the app
     ArmoryItems        = {},                     -- the items allowed in it (item names); empty = none
     ArmoryAtOffice     = true,                   -- items go in and out only at the boss office
@@ -788,7 +790,7 @@ Config.Organisation = {
     RecruitNoteMax     = 500,                    -- characters in an interview note
     RecruitCooldownHours = 24,                   -- hours a declined applicant waits to apply again
     RecruitPerHour     = 10,                     -- applications the organisation takes an hour
-    -- Organisation extras 3 (README, Organisation extras), each its own switch, off.
+    -- Organisation extras 3 (docs/features.md), each its own switch, off.
     SeveralOrganisations = false,                -- staff may add more organisations, each its own job
     MaxOrganisations   = 3,                      -- organisations at most, the first included (1-10)
     Reputation         = false,                  -- reputation, in tiers that unlock bigger contracts
@@ -860,7 +862,7 @@ Config.Organisation = {
 --                               MISSION STEPS
 -- ============================================================================
 -- Map markers for each step of a contract, to the one party who acts on it
--- (README, Optional features), and body disposal: a verified kill paid once
+-- (docs/features.md), and body disposal: a verified kill paid once
 -- the body is dropped off. Disposal ships off; its spots are set by staff
 -- in the admin panel (Locations) or below.
 

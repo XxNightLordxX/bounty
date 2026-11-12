@@ -1,14 +1,34 @@
-# In-game smoke test — Crimson Hitman System
+# In-game checklist — Crimson Hitman System
 
-The automated suites run the real code against stubs
-([developer.md](developer.md), Testing). These are the things only a running
-server can tell you: one line a check, grouped by area. Work top to bottom;
-each section depends on the one before. Every feature with a switch has a
-line naming its `Config` key ([the README](../crimson-hitman/README.md) says
-what each does).
+What only a running server can tell you. The automated suites run the real
+code against stubs; nothing here has been checked in game until you check
+it. Start with the **first hour**, in order: it covers what matters most.
+Then work through the areas below, one line a check. Every feature with a
+switch has a line naming its `Config` key ([features.md](features.md) says
+what each does, [configuration.md](configuration.md) what it ships as).
 
 Two test characters minimum, three for the competitive and delivery cases.
-A staff account that can adjust money and spawn items makes this much faster.
+A staff account that can adjust money and spawn items makes this much
+faster. Use a test server, or a copy of yours, with a database backup.
+
+## First hour in game
+
+1. [ ] **Clean start (normal build).** `ensure crimson-hitman` with the shipped `Config.Debug = true`: the console lists the other scripts found and says `started in mysql mode`; no error, in the console or in F8, on start or on `restart crimson-hitman`.
+2. [ ] **The tables.** In the database, `SHOW TABLE STATUS LIKE 'crimson%'` lists the `crimson_*` tables ([running.md](running.md#database)) as InnoDB and `utf8mb4`.
+3. [ ] **The config check.** `ch-diag config` in the server console: on the shipped config it names `Config.Debug` on and nothing you did not expect; `ch-diag` says `database: answering`.
+4. [ ] **Escrowed build start.** Upload the release through Keymaster, install the escrowed download and start it: no `failed to compile` or `missing module` line, the app registers on the phone, the panel opens; `config/`, `locales/` and the adapters are readable in the download.
+5. [ ] **The admin panel opens.** `/hitmanadmin` as an admin opens the first-start setup: the other scripts found, the `add_ace` lines (yours ticked), the panel command; **Preview**, then **Apply** (two clicks).
+6. [ ] **A setting saves.** In Game rules change one setting (say `Config.Limits.MinContractReward`): the first click arms it, the second saves it; it is in Change history; `restart crimson-hitman` and it is still in force; **Undo** puts it back.
+7. [ ] **The phone app appears.** On a second character, the **Crimson-Hitman** app is in the phone's App Store; installed, it opens on the Board, and the tab bar and buttons are not cut off.
+8. [ ] **Place a contract.** As the placer, place one on a third character with a cash reward: the second tap on **Place** names the total, the money leaves the placer once, and the contract is on the Board.
+9. [ ] **Accept it.** As the hitman, the card shows the reward and a rough time left; **Accept** (two taps): it moves to the hitman's Mine.
+10. [ ] **Complete it.** Bring the target alive (cuffed, or in your vehicle) within `Config.Kidnap.Radius` of the placer and tap **Deliver alive**; all three keep still for `Config.Kidnap.CountdownSeconds`: the contract completes.
+11. [ ] **The payout arrives.** The hitman's money rises by exactly the reward, once; the placer gets nothing back; both Ledgers show it; the panel's Logs show `escrow_released` and `slot_claimed` once each.
+12. [ ] **A refund.** Place another and withdraw it before anybody takes it: the placer has every dollar back.
+13. [ ] **Anonymity holds.** Turn on `Config.TargetClasses.default.AllowAnonymousHitman` (Game rules), accept a contract anonymously: the placer and the target read *Operative #1*, never the name; staff without `crimson.identity` see *Anonymous*, staff with it get **Whois**. Turn it off again.
+14. [ ] **A restart mid-contract recovers.** With a contract taken, `restart crimson-hitman`, then restart the whole server: it is still taken by the same hitman, its time left did not run during the downtime, and completing it pays once.
+15. [ ] **An optional script goes away.** `stop sc-dispatch` (or `ox_target`): one console line `integration ... off (...)`, no error; what needs it is off; `ensure` it and it is used again.
+16. [ ] **resmon.** `resmon 1` in F8: `crimson-hitman` reads about 0.00 to 0.01 ms with the phone put away, and comes back down after using the app (estimates until you measure them).
 
 ---
 
@@ -35,6 +55,8 @@ A staff account that can adjust money and spawn items makes this much faster.
 - [ ] mysql mode, on a copy: `SHOW INDEX FROM crimson_audit` lists `idx_audit_action`, `crimson_contracts` `idx_resolved` and `crimson_messages` `idx_message_contract` after the first start of this version
 - [ ] With `MugShotBase64` stopped (`stop MugShotBase64`), a new contract's target never gets a face on the board, and no `crimson-hitman:renderMugshot` event reaches their placer; started again, faces come back
 - [ ] On a copy of the server, rename the folder (`crimson-hitman-test`) and `ensure` that name: the app opens, the board loads and a contract can be placed. (Every request used to go to `crimson-hitman` whatever the folder was called.) Rename it back
+- [ ] Escrowed build (Keymaster upload, escrowed download installed): the boot log reads as the normal build's (with `Config.Debug = false`: nothing); the app, the panel and `/ch-diag` work; every contract and setting of the store is there
+- [ ] Escrowed build: an adapter of your own copied from `server/adapters/TEMPLATE.lua` with a wrong path on its first line: the start says `missing module server.adapters.<kind>.<name>`, naming the file and the line it must start with; with the right path it loads
 
 ## 2. Access
 
@@ -123,6 +145,7 @@ placer, all online.
 - [ ] "Add money" from the same screen still puts more up
 - [ ] Once a hitman accepts, the screen says why the reward cannot be reduced — and adding still works
 - [ ] Nothing on that screen is cut off, and its buttons clear the tab bar
+- [ ] **Take back what I ticked** arms on its first tap (*Tap again to take back $2,500 and 2 items*) and sends on the second; changing a tick, or waiting 3 s, disarms it; after a refused take-back the button reads *Take back what I ticked* again, and the next tap arms it
 
 ## 3b. New players and playtime (as shipped)
 
@@ -241,6 +264,7 @@ served, and no image host is asked anything.
 - [ ] Opening it again is refused. Tapping a tab while it is open does nothing but say "Save or delete the photo first"; the photo stays up. **Delete** deletes it and the row reads "Photo deleted"; on `'server'` storage its file is gone from `data/photos/`. A photo kept in the app leaves by any tab
 - [ ] A photo left open (phone closed mid-view) is deleted after `Config.Completion.PhotoOpenSeconds`
 - [ ] A stray file put in `data/photos/` or `data/photos/kept/` (named like the others) is removed at the next resource start, and the waiting and kept photos are not
+- [ ] Freeze the target for more than 4 minutes right after a kill, unfreeze, then take the kill photo: it is accepted (the kill kept the time the freeze held it); the same after the restart hold
 
 ### Save to Photos on `'server'` storage
 
@@ -348,6 +372,7 @@ uploads, and with neither. Restart the resource between them.
 - [ ] Propose *one hitman only* with one operative on a competitive contract, let a second take it, then both agree: the last to agree reads *Agreed, but it no longer applies: who is on the contract changed*, and the placer and the first operative are told too
 - [ ] Buyouts off in the panel, take part of a reward back, buyouts on again: the target's buyout price is still there (lower only if the reward left buys less)
 - [ ] Place a contract with $50,000 bank and $1,000 of dirty money and a $150,000 buyout, then take the bank line back: the placer is told *Buyout removed*, the target's On me shows no buyout, and `/cleanse` says no buyout is offered
+- [ ] **Agree**, **Decline** and **Apply it** on a proposed change take two taps: the dialog names the change (*Yes, agree*); one tap changes nothing
 
 ## 11. Presence and persistence
 
@@ -396,6 +421,11 @@ out, (c) while accepting with a stake, (d) during a handover countdown.
 - [ ] On qbx_medical (no sc-ambulance), `/ch-diag <id>` says the death state came from QBox metadata, and a kill on a target still pays
 - [ ] With every `Config.Roleplay` and `Config.Improvements` switch off, `/ch-diag` shows each `imp_*`, `rp*` and `informant.retryUnsaved` job at about 0.00 ms
 - [ ] With `Config.Improvements.ContractDecay` on and twenty untaken contracts placed over an hour ago, `/ch-diag` lists `imp_decay.tick` every 60s; the pass that steps them takes at most 25 (the rest a minute later) and the server shows no hitch over about 150 ms (an estimate until measured)
+- [ ] With no contract running, `ch-diag` says `condition sampler idle`; place one and run it again within a few seconds: it says a second or two ago, and a kill on that contract is credited as before
+- [ ] `resmon` for `crimson-hitman` (F8, `resmon 1`) reads 0.00 to 0.01 ms with the phone put away and nobody near an NPC, and at most about 0.35 ms with the app open (estimates until measured; note your own idle and busy figures)
+- [ ] With the broker or informant on (`Config.Intel.Rumours`) and the organisation on, stand near an organisation NPC and the broker in turn: each is drawn within 80 m and removed past 100 m, and the reading stays within a few hundredths of a ms of idle
+- [ ] An exclusive contract held and not worked for a few minutes, then `restart crimson-hitman`: the hold is still released at `Config.Limits.ExclusiveIdleReleaseSeconds` counted across the restart (on `json`, `data/clocks.json` holds its clock; `records.json` is not rewritten every tick)
+- [ ] `ch-diag` lists every job with its interval as before, and `contracts.releaseIdleHolds` stays a few ms at worst with many holds
 
 ## 13. Admin panel
 
@@ -442,7 +472,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Type a target's name into the contract search: the list answers once you stop typing, and clicking a row opens its drawer. A dropdown (state, rule, placed) opens and picks with the mouse, and Clear brings the full list back
 - [ ] Every destructive button (void, settle, resolve, reset, reset all, the timer refresh) turns brass on the first click and says *Click again*; leave it three seconds and it goes back without doing anything
 - [ ] Type a citizen id into the log's citizen id box on the account without `crimson.identity`: the box is greyed out and nothing is filtered by it
-- [ ] Turn a feature switch off and on again from **Features**: each click answers in a toast and on the row, and the row says *changed from the panel* with `config.lua`'s value beside it until you reset it
+- [ ] Turn a feature switch off and on again from **Game rules**: each click answers in a toast and on the row, and the row says *changed from the panel* with `config.lua`'s value beside it until you reset it
 - [ ] On the `command`-only account the panel opens and every section reads; void, settle, every switch and every Save are greyed out, with *Read only: changing anything needs the staff ACE itself* on hover, and the review queue shows no resolve form. Then, as that account, type `/ch-void <id>` in chat: it answers *Not authorised*, so the server refuses it too
 - [ ] Place an anonymous contract and accept it anonymously on another character. Without `crimson.identity` the contract shows *Anonymous* for both, no citizen id appears anywhere (contract, log, player view), and searching the placer's citizen id or name does not find it; with it, both are named and whois answers. `/ch-timeline` shows the matching `admin_panel_contract_identified` row
 - [ ] Void a contract from the panel: the placer gets their escrow back and the answer reads exactly as `/ch-void`'s
@@ -525,6 +555,8 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] The drawer's **Money** tab, **Change reward**: type 1000 and the figures (before and after, who pays) appear before anything arms; the first click names them (*Click again: raise it from $X to $Y, added by staff (bank)*); a reader (`crimson.moderator` only) sees the figures and a greyed button. **Lower** says what comes off staff's part and what goes back to the placer
 - [ ] The drawer's **People** tab, **Reassign to another hitman**: with nobody looked up it sends you to Players; look the hitman up, come back: it says who comes off and whether the stake is waived, and the armed button names the hitman and the count. Look up the contract's own target instead: it says *That player is its target.* and never arms
 - [ ] Resmon while idle with both staff tools and Confirm handover in use stays where section 12 says (they add no loop: the confirm window rides the handover's own tick)
+- [ ] Game rules, a settings card reads *1 switch* / *N switches*, and a reward with a kidnapping bonus reads *$X + $Y bonus*
+- [ ] Without `crimson.identity`, a preset of the server's own and the first-start setup say *Saved by a staff member*, never a name; an anonymous boss's internal contract request reads *A boss*
 
 ## 14. Roleplay features (each off as shipped)
 
@@ -548,6 +580,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Buy the item from sc-blackmarket after adding it there.
 - [ ] `Config.Intel.InPerson` on, with the tip on: buying a tip away from the informant says *Find the informant first.* and the bank is unchanged; beside it the tip is sold.
 - [ ] `Config.Roleplay.ReasonQuality` on: *idk* is refused, *Debt owed* is refused as too short; with `LowEffortAction = 'review'` an *rdm* reason is placed and shows in **Needs review** as a low-effort reason, dismissed with a note.
+- [ ] As a police character (a barred job) with the broker or the informant on: the server console shows one refused NPC-places request, not one a minute, and the NPCs appear once the job is allowed again
 
 ## 15. Optional improvements (each off as shipped)
 
@@ -597,7 +630,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Take a member out of the job with `/setjob` while they are logged off (or while the organisation is off), then log them in: with `ExternalChanges = 'adopt'` they are no longer a member; with `'revert'` they are put back.
 - [ ] Revoke Set role powers from the boss: the powers that boss gave a role go inactive at once; allow it again and they come back.
 - [ ] Set a 10% organisation cut (orgCuts): every board card a member sees says "Organisation cut: 10% ...", and so does the Accept dialog. Change it to 20% with the board still open and tap Accept: refused as changed, the board refreshes to 20%. Accept at 10%, change the cut to 20%, complete it: the member receives 90%, the funds 10% (orgFunds), and the ledger names the line.
-- [ ] With Renewed-Banking started at the organisation's first start, the society account balance moves with deposits, withdrawals, bonuses and cuts; with `Config.Organisation.Funds = 'internal'` only the ledger does. `stop Renewed-Banking`: deposits, withdrawals and bonuses say the bank account cannot be reached and nothing moves; orgFunds shows no balance; `ensure Renewed-Banking` and they work again.
+- [ ] With Renewed-Banking started at the organisation's first start, the society account balance moves with deposits, withdrawals, bonuses and cuts; with `Config.Integrations.Banking = 'none'` only the ledger does. `stop Renewed-Banking`: deposits, withdrawals and bonuses say the bank account cannot be reached and nothing moves; orgFunds shows no balance; `ensure Renewed-Banking` and they work again.
 - [ ] Staff move the funds (orgFundsBackend, backend internal, then bank): the balance arrives whole on the other side each time, once, and the ledger shows two switch rows.
 - [ ] With several organisations, move one organisation's funds to the bank: only its balance moves; another organisation's balance and side (orgFunds) stay as they were, and its deposits and withdrawals still work.
 - [ ] Start with `Config.Integrations.Banking = 'none'`, put money in the funds, then set it to `'auto'`, `ensure Renewed-Banking` and move the funds to the bank: Renewed-Banking gets a society account for the job holding the whole balance.
@@ -633,6 +666,13 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] `Config.Organisation.Handler` on: staff set an NPC spot; the ped appears only within `Config.Organisation.DrawMetres` (resmon 0.00 ms away from it); a member talks to it (ox_target): they are told their assigned contract and its dossier, or given the oldest waiting one.
 - [ ] `Config.Organisation.ActivityLog` on: accept, deposit and get a strike as members; a boss holding View org log opens Activity log: the rows name members (codenames where on), staff as Staff, and no citizen id anywhere.
 - [ ] `Config.Roleplay.NpcPlaces` on: in Locations, Broker and informant places, press Use my position (two clicks) beside the broker: within a minute the broker stands there for every player (rotating as `Config.Intel.Rumours.RotateHours` says among the places set); Reset to config puts it back on the `Locations` list; with the switch off the list is used whatever was placed.
+- [ ] With `Config.Organisation.Territory` and `OrgContracts` on, place a contract on somebody standing in a territory beside a member: it stays on **your own** board as the placer, though it is off the open board
+- [ ] Accept an organisation contract anonymously and complete it: the leaderboard, the organisation's reputation and the activity log do not move
+- [ ] Settle a dead drop from the panel (Reputation, drops & garage): it pays or refunds once, and an anonymous drop reads *A member* with no contract id without `crimson.identity`
+- [ ] Log out while an organisation NPC is loading near you: no NPC is left standing after the logout, and the next character sees it once in range
+- [ ] As a boss holding Issue strikes (or Suspend), open a member's discipline record from their row in the tab: every strike, warning, reason and overturn is listed
+- [ ] A member's deposit the funds refuse while the give-back fails too (a patched money hook): the member is owed it (paid at next login), the audit has `org_funds_deposit_owed`, and where the owe cannot be made the panel's review list holds it for staff
+- [ ] A boss's bonus retried after a restart (the same request): paid once; a pay day run again after a restart pays nobody twice; while a give is held for staff (review list), **Pay** on it is refused
 
 ## 17. Mission steps
 
@@ -654,7 +694,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] **Locations** has *Disposal vehicle spawn* and *Body drop-off*: **Use my position** fills the figures from where you stand, **Save** arms naming the point, **Save where I stand** and **Clear** take two clicks each. Mid-step, **Contracts** (and **Home**) list the step with the exact time left and *clock held* while frozen; **Skip** pays it, **Respawn vehicle** makes the hearse again; without `crimson.identity` no citizen id is shown
 - [ ] `restart crimson-hitman` mid-step: the hearse goes, comes back once the hitman is in the city, and the step finishes as before; disposalSkip and disposalRespawn do what they say.
 
-## Locations: one registry of map spots (step 3c)
+## 18. Locations (every map spot)
 
 - [ ] Admin panel, Locations: every kind is listed (organisation spots, broker and informant, disposal vehicle and drop-off), then the places that are settings; with the organisation or NpcPlaces off, each says so with its switch.
 - [ ] Use my position fills x, y, z and heading for any kind from where your character stands; Save where I stand places it there (check the boss office, a broker place and the drop-off).
@@ -662,27 +702,27 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] A boss with L2 still places a sign-up spot from the phone where they stand, never in a safe zone; staff's spots show on the boss's map as before.
 - [ ] `restart crimson-hitman`: every spot is still where it was set.
 
-## Players, All measures: one list of measures (step 3d)
+## 19. Measures on players (Players, All measures)
 
 - [ ] Freeze, suspend and protect three players, and give a fourth their own target limits (Target limits, Per player): Players, All measures lists all four, newest first; each filter (Frozen, Suspended, Protected, Own target limits) shows only its kind, with its count.
 - [ ] Unfreeze from the list: their contracts run again with the time on hold given back; Lift a suspension and a protection from the list: the suspended player is told it is lifted, the protected player nothing.
 - [ ] Without `crimson.identity` the list shows no citizen id and nobody who set a measure; with it, both.
 - [ ] Home, Overview: Measures on players counts each kind; its buttons open All measures on that kind.
 
-## Holds: one service for everything that stops a contract (step 3e)
+## 20. Holds: staff freeze, app pause, restart
 
-- [ ] Freeze the target of a taken contract, then switch **Pause the whole app** on (Features, Staff tools; `Config.Holds.AppPaused`), wait a few minutes, unfreeze, wait, switch the pause off: the hitman's card says **On hold** only while the freeze was on, the time band stood still throughout, and the time left afterwards is what it was before the freeze (`/ch-timeline` shows the lifetime moved by the whole span, once).
+- [ ] Freeze the target of a taken contract, then switch **Pause the whole app** on (Game rules, Staff tools; `Config.Holds.AppPaused`), wait a few minutes, unfreeze, wait, switch the pause off: the hitman's card says **On hold** only while the freeze was on, the time band stood still throughout, and the time left afterwards is what it was before the freeze (`/ch-timeline` shows the lifetime moved by the whole span, once).
 - [ ] A txAdmin scheduled restart 30 minutes out (Rules, Timers, Server restart; `Config.Holds.RestartPauseBeforeSeconds`): every party is told *Contracts are paused until the server restart.* once; skip it: *Contracts are no longer paused for the server restart.*, and every clock runs again where nothing else stops it.
 - [ ] A stranger on the board sees no **On hold** for a frozen player's contract, and its band moves on; with the app paused, it stands still for them too.
 - [ ] Panel, a contract on an anonymous placer who is frozen: without `crimson.identity` no On hold badge; with it, *the placer*.
 
-## Target classes: one rules table per target class (step 3f)
+## 21. Target classes (who is anonymous, who may buy intel)
 
 - [ ] As shipped (`Config.TargetClasses`): placing or accepting anonymously is offered to nobody, on a civilian or on an officer; the target sees a named operative's name; the board names no placer.
-- [ ] Settings, Features, Anonymity (whitelisted-job targets): turn **Placing anonymously** on: a contract on an SAST officer can be placed anonymously, one on a civilian cannot; turn it off again.
+- [ ] Game rules, Anonymity (whitelisted-job targets): turn **Placing anonymously** on: a contract on an SAST officer can be placed anonymously, one on a civilian cannot; turn it off again.
 - [ ] Turn **Target's informant** on (`Config.Intel.Informant.Enabled`): a civilian target can buy it; an officer target cannot until Informants (whitelisted-job targets), **Target's informant** is on too; with Informants (every other target), **Target's informant** off, a civilian target cannot.
 
-## Intel: one engine for every paid look-up (step 3g)
+## 22. Intel (every paid look-up)
 
 - [ ] Settings, Game rules: one area **Intel** holds every informant, tip, go-dark, informant-in-person and rumours setting; Rewards & money shows their prices under **Intel prices**; Features lists every Intel group after Anonymity and before the advisory.
 - [ ] Turn the target's informant, the placer's informant and the tip on (Intel): each is sold, priced and refused as before; a price changed in the panel while the dialog is open is refused, not charged.
@@ -692,7 +732,7 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Turn **Rumours** on: the board shows rumours until the broker (NPC or player) briefs the hitman; the briefed player gets the notice.
 - [ ] Nothing names the placer or the target, or shows the target's position, beyond what each look-up showed before; resmon idle unchanged.
 
-## Police & press and the one Discord sender (step 3h)
+## 23. Police, press and Discord
 
 - [ ] Place a contract on an on-duty officer (Advisory on, UseDispatch on): every other officer's phone and sc-dispatch get THREAT ADVISORY with the same words and departments as before; accept it, buy a tip on it, cancel it: ACTIVE, TIP and CANCELLED arrive the same way, and the earlier dispatch entries leave the MDT when it ends.
 - [ ] Turn **Hitman heat** and **Witness heat** on: the heat bulletin and the witness report reach officers' phones and sc-dispatch as before; turn **City news** on: the Birdy post (or your event) is made, and with lb-phone stopped one console line a minute says why not.
@@ -700,48 +740,42 @@ usual extra ACE; and on a third, `crimson.admin` and `crimson.identity`).
 - [ ] Set `crimson_hitman_alert_webhook`, `crimson_hitman_webhook` and `crimson_hitman_stats_webhook` (set, never setr): Tools, Send a test alert posts to the alert channel; a refused money attempt (audit mirror) to the staff channel; the daily summary and weekly stats (when due) to their channels, with no mention pinging anybody and no link.
 - [ ] Unset the alert webhook: alerts and the daily summary go to the staff webhook, and the panel says staff.
 
-## Records › Logs: one view for every log (step 3i)
+## 24. Records › Logs
 
 - [ ] Records › Logs shows four chips: **Audit log** (as before: search, pages, Flush), **Setting changes** (each change, Undo on two clicks, Older / Newer), **Org audit** (every action, the action filter) and **Grant history** (every grant, Undo on a role's).
 - [ ] From Game rules, Hitman organisation, Boss permissions and Target limits, the last tab (**Change history ▸**, **Org audit ▸**, **Grant history ▸**, **History ▸**) opens Logs with its chip picked; Target limits' opens the audit log filtered to `staff_target_`.
 - [ ] Without `crimson.identity`: every chip shows *a staff member* / *a member*, never a citizen id, as each list did; a reader account sees every chip and no Undo.
 
-## Record & standing: one record (step 3j)
+## 25. Record & standing
 
 - [ ] Game rules shows one area, **Record & standing**, holding Criminal progression (switch, trust per kill and per handover), Reputation, Tiered board, Hitman heat and Placer record; Features lists the five groups together after Intel; the old Progression, Roleplay: Reputation and Improvements: Placer record / Hitman heat / Tiered board groups are gone.
 - [ ] Complete a contract (sc-blackmarket started): trust is given as before (10 a kill, 20 a handover); the hitman's Ledger shows the same record (completed, failed, rate, standing) and the panel's player card the same counters.
 - [ ] Turn each of Reputation, Tiered board, Hitman heat and Placer record on from the panel in turn: each behaves as its own checks above say, with no restart; turned off, each stops at once.
 - [ ] Restart with heat given: it is still there until it cools, and the minute job (`record.tick` in /ch-diag) clears it after.
 
-## Payout checks: one check, one list (step 3k)
+## 26. Payout checks
 
 - [ ] Verify a kill, deliver a target alive, hand over a proof item and confirm a handover (placer's Confirm on): each pays once, as before; a second claim on a one-payout contract is refused.
 - [ ] Freeze a contract (staff) or start the restart hold: Verify kill is refused with the same words, nothing paid.
 - [ ] Turn on body disposal and proof of intent together: a verified kill's baseline waits for the drop-off and then for intent (or the hold time); the hitman's card and receipt say what is missing; staff's Settle on a held line says until when; nothing is lost or paid twice.
 
-## Other scripts behind adapters (step 5a)
+## 27. Other scripts (adapters)
 
 - [ ] With every script you run started, the console says nothing new at start; `/ch-diag` prints `other scripts:` naming each one (dispatch=sc-dispatch, banking=Renewed-Banking, keys=qbx_vehiclekeys...).
 - [ ] `stop sc-dispatch`: one console line `integration dispatch off (...)`; an advisory still reaches officers' phones, nothing in the MDT. `ensure sc-dispatch`: it is used again.
 - [ ] `restart ox_inventory`: crimson-hitman keeps running (no `ensure` needed).
 - [ ] `Config.Integrations.Inventory = 'none'`, restart: one line at start; the Place form offers cash and bank only.
 - [ ] Developer > Engine settings, group Other scripts: each kind offers only `auto`, its adapters and `none`.
+- [ ] `restart ox_target` with an organisation spot and a disposal marker out: both third-eye options come back without a relog; the same when ox_target starts after this resource
+- [ ] Switch `Config.Integrations.Clothing` in the panel (Developer, Engine settings) and change outfit: the new choice is followed without a restart
 
-## First-start setup (step 5b)
+## 28. First-start setup
 
 - [ ] On a fresh store, `/hitmanadmin` as an admin opens on Developer > First-start setup; as a moderator it does not.
 - [ ] The setup shows the storage mode with its config line, each other script found, the `add_ace` lines with a tick for yours, the panel command and the key switches, each at its value now.
 - [ ] Change one choice, **Preview** lists it; **Apply** asks twice, then applies; the change is in Change history with Undo; reopening the panel no longer jumps to the setup.
 
-## Loops: event-driven, asleep while off (step 6)
-
-- [ ] With no contract running, `ch-diag` says `condition sampler idle`; place one and run it again within a few seconds: it says a second or two ago, and a kill on that contract is credited as before
-- [ ] `resmon` for `crimson-hitman` (F8, `resmon 1`) reads 0.00 to 0.01 ms with the phone put away and nobody near an NPC, and at most about 0.35 ms with the app open (estimates until measured; note your own idle and busy figures)
-- [ ] With the broker or informant on (`Config.Intel.Rumours`) and the organisation on, stand near an organisation NPC and the broker in turn: each is drawn within 80 m and removed past 100 m, and the reading stays within a few hundredths of a ms of idle
-- [ ] An exclusive contract held and not worked for a few minutes, then `restart crimson-hitman`: the hold is still released at `Config.Limits.ExclusiveIdleReleaseSeconds` counted across the restart (on `json`, `data/clocks.json` holds its clock; `records.json` is not rewritten every tick)
-- [ ] `ch-diag` lists every job with its interval as before, and `contracts.releaseIdleHolds` stays a few ms at worst with many holds
-
-## A crash in the middle of a money move (step 8a, mysql, on a copy)
+## 29. A crash in the middle of a money move (`mysql`, on a copy)
 
 Kill the server process (not `stop`: end FXServer from the task manager or `kill -9`) right after each, then start it again.
 
@@ -749,41 +783,41 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] A hitman accepting a competitive contract: after the start the contract shows as accepted on their phone, and they can work it and be paid
 - [ ] An informant tip bought: after the start the hitman has the tip and paid for it once, or has their money back; never both, never neither
 - [ ] The organisation with Renewed-Banking: a member deposit, a withdrawal, a pay day. After the start the society account and the organisation's funds screen agree, and each member was paid their salary once
-- [ ] (step 8b) With dirty payouts on, kill the process right after a handover payout: Stuck escrow says the line was paid as black_money; the hitman holds it, and Delivered settles it without paying again
-- [ ] (step 8b) A buyout killed right after it closes: the placer has the premium once, and Stuck escrow's check of it (or the log's `probablyDelivered`) says it arrived
-- [ ] (step 8b) With body disposal on, the hitman quits the game while Verify kill is answering: back in the city, they still have the body to dispose of
-- [ ] (step 8b) With proof of intent on, a payout left in Stuck escrow: Pay answers "Settled as owed", the line leaves the list, and it is paid once intent is shown
+- [ ] With dirty payouts on, kill the process right after a handover payout: Stuck escrow says the line was paid as black_money; the hitman holds it, and Delivered settles it without paying again
+- [ ] A buyout killed right after it closes: the placer has the premium once, and Stuck escrow's check of it (or the log's `probablyDelivered`) says it arrived
+- [ ] With body disposal on, the hitman quits the game while Verify kill is answering: back in the city, they still have the body to dispose of
+- [ ] With proof of intent on, a payout left in Stuck escrow: Pay answers "Settled as owed", the line leaves the list, and it is paid once intent is shown
 
-## Translations (X1)
+## 30. Translations
 
 - [ ] With `Config.Locale = 'en'` (as shipped) every notice, map marker, target option and refusal reads exactly as before: place a contract, have it taken and paid, and try a refused action on the phone and in the panel
 - [ ] Copy `locales/en.lua` to `locales/xx.lua` (changing `CrimsonLocales.en` to `CrimsonLocales.xx`), `locales/client/en.lua` to `locales/client/xx.lua` (changing `CrimsonClientLocales.en` to `CrimsonClientLocales.xx`) and `locales/en.json` to `locales/xx.json`, change one text in each, set `Config.Locale = 'xx'` and restart: that text reads your words on the phone, in the panel and in the notice; the console says once that `xx` lacks no key (or names the first one it lacks)
 - [ ] With `Config.Locale = 'nonesuch'` the game, the phone and the panel read English, and the console says once that there is no such file
-- [ ] (part 3, the server) With `Config.Locale = 'en'`: `/ch-diag`, `/ch-stuck`, `/ch-void` without a reason, `/cleanse` with nothing out on you, an organisation hire refused, and the panel's Game rules (labels, help, group headings) read as before. In a copy `xx` change one text from each (`admin.*`, `bridges.*`, `org.*`, `settings.*`, `settings_group.*`): each reads your words; the Dashboard still lists the diagnosis lines that want doing (a review item waiting) and leaves out the console's own ("name a player to test...")
+- [ ] The server's words: with `Config.Locale = 'en'`: `/ch-diag`, `/ch-stuck`, `/ch-void` without a reason, `/cleanse` with nothing out on you, an organisation hire refused, and the panel's Game rules (labels, help, group headings) read as before. In a copy `xx` change one text from each (`admin.*`, `bridges.*`, `org.*`, `settings.*`, `settings_group.*`): each reads your words; the Dashboard still lists the diagnosis lines that want doing (a review item waiting) and leaves out the console's own ("name a player to test...")
 
-- [ ] (part 4, the phone) With `Config.Locale = 'en'` every screen of the phone app reads as before (Board, Mine, Place, On Me, Ledger, a contract card, the place form, a buyout, messages, the organisation tab). In a copy `xx.json` change one `app.*` text on each screen (a tab name included): each reads your words after a restart
+- [ ] The phone's words: with `Config.Locale = 'en'` every screen of the phone app reads as before (Board, Mine, Place, On Me, Ledger, a contract card, the place form, a buyout, messages, the organisation tab). In a copy `xx.json` change one `app.*` text on each screen (a tab name included): each reads your words after a restart
 
-- [ ] (part 5, the panel) With `Config.Locale = 'en'` every panel section reads as before (Home, Players, Contracts, Target limits, Game rules and its group headings, the organisation, Boss permissions, Locations, Logs, Developer, Help). In a copy `xx.json` change one `admin.*` text in each (a section name in the menu, a button, a help line): each reads your words from the first open after a restart
+- [ ] The panel's words: with `Config.Locale = 'en'` every panel section reads as before (Home, Players, Contracts, Target limits, Game rules and its group headings, the organisation, Boss permissions, Locations, Logs, Developer, Help). In a copy `xx.json` change one `admin.*` text in each (a section name in the menu, a button, a help line): each reads your words from the first open after a restart
 
-## Version check (X4, off as shipped)
+## 31. Version check (off as shipped)
 
 - [ ] As shipped (`Config.VersionCheck.Enabled = false`, `Url = ''`) the start asks nothing: no outbound request in the server's network log
 - [ ] With `Config.VersionCheck.Enabled = true` and `Url` an https address serving `9.9.9`, a restart prints one line naming 9.9.9; serving `1.0.0` (older) prints nothing; an address with `?` in it is not asked and the console says why once
 
-## Config check (X3)
+## 32. Config check
 
 - [ ] `ch-diag config` in the server console prints `--- crimson-hitman config check ---`, one line per finding with `-> fix:` under it, and a count; on the shipped config it names `Config.Debug` on
 - [ ] Remove `add_ace group.admin crimson.admin allow` from server.cfg and restart: the check names it with the `add_ace` line to put back
 - [ ] Set `Config.Integrations.Dispatch = 'nonesuch'` with the advisory on: the check names the dispatch script and says to set `'auto'`
 - [ ] In the panel, Developer, Health, **Check the config** draws the same lines
 
-## Your own presets (X5)
+## 33. Your own presets
 
 - [ ] Change two settings in the panel, type a name under Game rules, Presets and click **Save the panel's changes as a preset** twice: a card with your name and *yours* appears after the shipped ones, its preview empty (the settings are as it says)
 - [ ] Reset both settings, open Presets again: your card lists the two changes; **Apply** (two clicks) puts them back, each in Change history with Undo
 - [ ] **Delete** on your card (two clicks) removes it; `restart crimson-hitman` keeps the presets that were not deleted
 
-## Settings export and import (X2)
+## 34. Settings export and import
 
 - [ ] Change a few settings, save a preset of your own, then Developer, **Export & import**, **Export the settings**: the count names them; **Copy** puts the text on the clipboard; it holds no webhook
 - [ ] Reset those settings, paste the text under Import and **Read it**: each change is listed from and to, nothing has changed yet; edit the text to add `"Database.Mode":"memory"` and read it again: it is refused with why

@@ -1,19 +1,21 @@
---- The documents agree with the code (crimson-hitman/README.md,
---- docs/in-game-checklist.md, docs/developer.md):
+--- The documents agree with the code (crimson-hitman/README.md, docs/*.md,
+--- docs/dev/*.md):
 ---
----   * the README's Configuration reference has a row for every setting in
----     config.lua, in its order, its shipped value exactly as config.lua
----     ships it, and no row for a setting that is gone;
+---   * docs/configuration.md has a row for every setting in config.lua, in
+---     its order, its shipped value exactly as config.lua ships it, and no
+---     row for a setting that is gone;
 ---   * every refusal the server can send (CH.ERR) has words on the phone;
----   * every admin panel op (server/panel.lua OPS) is in the README's op
----     table, with no op there that the server does not have;
+---   * every admin panel op (server/panel.lua OPS) is in the op table of
+---     docs/dev/panel-requests.md, with no op there the server does not have;
 ---   * every feature with a switch has a line in the in-game checklist;
----   * the README's sections are the owner's manual, in its order, and every
----     document it or the docs link to exists.
+---   * the README is the owner's short README, its sections in order, with
+---     no build history; every link and anchor in every document, every
+---     docs/ path named in one and every file:line it cites exists.
 ---
 --- CH_PRINT_DOCS=1 CH_SUITES=docs_spec lua5.4 tests/run.lua prints the
---- Configuration reference as it should read, to paste over the README's
---- after config.lua changes (docs/developer.md, "Changing a setting").
+--- configuration reference as it should read, to paste over
+--- docs/configuration.md after config.lua changes (docs/developer.md,
+--- "Changing a setting").
 
 local function file(path)
     local handle = assert(io.open(path, 'r'))
@@ -29,6 +31,8 @@ local function exists(path)
 end
 
 local README = 'crimson-hitman/README.md'
+local REFERENCE = 'docs/configuration.md'
+local REQUESTS = 'docs/dev/panel-requests.md'
 local CONFIG = 'crimson-hitman/config/config.lua'
 
 --------------------------------------------------------------------------
@@ -203,7 +207,7 @@ local function markdown()
     local out = {}
     for _, s in ipairs(sections) do
         local title = s.title:lower():gsub('^%l', string.upper):gsub(': (%l)', function(c) return ': ' .. c:upper() end)
-        out[#out + 1] = '### ' .. title
+        out[#out + 1] = '## ' .. title
         out[#out + 1] = ''
         if #s.prose > 0 then
             out[#out + 1] = table.concat(s.prose, ' ')
@@ -238,24 +242,73 @@ if os.getenv('CH_PRINT_DOCS') then io.write('\n', markdown(), '\n') end
 -- The tests
 --------------------------------------------------------------------------
 
-describe('the README, against the code', function()
-    it('has the owner\'s manual\'s sections, in order', function()
+--- Every document: the owner's README and CHANGELOG, the owner docs under
+--- docs/, the developer docs under docs/dev/ and the data folders' notes.
+local function documents()
+    local out = { README, 'crimson-hitman/CHANGELOG.md', 'crimson-hitman/data/README.md',
+                  'crimson-hitman/data/contracts/README.md', 'crimson-hitman/data/photos/README.md' }
+    local pipe = assert(io.popen('ls docs/*.md docs/dev/*.md'))
+    for line in pipe:lines() do out[#out + 1] = line end
+    pipe:close()
+    return out
+end
+
+--- A heading's anchor as GitHub makes it: lower case, punctuation dropped,
+--- each space a hyphen.
+local function slug(heading)
+    return (heading:lower():gsub('`', ''):gsub('[^%w%- ]', ''):gsub(' ', '-'))
+end
+
+--- The anchors one document has.
+local function anchors(text)
+    local out = {}
+    for heading in ('\n' .. text):gmatch('\n#+ ([^\n]+)') do out[slug(heading)] = true end
+    return out
+end
+
+--- A path a document names, from the document's folder, `..` resolved.
+local function resolve(doc, target)
+    local parts = {}
+    for part in ((doc:match('^(.*)/') or '.') .. '/' .. target):gmatch('[^/]+') do
+        if part == '..' and #parts > 0 and parts[#parts] ~= '..' then parts[#parts] = nil
+        elseif part ~= '.' then parts[#parts + 1] = part end
+    end
+    return table.concat(parts, '/')
+end
+
+describe('the owner README', function()
+    it('has the owner README\'s sections, in order, and is short', function()
         local readme = file(README)
         local at = 0
-        for _, title in ipairs({ 'Start here', 'Install', 'Updating', 'Roles and how a contract works',
-            'Admin panel', 'Optional features', 'Permissions', 'Configuration reference', 'Performance',
-            'Troubleshooting', 'What\'s New' }) do
-            local found = readme:find('\n## ' .. title, at + 1, true)
+        for _, title in ipairs({ 'What it is', 'Requirements', 'Install in 5 minutes', 'Main settings',
+            'Admin panel and commands', 'Permissions', 'Updating', 'Escrow, and where the words live',
+            'Troubleshooting', 'Documents' }) do
+            local found = readme:find('\n## ' .. title .. '\n', at + 1, true)
             truthy(found, '## ' .. title .. ' after the section before it')
             at = found or at
         end
+        local _, count = readme:gsub('\n', '')
+        truthy(count < 320, count .. ' lines: the detail belongs in docs/')
     end)
 
+    it('keeps build history out of the owner documents', function()
+        -- The version history is CHANGELOG.md's; the owner docs say what is
+        -- true now, not which step or sweep made it so.
+        local found = {}
+        for _, doc in ipairs({ README, 'docs/in-game-checklist.md', 'docs/how-it-works.md', 'docs/features.md',
+                               'docs/admin-panel.md', 'docs/configuration.md', 'docs/running.md' }) do
+            local text = file(doc)
+            for _, word in ipairs({ "What's New", '%(step %d', '%(sweep', 'sweep %d', '%(X%d%)', '%(part %d' }) do
+                if text:find(word) then found[#found + 1] = doc .. ': ' .. word end
+            end
+        end
+        eq(#found, 0, 'build history in an owner document: ' .. table.concat(found, ', '))
+    end)
+end)
+
+describe('the configuration reference and the request tables, against the code', function()
     it('gives every setting in config.lua its shipped value, exactly, in the reference', function()
-        local readme = file(README)
-        local from = readme:find('\n## Configuration reference\n', 1, true)
-        truthy(from, 'the reference')
-        local reference_ = readme:sub(from, (readme:find('\n## ', from + 10, true) or #readme))
+        local reference_ = file(REFERENCE)
         local _, rows = reference()
         truthy(#rows > 300, #rows .. ' settings read from config.lua')
         local wrong, known = {}, {}
@@ -273,11 +326,11 @@ describe('the README, against the code', function()
     end)
 
     it('lists every admin panel op in its op table, and none the server does not have', function()
-        local readme = file(README)
+        local requests = file(REQUESTS)
         local panel = require('crimson-hitman.server.panel')
-        local from = readme:find('\n### Panel requests', 1, true)
-        truthy(from, 'the op table under Admin panel')
-        local tableText = readme:sub(from, (readme:find('\n##', from + 5, true) or #readme))
+        local from = requests:find('\n## Panel requests', 1, true)
+        truthy(from, 'the op table')
+        local tableText = requests:sub(from, (requests:find('\n## ', from + 5, true) or #requests))
         local missing, listed = {}, {}
         for op in pairs(panel.OPS) do
             if not tableText:find('| `' .. op .. '` |', 1, true) then missing[#missing + 1] = op end
@@ -286,8 +339,8 @@ describe('the README, against the code', function()
         local extra = {}
         for _, op in ipairs(listed) do if panel.OPS[op] == nil then extra[#extra + 1] = op end end
         table.sort(missing)
-        eq(#missing, 0, 'ops not in the README: ' .. table.concat(missing, ', '))
-        eq(#extra, 0, 'ops in the README the server does not have: ' .. table.concat(extra, ', '))
+        eq(#missing, 0, 'ops not in the table: ' .. table.concat(missing, ', '))
+        eq(#extra, 0, 'ops in the table the server does not have: ' .. table.concat(extra, ', '))
     end)
 
     it('gives every refusal the server can send words on the phone', function()
@@ -307,19 +360,25 @@ describe('the README, against the code', function()
         eq(#missing, 0, 'refusals with no words: ' .. table.concat(missing, ', '))
     end)
 
-    it('links only to documents that exist', function()
-        local missing = {}
-        for _, doc in ipairs({ README, 'docs/in-game-checklist.md', 'docs/developer.md' }) do
+
+    it('links only to documents and headings that exist', function()
+        local missing, checked = {}, 0
+        for _, doc in ipairs(documents()) do
             -- Code is not a link: fenced blocks and `spans` taken out first.
             local text = file(doc):gsub('```.-```', ''):gsub('`[^`\n]*`', '')
-            local base = doc:match('^(.*)/') or '.'
-            for target in text:gmatch('%]%(([^)#%s]+)[^)]*%)') do
-                if not target:match('^https?:') then
-                    local path = base .. '/' .. target
-                    if not exists(path) then missing[#missing + 1] = doc .. ' -> ' .. target end
+            for target, anchor in text:gmatch('%]%(([^)#%s]*)#?([^)%s]*)%)') do
+                if not target:match('^https?:') and not target:match('^mailto:') then
+                    checked = checked + 1
+                    local path = target == '' and doc or resolve(doc, target)
+                    if not exists(path) then
+                        missing[#missing + 1] = doc .. ' -> ' .. target
+                    elseif anchor ~= '' and path:match('%.md$') and not anchors(file(path))[anchor] then
+                        missing[#missing + 1] = doc .. ' -> ' .. target .. '#' .. anchor
+                    end
                 end
             end
         end
+        truthy(checked > 20, checked .. ' links read')
         eq(#missing, 0, 'links to nothing: ' .. table.concat(missing, ', '))
         -- Merged into docs/developer.md, and named here by parts so the
         -- static check's cited-document rule does not read them as citations.
@@ -329,7 +388,57 @@ describe('the README, against the code', function()
             falsy(exists(gone), gone .. ' is merged into docs/developer.md')
         end
     end)
+
+    it('names only docs/ files that exist', function()
+        local missing = {}
+        for _, doc in ipairs(documents()) do
+            for path in file(doc):gmatch('(docs/[%w_%-/]+%.md)') do
+                if not exists(path) then missing[#missing + 1] = doc .. ' names ' .. path end
+            end
+        end
+        eq(#missing, 0, table.concat(missing, ', '))
+    end)
+
+    it('cites only file:line places that exist', function()
+        -- docs/dev/map.md is the map of the resource at b31d10a and cites
+        -- its lines there, as its header says; every other document cites
+        -- the files as they are now. A path is under crimson-hitman/ unless
+        -- it starts with tests/ or docs/; one that is neither is another
+        -- project's (oxmysql's, FiveM's) and not read here.
+        local counts, bad, read = {}, {}, 0
+        local function lineCount(path)
+            if counts[path] == nil then
+                local handle = io.open('crimson-hitman/' .. path, 'r') or io.open(path, 'r')
+                if handle then
+                    local n = 0
+                    for _ in handle:lines() do n = n + 1 end
+                    handle:close()
+                    counts[path] = n
+                else
+                    counts[path] = false
+                end
+            end
+            return counts[path]
+        end
+        for _, doc in ipairs(documents()) do
+            if doc ~= 'docs/dev/map.md' then
+                for path, from, to in file(doc):gmatch('([%w_./-]+%.%a+):(%d+)%-?(%d*)') do
+                    local n = lineCount(path)
+                    if n then
+                        read = read + 1
+                        if tonumber(from) > n or (to ~= '' and tonumber(to) > n) then
+                            bad[#bad + 1] = ('%s cites %s:%s%s, which has %d lines'):format(doc, path, from,
+                                to ~= '' and ('-' .. to) or '', n)
+                        end
+                    end
+                end
+            end
+        end
+        eq(#bad, 0, table.concat(bad, '\n'))
+        truthy(file('docs/dev/map.md'):find('against `b31d10a`', 1, true), 'the map says which commit it cites')
+    end)
 end)
+
 
 describe('the in-game checklist, against the code', function()
     it('has a line for every feature with a switch', function()
@@ -365,10 +474,11 @@ describe('the in-game checklist, against the code', function()
 end)
 
 describe('sale readiness (step 5b)', function()
-    it('opens the README with Install in 5 minutes, numbered and short', function()
+    it('puts Install in 5 minutes after what it is and what it needs, numbered and short', function()
         local readme = file(README)
-        local first = readme:find('\n## ', 1, true)
-        eq(readme:sub(first, first + 26), '\n## Install in 5 minutes\n\n1')
+        local first = readme:find('\n## Install in 5 minutes\n\n1', 1, true)
+        truthy(first, 'Install in 5 minutes, opening with its first step')
+        truthy(first < readme:find('\n## Main settings\n', 1, true), 'before the settings')
         local section = readme:sub(first + 1, readme:find('\n## ', first + 5, true))
         local steps = 0
         for _ in section:gmatch('\n%d%. ') do steps = steps + 1 end

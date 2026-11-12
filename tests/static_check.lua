@@ -2502,17 +2502,17 @@ do
 end
 
 --------------------------------------------------------------------------
--- 34. Every mysql table is named in the README's account of the database
+-- 34. Every mysql table is named in the owner docs' account of the database
 --------------------------------------------------------------------------
 -- The paragraph for an owner whose database user cannot create or alter
 -- tables listed what 1.1.0 adds as six columns, and not the two new tables
 -- (crimson_review, crimson_settings) that user has to import or have made:
 -- the start then refused on both. Every CREATE TABLE in mysql.lua's SCHEMA
--- is named in the README's Install section, where that account is.
+-- is named in docs/running.md's Database section, where that account is.
 
 do
     local function unnamedTables(schemaSrc, readme)
-        local section = readme:match('\n## Install\n(.-)\n## ') or ''
+        local section = readme:match('\n## Database\n(.-)\n## ') or ''
         local out = {}
         for name in schemaSrc:gmatch('CREATE TABLE IF NOT EXISTS (crimson_[%w_]+)') do
             if not section:find('`' .. name .. '`', 1, true) then out[#out + 1] = name end
@@ -2522,24 +2522,24 @@ do
 
     -- Not vacuous: a table left out of the section is found.
     local probe = unnamedTables('CREATE TABLE IF NOT EXISTS crimson_a (\nCREATE TABLE IF NOT EXISTS crimson_b (',
-        '\n## Install\nThe tables are `crimson_a`.\n## Next\n`crimson_b`')
+        '\n## Database\nThe tables are `crimson_a`.\n## Next\n`crimson_b`')
     if #probe ~= 1 or probe[1] ~= 'crimson_b' then
-        failures[#failures + 1] = 'the README table check no longer finds a table its own sample '
+        failures[#failures + 1] = 'the database table check no longer finds a table its own sample '
             .. 'leaves out, so a clean run of it means nothing'
     end
 
     local schemaSrc = read('crimson-hitman/server/storage/mysql.lua') or ''
-    local readme = read('crimson-hitman/README.md') or ''
+    local readme = read('docs/running.md') or ''
     local _, tables = schemaSrc:gsub('CREATE TABLE IF NOT EXISTS crimson_', '')
     if tables < 15 then
-        failures[#failures + 1] = ('the README table check found %d tables in mysql.lua; it reads '
+        failures[#failures + 1] = ('the database table check found %d tables in mysql.lua; it reads '
             .. 'SCHEMA wrongly'):format(tables)
     end
-    if not readme:find('\n## Install\n', 1, true) then
-        failures[#failures + 1] = 'README.md has no "## Install" section for the table check to read'
+    if not readme:find('\n## Database\n', 1, true) then
+        failures[#failures + 1] = 'docs/running.md has no "## Database" section for the table check to read'
     end
     for _, name in ipairs(unnamedTables(schemaSrc, readme)) do
-        failures[#failures + 1] = ('README.md\'s Install section does not name the table %s, '
+        failures[#failures + 1] = ('docs/running.md\'s Database section does not name the table %s, '
             .. 'which mysql mode creates (server/storage/mysql.lua SCHEMA): an owner whose user '
             .. 'cannot create tables is not told to import it'):format(name)
     end
@@ -2759,7 +2759,7 @@ do
 end
 
 --------------------------------------------------------------------------
--- 39. One word for one thing (the README's glossary)
+-- 39. One word for one thing (the glossary, docs/how-it-works.md)
 --------------------------------------------------------------------------
 --
 -- The person who placed a contract is "the placer" to staff and "the person

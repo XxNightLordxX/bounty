@@ -605,7 +605,7 @@ describe('the configuration as one short file', function()
             truthy(found, title .. ' after the section before it')
             at = found
         end
-        truthy(text:find('README', 1, true), 'the header points to the README')
+        truthy(text:find('docs/configuration.md', 1, true), 'the header points to the reference')
         falsy(text:find('discord%.com/api/webhooks'), 'no webhook')
         falsy(text:find('https?://'), 'no address at all')
         truthy(text:find('\nConfig%.Limits%.MaxPayoutSlots%s*=%s*1%s*%-%- each contract pays out once\n'),
@@ -625,17 +625,15 @@ describe('the configuration as one short file', function()
             end
             local note = line:match('%-%-%s(.*)$')
             if note and key then
-                truthy(#note <= 72, 'a note this long belongs in the README: ' .. line)
+                truthy(#note <= 72, 'a note this long belongs in docs/configuration.md: ' .. line)
             end
         end
         eq(#bare, 0, 'settings with no note: ' .. table.concat(bare, ' | '))
     end)
 
-    it('has a README reference row for every setting', function()
-        local readme = file('crimson-hitman/README.md')
-        local from = readme:find('\n## Configuration reference\n', 1, true)
-        truthy(from, 'the README has the reference the header points to')
-        local reference = readme:sub(from, (readme:find('\n## ', from + 10, true) or #readme))
+    it('has a reference row for every setting', function()
+        local reference = file('docs/configuration.md')
+        truthy(reference:find('\n## Debug and storage\n', 1, true), 'the reference the header points to')
         local now = run(file('crimson-hitman/config/config.lua'), 'Config', 'config.lua')
         local missing = {}
         local function covered(section, key)
@@ -679,6 +677,6 @@ describe('the configuration as one short file', function()
             truthy(covered('Completion', key))
         end
         table.sort(missing)
-        eq(#missing, 0, 'settings the README reference does not explain: ' .. table.concat(missing, ', '))
+        eq(#missing, 0, 'settings the reference does not explain: ' .. table.concat(missing, ', '))
     end)
 end)

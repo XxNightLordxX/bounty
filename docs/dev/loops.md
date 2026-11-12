@@ -22,7 +22,7 @@ schedule, the early exits and the budgets below; `tests/handlers_spec.lua`
 and `tests/perf_round3_spec.lua` pin the requests and the capped passes.
 On a live server, `/ch-diag` lists every job with that server's own worst,
 average and last times and its interval. What a player's `resmon` should
-read is in the README (*Performance*, *What resmon should show*).
+read is in the owner docs (`docs/running.md`, *What resmon should show*).
 
 **Off / on.** A feature switched off costs its job one comparison: no store
 call and no statement in ten minutes (`tests/loops_spec.lua`, *every
@@ -124,3 +124,24 @@ fall due); the mass pass 67 ms and 1,296 statements (was 78 ms and 1,322).
   merged into `CrimsonNpc.watch`.
 - Everything else was already event-driven or asleep until due, and is
   pinned as it is.
+
+## The requests
+
+Store calls one request makes (on `mysql`, each an awaited statement), before
+the performance rounds and now:
+
+| Request | Store calls, before → now |
+|---|---|
+| Board, nothing changed since the last viewer | 232 → 0 (read once per change, shared by every viewer) |
+| Board, the first viewer after a change | 232 → 3 |
+| Mine: placer / operative / target | 43 / 48 / 53 → 9 / 3 / 23 |
+| Mine with a long history | the whole history three times → the live contracts only |
+| Whitelisted-job view | 2 → 1 |
+| Admin panel: a player, their history, a search (92 contracts) | 95, 187, 93 statements → 4, 5, 2 |
+| Admin panel: Contracts left open | the whole table every 5 s → only after a write or a prune |
+| Placing a contract | both players' whole history → the live contracts and those inside the longest wait |
+
+A thousand requests in a busy evening's mix (a write every tenth): `json`
+1.3 s → 0.45 s, `mysql` (harness) 24.6 s → 3.2 s. Several contracts are read
+in one statement (`readEscrowMany`, `readHitmenMany`), pushes to a player are
+one per tick, and every query is served by an existing index.

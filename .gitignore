@@ -29,3 +29,6 @@ zz_*.lua
 
 # Worktrees created for isolated subagent runs. Never part of the repo.
 .claude/worktrees/
+
+# The release build (tools/release.lua): made from the tree, never committed.
+dist/

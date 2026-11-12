@@ -1,9 +1,14 @@
 # Crimson Hitman System — developer guide
 
 What a developer needs to change this resource safely: how it is built, how
-it stores, how it is tested, and the rules it keeps. The owner's manual is
-[crimson-hitman/README.md](../crimson-hitman/README.md); what only a running
-server can prove is [in-game-checklist.md](in-game-checklist.md).
+it stores, how it is tested, how a release is made, and the rules it keeps.
+The owner's README is [crimson-hitman/README.md](../crimson-hitman/README.md),
+with the owner docs beside this file (how it works, features, the admin
+panel, configuration, running the server); what only a running server can
+prove is [in-game-checklist.md](in-game-checklist.md). The developer notes
+are under `docs/dev/`: [the adapters](dev/adapters.md), [the loops](dev/loops.md),
+[every panel request](dev/panel-requests.md), [the workflow
+report](dev/workflows.md) and [the map](dev/map.md) of the resource at `b31d10a`.
 
 This file replaces the original specification, the implementation plan, the
 build report and the oxmysql notes. Code comments cite the specification's
@@ -340,7 +345,7 @@ English. Console lines (`Log.*`, `print`, `error`,
 the files that only print to the console (`CONSOLE_FILES`: the stores,
 server/boot.lua, server/versioncheck.lua).
 
-To add a language: README, Escrow, and where the words live.
+To add a language: [running.md](running.md#adding-a-language).
 
 ### Version check
 
@@ -453,11 +458,12 @@ And the linter, from `crimson-hitman/`:
 | Races (`races_spec`, `interleave_spec`) | Two requests landing before and after every database wait of each other | The await scheduler |
 | Store invariants (`tests/invariants.lua`) | Nothing in the store is ever inconsistent, whatever ran | The whole suite again, with a monitor after every write |
 | Loops and requests (`loops_spec`, `handlers_spec`, `perf_round3_spec`) | Each job's schedule, early exits, statement counts and a worst-pass budget on a 200-contract city | `CH_PERF=1` prints the measured figures |
-| Documents (`docs_spec`) | The README's config reference equals config.lua; every refusal has words; every panel op is in the README; every switch has a checklist line | `CH_PRINT_DOCS=1 CH_SUITES=docs_spec lua5.4 tests/run.lua` prints the reference to paste |
+| Documents (`docs_spec`) | `docs/configuration.md` equals config.lua; every refusal has words; every panel op is in `docs/dev/panel-requests.md`; every switch has a checklist line; the README's sections, and no build history in the owner docs; every link, anchor, `docs/` path and `file:line` in every document exists | `CH_PRINT_DOCS=1 CH_SUITES=docs_spec lua5.4 tests/run.lua` prints the reference to paste |
 | Static (`tests/static_check.lua`) | No SQL built by concatenation; no handler reading an identity from a payload; every module, event and config key consistent; the schema holds every field; one word for one thing (the glossary); cited documents exist | Reads the source |
 | Phone page (`tests/ui/run.js`) | The real `ui/app.js` against a scripted server: forms, refusals, taps, two-click confirms, escaping | `tests/ui/dom.js`, a minimal DOM |
 | Panel page (`tests/ui/admin_run.js`) | Every section and action of `ui/admin.js`, access levels, stale answers, player text staying text | The same DOM, reading `admin.html` (`tests/ui/markup.js`); a test that asserts a time the page works out from the clock boots it with `{ clock: { ms } }`, so the page's `Date` stands still unless the test moves it |
 | Layout (`tests/layout/*.js`) | Tap targets, clipping, the tab bar and status bar on the phone; the panel without its icon font | Playwright; skipped where it is not installed |
+| Release (`release_spec`) | The release build holds every file the manifest names and nothing it should not; the zip is named for the version; shipped links land; a missing file or a webhook stops it | Runs `tools/release.lua` into a temporary folder, and on a broken copy of the resource |
 
 **Adding a spec.** Write `tests/<area>_spec.lua` with `describe` / `it` and the
 globals the runner gives (`eq`, `truthy`, `falsy`, `newStack`, `fixture`,
@@ -477,13 +483,38 @@ limits.
 **Changing a setting.** Add it to `config/config.lua` (with one short note)
 and `config/defaults.lua` in the same place, to the panel's catalogue
 (`server/settings.lua`) if staff may change it, read it where it is used, and
-paste the reference `docs_spec` prints over the README's. `config_layout_spec`,
+paste the reference `docs_spec` prints over `docs/configuration.md`'s. `config_layout_spec`,
 `config_drift_spec` and `docs_spec` fail until all of them agree.
 
 **What the suites cannot prove:** the real `ox_inventory`, lb-phone and
 `qbx_core` builds, the page on a real phone, a real MySQL's isolation and
 collation under concurrent writes, and performance under real load. That is
 [in-game-checklist.md](in-game-checklist.md).
+
+## Release build
+
+`tools/release.lua` makes what a server owner (or the escrow upload) gets:
+
+```bash
+lua5.4 tools/release.lua                 # dist/crimson-hitman/ and dist/crimson-hitman-<version>.zip
+lua5.4 tools/release.lua --out /tmp/rel  # somewhere else
+```
+
+Run it from the repository root; `dist/` is git-ignored. The file list comes
+from `fxmanifest.lua` (every shared, client and server script, `files {}`,
+`ui_page`, and what `escrow_ignore` leaves readable, globs expanded as FiveM
+does), plus the manifest, the README, the CHANGELOG, a LICENSE if there is
+one, `install/sql/`, the `data/` folders' notes and the owner docs (under
+`docs/` in the release, their links pointed at where they land; a link to a
+developer document becomes plain text). Tests, `docs/dev/`, this guide, the
+tools and anything the server wrote under `data/` are left out. It stops,
+naming the file, when the manifest names a file that is not there or a
+directive it does not know, when CHANGELOG.md's newest version is not the
+manifest's, when a scratch file would ship, and when a shipped file holds
+what reads as a secret (a Discord webhook, a database password). The zip is
+stored, not compressed, with one fixed date, so the same tree gives the same
+bytes. A new owner document goes in `Release.OWNER_DOCS`.
+`tests/release_spec.lua` builds it into a temporary folder and checks it.
 
 ## Design rules still true
 
@@ -920,7 +951,7 @@ connection only; there is no query timeout anywhere. `flags=["-FOUND_ROWS"]` wou
 ## The specification's rules, by number
 
 Code comments cite the original specification's rules by number. Its text is
-retired: what is still true is in this file, the README and the code each
+retired: what is still true is in this file, the owner docs and the code each
 comment sits in. The titles, to read a citation by:
 
 | § | Rule |

@@ -3,7 +3,7 @@
 ---
 --- Measured on the city tests/loops_spec.lua builds (200 live contracts,
 --- each held, and 64 players), with the 'mysql' and 'json' backends, and
---- run with CH_PERF=1 to print the table the README's "Performance: the
+--- run with CH_PERF=1 to print the table docs/dev/loops.md's "The
 --- requests" section quotes.
 
 local Exec = require('tests.harness.mysql_exec')
