@@ -166,8 +166,7 @@ function Meeting.steps(role)
         end
         return (L('meeting.be_at_the_meeting_point_marked_2')):format(Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold)
     end
-    return (L('meeting.bring_the_target_alive_to_the')
-        .. 'count.'):format(kidnap.RequireCoercion and L('meeting.cuffed_or_in_your_vehicle') or '',
+    return (L('meeting.bring_the_target_alive_to_the')):format(kidnap.RequireCoercion and L('meeting.cuffed_or_in_your_vehicle') or '',
         Words.metres(Config.Kidnap and Config.Kidnap.Radius), hold, confirms and L('meeting.then_the_person_who_placed_it') or '')
 end
 
@@ -180,8 +179,7 @@ local function tell(cid, role, contract, moved)
         intro = (L('meeting.your_meeting_point_for_the_contract')):format(target,
             moved and 'moved' or 'set')
     else
-        intro = (L('meeting.the_person_who_placed_your_contract')
-            .. 'handover.'):format(target, moved and 'moved' or 'set')
+        intro = (L('meeting.the_person_who_placed_your_contract')):format(target, moved and 'moved' or 'set')
     end
     Notify.toCitizen(cid, moved and L('meeting.meeting_point_moved') or L('meeting.meeting_point_set'),
         intro .. ' ' .. Meeting.steps(role), { contractId = contract.id })

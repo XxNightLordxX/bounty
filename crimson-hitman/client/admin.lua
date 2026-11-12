@@ -28,9 +28,16 @@ local REQUEST_TIMEOUT_MS = 15000
 --- closing, a menu) otherwise leaves the page drawn with no cursor.
 local REFOCUS_MS, REFOCUS_TIMES = 50, 5
 
---- The pause menu, and the key behind it: held off while the page is open,
---- and either one released closes it.
+--- The pause menu, and the key behind it: held off while the page is open.
+--- Either one released is passed to the page as Escape, which closes its
+--- innermost layer first (a button armed, the drawer, the menu) and the
+--- panel only when nothing else is open.
 local ESCAPE_CONTROLS = { 200, 322 }
+
+--- How long the page has to answer an Escape passed to it before the
+--- client closes the panel itself: a page that failed or hung must never
+--- keep a player in it with the cursor and no way out.
+local ESCAPE_ANSWER_MS = 1000
 
 --- And for this long after it closes. Closing gives the game its input back
 --- while the key that closed it can still be down, and the watch below
@@ -43,6 +50,10 @@ local ESCAPE_GUARD_MS = 400
 --- open while it trails starts no second one.
 local guardUntil, watching = 0, false
 
+--- When the page must have answered the Escape passed to it (0: none
+--- waiting).
+local escapeDue = 0
+
 --- Close the page, whichever way it is closed: Escape in the page or in the
 --- game, the page's own close button, or this resource stopping. Always
 --- gives the focus back, and answers every request still waiting, so no
@@ -50,6 +61,7 @@ local guardUntil, watching = 0, false
 function AdminPanel.close()
     local was = open
     open = false
+    escapeDue = 0
     if was then guardUntil = CrimsonUtil.monotonicMs() + ESCAPE_GUARD_MS end
     SetNuiFocus(false, false)
     if was then SendNUIMessage({ type = 'close' }) end
@@ -79,16 +91,28 @@ function AdminPanel.open(access)
     -- open and for ESCAPE_GUARD_MS after it closes; the loop ends then. One
     -- watch however often the server says to open, a trailing one included:
     -- a second would run beside the first.
+    --
+    -- The key is held off and passed to the page, never acted on here:
+    -- closed here, the whole panel went on the same keystroke the page used
+    -- to close only its drawer, and what was typed there was lost. The page
+    -- answers (adminEscaped); one that does not within ESCAPE_ANSWER_MS is
+    -- closed from here.
     if already or watching then return end
     watching = true
     CreateThread(function()
         while open or CrimsonUtil.monotonicMs() < guardUntil do
             for i = 1, #ESCAPE_CONTROLS do DisableControlAction(0, ESCAPE_CONTROLS[i], true) end
             if open then
-                for i = 1, #ESCAPE_CONTROLS do
-                    if IsDisabledControlJustReleased(0, ESCAPE_CONTROLS[i]) then
-                        AdminPanel.close()
-                        break
+                local now = CrimsonUtil.monotonicMs()
+                if escapeDue > 0 and now >= escapeDue then
+                    AdminPanel.close()
+                else
+                    for i = 1, #ESCAPE_CONTROLS do
+                        if IsDisabledControlJustReleased(0, ESCAPE_CONTROLS[i]) then
+                            if escapeDue == 0 then escapeDue = now + ESCAPE_ANSWER_MS end
+                            SendNUIMessage({ type = 'escape' })
+                            break
+                        end
                     end
                 end
             end
@@ -216,6 +240,12 @@ end)
 
 RegisterNUICallback('adminClose', function(_, cb)
     AdminPanel.close()
+    cb({ ok = true })
+end)
+
+-- The page handled an Escape the game saw (closed a layer, or itself).
+RegisterNUICallback('adminEscaped', function(_, cb)
+    escapeDue = 0
     cb({ ok = true })
 end)
 

@@ -227,12 +227,9 @@ describe('Translations: the language files', function()
 
     it('no file joins a label word on to a value with .. (Review 84 VAR-6)', function()
         -- Known and not moved here: qbx_core's grade name (data, as
-        -- 'Member' above), and the contract export's field labels in
-        -- server/panel.lua (a staff text file, still English).
+        -- 'Member' above).
         local KNOWN = {
             ['server/org/jobs.lua'] = { ['Grade '] = true },
-            ['server/panel.lua'] = { ['Exported: '] = true, ['Reason: '] = true, ['Client: '] = true,
-                ['Target: '] = true, ['Ended: '] = true },
         }
         local left = {}
         for _, path in ipairs(SCANNED) do
@@ -302,6 +299,37 @@ describe('Translations: the language files', function()
             end
         end
         eq(#left, 0, 'English joined in a page: ' .. table.concat(left, ', '))
+    end)
+
+    -- Review 84 T2: the same in the Lua. A sentence that ends in English
+    -- joined on after the language file's words ("... to pay " .. 'it, or
+    -- /%s %s %d.') is one a translator cannot finish. One key holds the
+    -- whole sentence. server/org/ is another change's (review 84, the
+    -- organisation fixes), so its lines are listed here until it lands.
+    local LUA_JOIN_ALLOW = {
+        ['crimson-hitman/server/org/extras2.lua'] = { [' armory'] = true },
+        ['crimson-hitman/server/org/init.lua'] = { ['MaxOrganisations).'] = true },
+    }
+    it('no Lua joins English on to the language file\'s words (R84 T2)', function()
+        local left = {}
+        local files = io.popen('ls crimson-hitman/server/*.lua crimson-hitman/server/*/*.lua '
+            .. 'crimson-hitman/client/*.lua crimson-hitman/shared/*.lua')
+        for path in files:lines() do
+            local text = read_file(path):gsub('%-%-%[%[.-%]%]', ''):gsub('%-%-[^\n]*', '')
+            local allow = LUA_JOIN_ALLOW[path] or {}
+            for joined in text:gmatch("L%b()%)?%s*%.%.%s*'[^'\n]*'") do
+                local lit = joined:match("'([^'\n]*)'$")
+                if lit:find('%a') and not allow[lit] then
+                    left[#left + 1] = path .. ': ' .. (joined:gsub('%s+', ' '))
+                end
+            end
+            for joined in text:gmatch("'[^'\n]*'%s*%.%.%s*%(?L%(") do
+                local lit = joined:match("^'([^'\n]*)'")
+                if lit:find('%a') then left[#left + 1] = path .. ': ' .. (joined:gsub('%s+', ' ')) end
+            end
+        end
+        files:close()
+        eq(table.concat(left, ' | '), '', 'English joined on to a translated sentence')
     end)
 
     it('the joined scan finds a word joined on and a plural made in place, and not a key or a class', function()

@@ -6,6 +6,23 @@ say how things work now.
 
 ## 1.2.0
 
+**Review 84 fixes (1)**
+- Body disposal starts in game: a verified kill with `Config.Disposal` on
+  waits in escrow until the drop-off, the vehicle is made and the body can be
+  loaded and dropped off. The game's coordinates (a `vector3`) were refused
+  as not a table, so the payout went at once and no step was made. Spots in
+  `config.lua` may be written as `vector3(...)` or `vector4(...)` (its `w` the
+  heading), and the config check and the panel read them.
+- Escape in the staff panel closes the innermost thing open first, also when
+  the game sees the key: the drawer closes and the reason typed in it is kept.
+  A page that cannot answer is still closed from the game after a second.
+- A player frozen, suspended, protected or paid while away from the city, by
+  the citizen id staff with the identity ACE typed, is no longer listed under
+  that citizen id in Measures for staff without it.
+- Translations: the disposal time bands, the `/cleanse` price prompt, and
+  every other server message that ended in English joined on after the
+  language file's words, are now one sentence each in `locales/en.lua`.
+
 **Review 84 fixes (2)**
 - Organisation dead drops: each collection is its own drop. On a contract
   with more than one payout slot, a later collection waits its own

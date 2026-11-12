@@ -456,8 +456,7 @@ function StaffReassign.validate(warn)
     if type(Config.Staff) ~= 'table' then return end
     local value = Config.Staff.ReassignStake
     if value ~= 'waive' and value ~= 'charge' then
-        warn[#warn + 1] = (L('staff_reassign.config_staff_reassignstake_is_it_has')
-            .. '\'waive\'.'):format(tostring(value))
+        warn[#warn + 1] = (L('staff_reassign.config_staff_reassignstake_is_it_has')):format(tostring(value))
         Config.Staff.ReassignStake = 'waive'
     end
 end

@@ -802,3 +802,152 @@ describe('body disposal in every store', function()
         end)
     end
 end)
+
+--------------------------------------------------------------------------
+-- Review 84 T1: the game's vectors. In game GetEntityCoords, a kill's
+-- coordinates and a spot written as vector4(...) in config.lua are not
+-- tables (type() answers 'vector3' / 'vector4'), and Point() refused them:
+-- no step was ever made, the payout went at once, and a step could never
+-- be loaded or dropped off. The harness's GetEntityCoords answers a
+-- vector3 now (tests/harness/vector.lua), as the game's does.
+--------------------------------------------------------------------------
+
+describe('R84 T1: body disposal with the game\'s vector coordinates', function()
+    --- The fake world, its vehicle read as the game reads one: a vector3.
+    local function vectorWorld(W, s)
+        s.disposal.world.coords = function(v)
+            local c = W.vehicles[v]
+            return c and vector3(c.x, c.y, c.z) or nil
+        end
+    end
+
+    it('the harness answers the game\'s type for a position', function()
+        Env.reset()
+        Env.addPlayer({ source = 9, citizenid = 'VECTOR01' })
+        eq(type(GetEntityCoords(GetPlayerPed(9))), 'vector3')
+        eq(type(vector4(1, 2, 3, 4)), 'vector4')
+        eq(#(vector3(3, 4, 0) - vector3(0, 0, 0)), 5.0, 'a vector\'s length, as the game\'s')
+    end)
+
+    it('a verified kill at a vector3 starts the step, holds the payout and pays at the drop-off', function()
+        local s, f, c, W, before = setup()
+        vectorWorld(W, s)
+        eq(s.disposal.count(), 1, 'the step was made')
+        eq(cash(3), 5000, 'the payout waits for the drop-off')
+        local row = stepRow(s, c)
+        eq(row.body.x, BODY.x, 'at the body, read from the vector')
+        eq(type(row.body), 'table', 'kept as a plain table, which every store can write')
+        load(s, f, c, W)
+        eq(s.disposal.list()[1].stage, 'loaded', 'loaded where the server sees the hitman and the vehicle')
+        dropOff(s, f, c, W)
+        eq(s.disposal.count(), 0, 'done')
+        eq(cash(3), 10000, 'paid at the drop-off')
+        eq(total(s), before, 'conserved')
+    end)
+
+    it('a photo kill carries the vector3 it was made at, and starts the step', function()
+        local s, f, c, W = setup({ unverified = true })
+        local kill = s.death.getPending(c.id, 'HITMAN01')
+        eq(type(kill.coords), 'vector3', 'the kill is kept as the game gave it')
+        truthy(s.photo.verifyAtScene(f.hitman, c.id))
+        eq(s.disposal.count(), 1)
+    end)
+
+    it('spots written as vector4 and vector3 in config.lua are taken, and the check says nothing', function()
+        local s, f, c, W = setup({ noSpots = true, config = {
+            VehicleSpawn = vector4(SPAWN.x, SPAWN.y, SPAWN.z, 45.0),
+            DropOff = vector3(DROP.x, DROP.y, DROP.z) } })
+        local warn = {}
+        require('server.disposal').validate(warn)
+        eq(table.concat(warn, ' | '), '', 'no warning for the game\'s own types')
+        eq(s.disposal.count(), 1, 'the step was made at the config spots')
+        local id = W.only()
+        eq(W.vehicles[id].x, SPAWN.x)
+        eq(s.disposal.spot('vehicle').h, 45.0, 'a vector4\'s w is the heading')
+        eq(s.disposal.spot('drop').x, DROP.x)
+        local view = s.settings.view()
+        for _, entry in ipairs(view.readonly) do
+            if entry.key == 'Disposal.VehicleSpawn' then
+                eq(type(entry.value), 'string', 'the panel is sent text, not a vector')
+                truthy(entry.value:find('45', 1, true), entry.value)
+            end
+        end
+        local bad = {}
+        Config.Disposal.DropOff = 'not a place'
+        require('server.disposal').validate(bad)
+        eq(#bad, 1, 'and still warns of one that is not a place')
+    end)
+end)
+
+describe('R84 T2: the time left is said in the language file\'s words', function()
+    it('every band is the translation\'s', function()
+        local Locale = require('crimson-hitman.shared.locale')
+        local real = Config.Locale
+        local zz = {}
+        for key, value in pairs(CrimsonLocales.en) do zz[key] = 'ZZ[' .. value .. ']' end
+        CrimsonLocales.zz = zz
+        local ok, err = pcall(function()
+            local s = newStack()
+            Locale.reset()
+            Config.Locale = 'zz'
+            for _, seconds in ipairs({ 30 * 60, 15 * 60, 7 * 60, 60 }) do
+                local band = s.disposal.band(seconds)
+                truthy(band:match('^ZZ%[.*%]$'), seconds .. ' seconds: ' .. band)
+            end
+        end)
+        Config.Locale = real
+        CrimsonLocales.zz = nil
+        Locale.reset()
+        if not ok then error(err, 0) end
+    end)
+end)
+
+-- Review 84 MUT-DS: a 'reduced' timeout whose split was made, and the
+-- server stopped before the step's row was taken away (the hitman away, so
+-- nothing was handed over). After the restart the step times out again:
+-- the payout already split must not be split a second time (SplitMoney's
+-- SplitTo guard), or the placer takes a second cut of the hitman's share.
+describe('R84 MUT-DS: a timeout split once, though it runs again after a restart', function()
+    for _, mode in ipairs({ 'json', 'mysql' }) do
+        it(mode .. ': reduced, the server stopping between the split and the step\'s end', function()
+            local s = boot(mode)
+            local f = fixture(s)
+            local _, _, c, _, before = setup({ stack = s, f = f,
+                config = { OnTimeout = 'reduced', ReducedPercent = 30 } })
+            local placer = cash(1)
+            local realDelete, realFinancial = s.storage.deleteRpRow, s.audit.financial
+            -- The stop lands after the split, before the row goes and the
+            -- hitman is paid.
+            rawset(s.storage, 'deleteRpRow', function() error('the server stopped') end)
+            rawset(s.audit, 'financial', function(kind, ...)
+                if kind == 'disposal_done' then error('the server stopped') end
+                return realFinancial(kind, ...)
+            end)
+            pcall(tick, s, 10)
+            for _ = 1, 4 do pcall(tick, s, 600) end
+            rawset(s.storage, 'deleteRpRow', realDelete)
+            rawset(s.audit, 'financial', realFinancial)
+            eq(#s.storage.readRpRows('disposal'), 1, 'the step row is still there')
+            s.disposal.stop()
+            local again = restart(mode, s)
+            Config.Disposal.Enabled = true
+            Config.Disposal.OnTimeout = 'reduced'
+            Config.Disposal.ReducedPercent = 30
+            Config.Completion.KillPhotos = false
+            Config.Cooldowns.disposal = { per = 10, burst = 100 }
+            fakeWorld(again)
+            again.disposal.tick()
+            for _ = 1, 6 do
+                Env.advance(600)
+                again.disposal.tick()
+                again.missionSteps.tick()
+            end
+            again.escrow.retryPending('HITMAN01')
+            again.escrow.retryPending('CREATOR1')
+            eq(again.disposal.count(), 0, 'the step ended')
+            eq(cash(3), 5000 + 1500, mode .. ': the hitman keeps 30%, cut once')
+            eq(cash(1), placer + 3500, mode .. ': the placer gets the rest back once')
+            eq(total(again), before, 'conserved')
+        end)
+    end
+end)

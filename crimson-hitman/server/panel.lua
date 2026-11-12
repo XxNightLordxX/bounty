@@ -1214,8 +1214,7 @@ H.adjustDeadline = function(src, data)
                 :format(exactSpan(Config.Limits.ContractLifetimeSeconds))
         end
         if err == 'bad_adjust' then
-            return false, CH.ERR.INVALID_INPUT, (L('panel.at_most_either_way')
-                .. '(Config.Limits.StaffDeadlineMaxAdjustSeconds).'):format(exactSpan(maxAdjust))
+            return false, CH.ERR.INVALID_INPUT, (L('panel.at_most_either_way')):format(exactSpan(maxAdjust))
         end
         if err == CH.ERR.LOCKED then
             return false, err, L('panel.the_deadline_was_moving_as_you')
@@ -2119,9 +2118,14 @@ H.freeze = function(src, data)
         and #(deps.storage.contractsInvolving(cid) or {}) == 0 then
         return false, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that_2')
     end
-    local name = actor and actor.name or (who.typed and cid) or nil
+    -- Stored with the freeze, and so shown in Measures to every reader:
+    -- the character's name, never the citizen id typed for one away (a
+    -- reader without the identity ACE is never shown a citizen id). The
+    -- reply, to the staff member who typed it, may say it back.
+    local stored = actor and actor.name or nil
+    local name = stored or (who.typed and cid) or nil
     local staffCid = staffOf(src)
-    local ok, err = Measures.apply('freeze', staffCid, cid, { reason = reason, name = name })
+    local ok, err = Measures.apply('freeze', staffCid, cid, { reason = reason, name = stored })
     if not ok then
         if err == 'already_frozen' then return false, err, L('panel.they_are_already_frozen') end
         if err == CH.ERR.BUSY then
@@ -3015,20 +3019,22 @@ local function exportText(view)
     end
     local staff = view.staff or {}
     add(L('panel.contract'):format(tostring(c.id)))
-    add('Exported: ' .. stamp(os.time()))
+    add(L('panel.export_exported'):format(stamp(os.time())))
     if c.neverStored then
         add(L('panel.never_stored_escrow_under_this_id'))
     else
         add(L('panel.state_mode_completes_by'):format(tostring(c.state), tostring(c.mode),
             tostring(c.rule)))
-        add('Reason: ' .. tostring(c.reason or '-')
-            .. ((staff.text and staff.text.edited) and L('panel.edited_by_staff') or ''))
-        add('Client: ' .. person(c.client) .. (c.anonymous and ' (anonymous)' or ''))
-        add('Target: ' .. person(c.target) .. (c.target_protected and L('panel.whitelisted_job') or ''))
+        add(L('panel.export_reason'):format(tostring(c.reason or '-'),
+            (staff.text and staff.text.edited) and L('panel.edited_by_staff') or ''))
+        add(L('panel.export_client'):format(person(c.client),
+            c.anonymous and L('panel.export_anonymous') or ''))
+        add(L('panel.export_target'):format(person(c.target),
+            c.target_protected and L('panel.whitelisted_job') or ''))
         add(('Placed: %s | Deadline: %s | Expires: %s'):format(stamp(c.created_at), stamp(c.deadline_at),
             stamp(c.expires_at)))
-        add('Ended: ' .. (c.resolved_at and (tostring(c.resolution or '') .. ' ' .. stamp(c.resolved_at))
-            or L('panel.not_yet')))
+        add(L('panel.export_ended'):format(c.resolved_at
+            and (tostring(c.resolution or '') .. ' ' .. stamp(c.resolved_at)) or L('panel.not_yet')))
         add(L('panel.payouts_of_claimed_bonus_stake_buyout'):format(
             tostring(c.claimed or 0), tostring(c.slots or 1), tostring(c.bonus_percent or 0),
             tostring(c.penalty_amount or 0), tostring(c.bailout_amount or 0),
@@ -3177,7 +3183,11 @@ local function actionSubject(data, src)
         and #(deps.storage.contractsInvolving(who.cid) or {}) == 0 then
         return nil, CH.ERR.NOT_FOUND, L('panel.nobody_in_the_city_has_that_2')
     end
-    who.name = who.actor and who.actor.name or (who.typed and who.cid) or nil
+    -- `stored` goes with the measure or payment and is shown to every
+    -- reader: the character's name, never a citizen id typed for one away.
+    -- `name` is for the reply to the staff member who typed it.
+    who.stored = who.actor and who.actor.name or nil
+    who.name = who.stored or (who.typed and who.cid) or nil
     return who
 end
 
@@ -3238,7 +3248,7 @@ H.suspend = function(src, data)
     local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Measures.apply('suspend', staffOf(src), who.cid,
-        { seconds = days > 0 and days * 86400 or nil, reason = reason, name = who.name })
+        { seconds = days > 0 and days * 86400 or nil, reason = reason, name = who.stored })
     if not ok then
         return sanctionRefusal(err, L('panel.they_are_suspended_already_lift_it'))
     end
@@ -3272,7 +3282,7 @@ H.protect = function(src, data)
     local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
     local ok, err = Measures.apply('protect', staffOf(src), who.cid,
-        { seconds = hours > 0 and hours * 3600 or nil, reason = reason, name = who.name })
+        { seconds = hours > 0 and hours * 3600 or nil, reason = reason, name = who.stored })
     if not ok then
         return sanctionRefusal(err, L('panel.they_are_protected_already_lift_it'))
     end
@@ -3308,12 +3318,11 @@ H.manualPay = function(src, data)
     local amount = wholeNumber(data.amount, 1)
     if not amount then return false, CH.ERR.INVALID_INPUT, L('panel.the_amount_is_a_whole_number') end
     if amount > max then
-        return false, 'over_max', (L('panel.not_paid_is_over_the_most')
-            .. '(Config.Staff.ManualPaymentMax).'):format(amount, max)
+        return false, 'over_max', (L('panel.not_paid_is_over_the_most')):format(amount, max)
     end
     local who, whoErr, whoMessage = actionSubject(data, src)
     if not who then return false, whoErr, whoMessage end
-    local ok, result = Payments.pay(staffOf(src), who.cid, amount, account, reason, who.name)
+    local ok, result = Payments.pay(staffOf(src), who.cid, amount, account, reason, who.stored)
     if not ok then
         if result == CH.ERR.BUSY then
             return false, result, L('panel.a_payment_to_them_is_still')

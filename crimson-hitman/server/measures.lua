@@ -131,6 +131,10 @@ function Measures.list(kind, canIdentify)
                 local view = shown(k, row, canIdentify)
                 view.kind, view.ref = k, Measures.ref(row.cid)
                 view.name = (actor and actor.name) or row.name
+                -- A row stored before review 84 may hold the citizen id
+                -- typed for a player away as its name: not for a reader
+                -- without the identity ACE.
+                if not canIdentify and view.name ~= nil and view.name == row.cid then view.name = nil end
                 view.cid = canIdentify and row.cid or nil
                 view.online = actor ~= nil
                 out[#out + 1] = view

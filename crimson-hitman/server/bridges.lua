@@ -1361,9 +1361,7 @@ function Bridges.installCommands(modules)
         reply(src, (L('bridges.money_event_no_rule_could_settle'))
             :format(#items))
         for i = 1, #items do sayReview(src, items[i]) end
-        reply(src, (L('bridges.resolve_one_with_id_refund_citizenid')
-            .. '/%s <id> refund <citizenid|role> items, /%s <id> pay <citizenid|role>, or /%s <id> '
-            .. L('bridges.dismiss_note_a_role_is_one'))
+        reply(src, (L('bridges.resolve_one_with_id_refund_citizenid'))
             :format(names.review, names.review, names.review, names.review))
         return #items
     end
@@ -1398,8 +1396,7 @@ function Bridges.installCommands(modules)
             reply(src, (L('bridges.escrow_line_of_contracts_whose_ending')):format(#unfinished))
             for i = 1, #unfinished do
                 local line = unfinished[i]
-                reply(src, (L('bridges.contract_ending_unfinished_it_settles_itself')
-                    .. 'minute'):format(line.line, line.contract, tostring(line.portion),
+                reply(src, (L('bridges.contract_ending_unfinished_it_settles_itself')):format(line.line, line.contract, tostring(line.portion),
                     describeLine(line)))
             end
             reply(src, (L('bridges.the_server_finishes_each_ending_as')):format(names.settle))
@@ -1531,8 +1528,7 @@ function Bridges.installCommands(modules)
         -- Lines of a contract never stored, written before a line said
         -- whose it was (Admin.interrupted).
         if #nameless > 0 then
-            reply(src, (L('bridges.escrow_line_of_contracts_never_stored')
-                .. 'are:'):format(#nameless))
+            reply(src, (L('bridges.escrow_line_of_contracts_never_stored')):format(#nameless))
             for i = 1, #nameless do
                 local line = nameless[i]
                 reply(src, (L('bridges.contract_2')):format(line.line, line.contract,
@@ -1857,8 +1853,8 @@ function Bridges.installBuyoutCommand(modules)
         local agreed = typed or quoted(actor.cid, id)
         local function priceNow(amount, before)
             quote(actor.cid, id, amount)
-            return answer(src, (L('bridges.the_buyout_on_is_now_run')
-                .. 'it, or /%s %s %d.'):format(before, id, Words.dollars(amount, 'none'), cmd, id,
+            return answer(src, (L('bridges.the_buyout_on_is_now_run')):format(before, id,
+                    Words.dollars(amount, 'none'), cmd, id,
                     QUOTE_SECONDS // 60, cmd, id, amount))
         end
         if agreed == nil then return priceNow(listed.amount, L('bridges.nothing_was_bought_yet')) end

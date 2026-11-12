@@ -315,3 +315,55 @@ describe('S8-STATE-8: an organisation contract on hold', function()
         s.holds.syncAppPause()
     end)
 end)
+
+-- Review 84 MUT-P45: a kill pending its verify under two freezes that
+-- overlap, and a sweep that lands while a release is still giving time
+-- back. Death.carryOverHold counts the time a kill had left from the start
+-- of a freeze still holding it (whose own release carries it on from
+-- there), and aged() never drops a kill while Holds.releasing() is up.
+-- Counted from the first release instead, a kill was given its window
+-- twice; without the guard, a verified kill was lost mid-release.
+describe('R84 MUT-P45: a pending kill under overlapping freezes, and during a release', function()
+    local function killed()
+        local main, s = W.boot('memory', 'shipped')
+        W.cast(s)
+        local ctx = { reward = 5000 }
+        F.kill.setup(ctx)
+        F.stepPlace().run(ctx)
+        F.stepAccept().run(ctx)
+        F.stepKill().run(ctx)
+        return s, ctx
+    end
+
+    it('runs out exactly the time it had left after the second freeze is released, no later', function()
+        local s, ctx = killed()
+        local window = Config.Completion.PhotoTokenLifetimeSeconds
+        Env.advance(10)                                      -- 10 s of its window used
+        truthy(s.holds.freeze('ADMIN001', 'TARGET01', 'checking a report'), 'freeze A, on the target')
+        Env.advance(100)
+        truthy(s.holds.freeze('ADMIN001', 'HITMAN01', 'checking another'), 'freeze B, on the hitman')
+        Env.advance(400)
+        truthy(s.holds.unfreeze('ADMIN001', 'TARGET01', 'fine'), 'A released, B still holding')
+        Env.advance(300)
+        truthy(s.death.getPending(ctx.id, 'HITMAN01'), 'held while B stands')
+        truthy(s.holds.unfreeze('ADMIN001', 'HITMAN01', 'fine'), 'B released')
+        Env.advance(window - 10 - 5)
+        truthy(s.death.getPending(ctx.id, 'HITMAN01'), 'still within the time it had left')
+        Env.advance(10)
+        eq(s.death.getPending(ctx.id, 'HITMAN01'), nil, 'gone once that ran out, given its window once')
+    end)
+
+    it('is not dropped by a sweep that lands while a release is giving its time back', function()
+        local s, ctx = killed()
+        local window = Config.Completion.PhotoTokenLifetimeSeconds
+        Env.advance(window + 60)
+        local real = s.holds.releasing
+        s.holds.releasing = function() return true end
+        local ok, err = pcall(function()
+            s.death.sweep()
+            truthy(s.death.getPending(ctx.id, 'HITMAN01'), 'kept for the carry to reach it')
+        end)
+        s.holds.releasing = real
+        if not ok then error(err, 0) end
+    end)
+end)

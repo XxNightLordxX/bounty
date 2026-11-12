@@ -853,8 +853,7 @@ local function validateConfig(quiet)
     -- 15 s wait can run out first.
     local answerLimit = Config.Database.QueryTimeoutSeconds
     if type(answerLimit) ~= 'number' or answerLimit ~= answerLimit or answerLimit < 0 then
-        warn[#warn + 1] = (L('main.config_database_querytimeoutseconds_is_expected_0')
-            .. 'Using 10.'):format(tostring(answerLimit))
+        warn[#warn + 1] = (L('main.config_database_querytimeoutseconds_is_expected_0')):format(tostring(answerLimit))
         Config.Database.QueryTimeoutSeconds = 10
     elseif answerLimit > 12 then
         warn[#warn + 1] = (L('main.config_database_querytimeoutseconds_is_the_phone'))
@@ -908,8 +907,7 @@ local function validateConfig(quiet)
     -- flush: at 0 the tick, a database prune included, ran every frame.
     local flushMs = tonumber(Config.Audit.FlushIntervalMs)
     if not flushMs then
-        warn[#warn + 1] = (L('main.audit_flushintervalms_is_not_a_number')
-            .. 'using 10000.'):format(tostring(Config.Audit.FlushIntervalMs))
+        warn[#warn + 1] = (L('main.audit_flushintervalms_is_not_a_number')):format(tostring(Config.Audit.FlushIntervalMs))
         Config.Audit.FlushIntervalMs = 10000
     elseif flushMs < 1000 then
         warn[#warn + 1] = (L('main.audit_flushintervalms_is_it_paces_every'))
@@ -1053,8 +1051,7 @@ local function validateConfig(quiet)
     -- first time somebody photographs a body.
     local photoStorage = Config.Completion.PhotoStorage
     if photoStorage ~= 'server' and photoStorage ~= 'host' then
-        warn[#warn + 1] = (L('main.completion_photostorage_is_it_has_to')
-            .. '\'host\'. Using \'server\'.'):format(type(photoStorage) == 'string'
+        warn[#warn + 1] = (L('main.completion_photostorage_is_it_has_to')):format(type(photoStorage) == 'string'
                 and ('"' .. photoStorage .. '"') or tostring(photoStorage))
         Config.Completion.PhotoStorage = 'server'
     end
@@ -1083,8 +1080,7 @@ local function validateConfig(quiet)
     -- tick; zero or less would delete a photo the moment it was opened.
     local openFor = tonumber(Config.Completion.PhotoOpenSeconds)
     if not openFor or openFor <= 0 then
-        warn[#warn + 1] = (L('main.completion_photoopenseconds_is_not_a_number')
-            .. 'zero; using 600.'):format(tostring(Config.Completion.PhotoOpenSeconds))
+        warn[#warn + 1] = (L('main.completion_photoopenseconds_is_not_a_number')):format(tostring(Config.Completion.PhotoOpenSeconds))
         Config.Completion.PhotoOpenSeconds = 600
     else
         Config.Completion.PhotoOpenSeconds = openFor
@@ -1118,8 +1114,7 @@ local function validateConfig(quiet)
     -- placed, so it is held to that.
     local minReward = tonumber(Config.Limits.MinContractReward)
     if not minReward or minReward ~= minReward or minReward < 0 or minReward == math.huge then
-        warn[#warn + 1] = (L('main.limits_mincontractreward_is_not_a_number')
-            .. 'minimum); using 1000.'):format(tostring(Config.Limits.MinContractReward))
+        warn[#warn + 1] = (L('main.limits_mincontractreward_is_not_a_number')):format(tostring(Config.Limits.MinContractReward))
         minReward = 1000
     end
     minReward = math.floor(minReward)
@@ -1517,8 +1512,7 @@ local function heldLine(entry, mode)
     elseif #owedOrder > 0 then
         clears = L('main.owed_to_a_player_who_is')
     else
-        clears = (L('main.finished_with_money_not_yet_handed')
-            .. 'back'):format(mode)
+        clears = (L('main.finished_with_money_not_yet_handed')):format(mode)
     end
     return ('%s (%s): %s; %s'):format(tostring(entry.id),
         contract and tostring(contract.state) or L('main.no_contract_row'), what, clears)
@@ -1644,12 +1638,10 @@ local function refuseModeSwitch()
         local reviews = ok and held and held.reviews or {}
         if ok and held and (held.lines > 0 or held.owed > 0 or #reviews > 0) then
             if held.lines > 0 or held.owed > 0 then
-                found[#found + 1] = (L('main.mysql_mode_escrow_line_and_payout')
-                    .. 'crimson_* tables'):format(held.lines, held.owed)
+                found[#found + 1] = (L('main.mysql_mode_escrow_line_and_payout')):format(held.lines, held.owed)
             end
             if #reviews > 0 then
-                found[#found + 1] = (L('main.mysql_mode_review_item_waiting_for')
-                    .. 'crimson_review'):format(#reviews, held.moreReviews and L('main.or_more') or '')
+                found[#found + 1] = (L('main.mysql_mode_review_item_waiting_for')):format(#reviews, held.moreReviews and L('main.or_more') or '')
                 for _, text in ipairs(reviewLines(reviews, 'mysql', held.moreReviews)) do
                     listed[#listed + 1] = text
                 end

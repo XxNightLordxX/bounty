@@ -445,6 +445,34 @@ describe('a player\'s history card', function()
         eq(ask(1, 'history', { subject = 'CREATOR1' }).err, 'not_allowed', 'a player')
     end)
 
+    -- Review 84 MUT-X7: only an anonymous placer was ever looked up. A
+    -- contract the hitman took anonymously, counted or listed on their
+    -- card, ties the character to the anonymous operative everyone else sees.
+    it('attributes nothing a hitman took anonymously to them without IdentityAce (R84 MUT-X7)', function()
+        local s, f = world()
+        local anon = place(s, f.creator, 'TARGET01')
+        truthy(s.contracts.accept(f.hitman, anon.id, true), 'taken anonymously')
+        truthy(s.contracts.claimSlot(anon.id, 'HITMAN01', CH.FULFILMENT.KIDNAPPING), 'and completed')
+        for _, src in ipairs({ 6, 7, 9 }) do
+            local reply = ask(src, 'history', { subject = 'HITMAN01' })
+            eq(reply.ok, true, src .. ': ' .. tostring(reply.message))
+            local h = reply.data
+            eq(h.counts.taken, 0, src .. ': the anonymous take is not counted against them')
+            eq(h.counts.completed, 0, src .. ': nor its completion')
+            eq(h.anonymous, nil, src .. ': no count of them')
+            for _, r in ipairs(h.money['in']) do
+                falsy(r.kind == 'payouts', src .. ': nor its payout')
+            end
+            local seen = text(h)
+            falsy(seen:find(anon.id, 1, true), src .. ': the anonymous contract is not listed')
+            falsy(seen:find('5000', 1, true) or seen:find('5,000', 1, true), src .. ': nor its amount')
+        end
+        local h = ask(8, 'history', { subject = 'HITMAN01' }).data
+        eq(h.counts.taken, 1, 'IdentityAce sees the take')
+        eq(h.counts.completed, 1)
+        truthy(text(h):find(anon.id, 1, true), 'and the contract')
+    end)
+
     it('shows the hitman their payout and the target the buyout', function()
         local s, f = world()
         local c = place(s, f.creator, 'TARGET01', { bailoutAmount = 15000 })

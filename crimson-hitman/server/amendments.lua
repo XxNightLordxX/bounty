@@ -1373,8 +1373,7 @@ function Amendments.recoverApplying()
         Storage.writeAmendment(proposal)
         closed = closed + 1
         local contract = Storage.readContract(proposal.contract_id)
-        local body = (L('amendments.the_server_stopped_while_a_change')
-            .. 'contract.'):format(contract and contract.target_name or L('amendments.your_target'))
+        local body = (L('amendments.the_server_stopped_while_a_change')):format(contract and contract.target_name or L('amendments.your_target'))
         local told = {}
         local function tell(cid)
             if not cid or told[cid] then return end

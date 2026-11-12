@@ -51,7 +51,7 @@ when an item in scope is driven by nothing and not listed below with why.
 | handler | yes | 122 | 122 |
 | netevent.client | yes | 18 | 18 |
 | netevent.server | yes | 11 | 11 |
-| nui | yes | 123 | 123 |
+| nui | yes | 124 | 124 |
 | op | yes | 130 | 130 |
 | screen | yes | 79 | 79 |
 | setting | counted | 572 | 0 |
@@ -294,6 +294,7 @@ None.
 | Capability | Workflow test |
 |---|---|
 | `adminClose` | commands > the panel opens with its command and closes with -close |
+| `adminEscaped` | commands > the panel opens with its command and closes with -close |
 | `adminRequest` | panel: home > the overview, the inbox lists, an announcement, a test alert, refresh, flush, the console; panel: players > looks a player up, views them, their history, and every measure on them; panel: contracts > lists, opens, notes, moves a deadline, edits text, exports, removes a hitman, voids |
 | `crimson:abandon` | phone: accept and abandon > a second hitman accepts from the board, then puts it down; organisation extras 2 from the phone and the panel > the record: a walk-away counted, the leaderboard read, staff reset it |
 | `crimson:accept` | phone: accept and abandon > a second hitman accepts from the board, then puts it down; organisation extras from the phone and the panel > a contract sent to the organisation: assigned, briefed, approved and taken; organisation extras from the phone and the panel > another moved by staff and released, duty forced off, probation ended and put back |

@@ -874,7 +874,6 @@ local function decideUnlocked(item, fields)
     if paid then return 'done', L('bailout.it_was_settled_the_contract_was') end
     if paid == nil and contract and contract.state == CH.STATE.BAILED_OUT then
         return 'staff', L('bailout.its_contract_was_bought_out_and')
-            .. 'buyout'
     end
     refundBuyout(contract or { id = contractId }, fields, 'unrecorded')
     return 'done', L('bailout.its_contract_ended_without_it_so')

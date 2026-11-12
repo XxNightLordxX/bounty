@@ -475,6 +475,48 @@ describe('target limits: every live contract, by target', function()
     end)
 end)
 
+-- Review 84 MUT-T24: the staff card (TargetLimits.status) copies two rules
+-- of placing (Contracts.canCreate): a voided contract counts on no limit,
+-- and one withdrawn or run out before anybody took it starts no wait.
+-- Dropped from the card, staff were shown a limit or a wait placing does
+-- not apply, and nothing compared the two.
+describe('R84 MUT-T24: the target-limit card says what placing allows', function()
+    it('a voided contract counts on neither the day nor the week, and placing agrees', function()
+        local s = world()
+        truthy(ask(6, 'setSetting', { key = 'Limits.MaxContractsPerTargetPerDay', value = 1 }).ok)
+        local c = assert(place(s, 1))
+        local _, st = lookedUp(9, 2)
+        eq(st.day, 1, 'a live contract counts')
+        falsy(place(s, 5), 'and placing another is refused at the daily limit')
+        truthy(s.contracts.resolve(c.id, CH.STATE.VOIDED, 'CREATOR1', nil, 'voided'))
+        Env.advance(Config.Limits.TargetCooldownAfterResolveSeconds + 1)
+        _, st = lookedUp(9, 2)
+        eq(st.day, 0, 'the void is not counted on the card')
+        eq(st.week, 0, 'nor on the week')
+        eq(st.cooldownLeft, 0, 'and no wait is shown')
+        truthy(place(s, 4), 'placing is allowed, as the card says')
+    end)
+
+    it('a contract cancelled before anybody took it starts no wait, and placing agrees', function()
+        local s, f = world()
+        local c = assert(place(s, 4))
+        truthy(s.contracts.cancel(s.identity.resolve(4), c.id))
+        Env.advance(60)
+        local _, st = lookedUp(9, 2)
+        eq(st.cooldownLeft, 0, 'no wait shown for a contract nobody took')
+        eq(st.day, 0, 'nor counted')
+        truthy(place(s, 5), 'placing is allowed, as the card says')
+        -- One somebody took and that then ended does start the wait, on
+        -- the card and for placing alike.
+        local s2, f2 = world()
+        ended(s2, f2, 4)
+        Env.advance(60)
+        local _, st2 = lookedUp(9, 2)
+        truthy(st2.cooldownLeft > 0, 'a wait shown: ' .. tostring(st2.cooldownLeft))
+        falsy(place(s2, 5), 'and placing waits too')
+    end)
+end)
+
 --------------------------------------------------------------------------
 -- Across a restart, in every store
 --------------------------------------------------------------------------

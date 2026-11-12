@@ -344,6 +344,37 @@ describe('taking one operative off a contract', function()
         eq(wealth(3), hitman + 700, 'the void moved the stake again')
     end)
 
+    -- Review 84 MUT-C4: a stake staff gave back that could not be handed
+    -- over (the operative's pockets refused it) stays held, owed to them.
+    -- When they take the contract up again, the walk-away forfeit must not
+    -- send that stake to the client: it is the operative's.
+    it('a stake already owed back to the operative stays theirs when they take the contract up again (R84 MUT-C4)', function()
+        local _, s = boot('memory')
+        local f = people(s)
+        local c = place(s, f.creator, { penaltyAmount = 700 })
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken')
+        local ids = { c.id }
+        local start = total(s, ids)
+        local client, hitman = wealth(1), wealth(3)
+        Env.players[3]._refuseMoney = true
+        local reply = ask(6, 'removeHitman', { id = c.id, hitman = hitmanRow(s, c, 'HITMAN01').id,
+            reason = 'staff error', returnStake = true })
+        eq(reply.ok, true, tostring(reply.message))
+        local owed
+        for _, line in ipairs(s.storage.readEscrow(c.id)) do
+            if line.portion == CH.PORTION.STAKE and line.state == CH.ESCROW_STATE.HELD then owed = line.owed_to end
+        end
+        eq(owed, 'HITMAN01', 'the stake is held, owed back to the operative')
+        Env.players[3]._refuseMoney = nil
+        Env.advance(60)
+        truthy(s.contracts.accept(f.hitman, c.id), 'taken up again')
+        eq(wealth(1), client, 'the client got none of the operative\'s stake')
+        eq(total(s, ids), start, 'conserved')
+        s.escrow.retryPending('HITMAN01')
+        eq(wealth(3), hitman, 'the operative has their stake back once it can be handed over (what they put up again aside)')
+        eq(total(s, ids), start, 'and still conserved')
+    end)
+
     it('a stake still held under a row staff took off goes to whoever staff chose, at the ending', function()
         local _, s = boot('memory')
         local f = people(s)

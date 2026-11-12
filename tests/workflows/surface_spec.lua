@@ -98,6 +98,10 @@ describe('commands', function()
         W.cmd(STAFF, Config.Admin.Commands.panel)
         W.pump()
         truthy(W.Client.admin.isOpen(), 'open')
+        -- The page's answer to an Escape the game passed it (review 84 T3):
+        -- the panel stays open.
+        W.nui('adminEscaped', {})
+        truthy(W.Client.admin.isOpen(), 'an Escape the page handled leaves it open')
         local close = W.Client and require('tests.harness.client')
         local fn = Env.commands[Config.Admin.Commands.panel .. '-close']
         -- Registered by the client (client/admin.lua): typed in the F8 console.

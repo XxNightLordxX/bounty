@@ -143,8 +143,11 @@ function Disposal.validate(warn)
     for _, key in ipairs({ 'VehicleSpawn', 'DropOff' }) do
         local v = block[key]
         local empty = type(v) == 'table' and next(v) == nil
-        if v ~= nil and v ~= false and not empty and (type(v) ~= 'table' or not tonumber(v.x)
-            or not tonumber(v.y) or not tonumber(v.z)) then
+        -- A table or one of the game's vectors (vector4(...) in config.lua).
+        local readable = Geo.isPoint(v) and pcall(function()
+            assert(tonumber(v.x) and tonumber(v.y) and tonumber(v.z))
+        end)
+        if v ~= nil and v ~= false and not empty and not readable then
             warn[#warn + 1] = (L('disposal.config_disposal_must_be_or_x')):format(key)
         end
     end
@@ -161,11 +164,15 @@ local function Say(key, text)
     Log.always(text)
 end
 
+--- A point read from a table or one of the game's vectors (a kill's
+--- coordinates and GetEntityCoords are a vector3 in game, a spot in
+--- config.lua may be a vector4), as a plain { x, y, z, h }; nil when it is
+--- not one.
 local function Point(v)
-    if type(v) ~= 'table' then return nil end
-    local x, y, z = Geo.finite(v.x), Geo.finite(v.y), Geo.finite(v.z)
-    if not x or not y or not z then return nil end
-    return { x = x, y = y, z = z, h = Geo.finite(v.h or v.heading) or 0.0 }
+    if not Geo.isPoint(v) then return nil end
+    local ok, x, y, z = pcall(function() return Geo.finite(v.x), Geo.finite(v.y), Geo.finite(v.z) end)
+    if not ok or not x or not y or not z then return nil end
+    return { x = x, y = y, z = z, h = Geo.headingOf(v) or 0.0 }
 end
 
 local function Dist2(a, b)
@@ -207,9 +214,9 @@ end
 function Disposal.band(seconds)
     seconds = tonumber(seconds) or 0
     if seconds >= 20 * 60 then return L('disposal.plenty_of_time_over_20_minutes') end
-    if seconds >= 10 * 60 then return 'between 10 and 20 minutes' end
-    if seconds >= 5 * 60 then return 'between 5 and 10 minutes' end
-    return 'under 5 minutes'
+    if seconds >= 10 * 60 then return L('disposal.between_10_and_20_minutes') end
+    if seconds >= 5 * 60 then return L('disposal.between_5_and_10_minutes') end
+    return L('disposal.under_5_minutes')
 end
 
 local function LimitSeconds()
@@ -428,8 +435,7 @@ local function SpawnVehicle(step, why)
     local model = type(Cfg().VehicleModel) == 'string' and Cfg().VehicleModel or 'romero'
     local ok, vehicle = pcall(Disposal.world.spawn, model, at)
     if not ok or not vehicle or vehicle == 0 then
-        Say('spawn', (L('disposal.body_disposal_the_vehicle_could_not')
-            .. 'Config.Disposal.VehicleModel'):format(tostring(model), tostring(vehicle)))
+        Say('spawn', (L('disposal.body_disposal_the_vehicle_could_not')):format(tostring(model), tostring(vehicle)))
         return false
     end
     local plate = NewPlate()

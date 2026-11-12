@@ -106,7 +106,6 @@ end
 ---
 --- What the start says of a host server that allows no upload host.
 local NO_HOSTS = L('completion_photo.warning_no_photo_upload_host_is')
-    .. '\'fivemanage.com\', \'fmfile.com\').'
 
 --- The warning that no upload host is allowed, taken back: kill photos
 --- turned off, or kept on the server, ask no host anything. Only the host

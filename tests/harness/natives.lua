@@ -2,6 +2,7 @@
 --- Installs globals so the real server modules load unmodified.
 
 local Env = require('tests.harness.env')
+local Vector = require('tests.harness.vector')
 
 local Natives = { env = Env }
 
@@ -20,6 +21,9 @@ Natives.SHARED_VEHICLES = { romero = true, sultan = true, baller = true, bati = 
 --------------------------------------------------------------------------
 
 function Natives.install()
+    -- The game's vectors, and type() answering 'vector3' for one, before
+    -- anything is loaded (tests/harness/vector.lua).
+    Vector.install()
     _G.GetGameTimer = function() return Env.gameTimer end
     _G.os_time_real = os.time
     _G.CreateThread = function(fn) table.insert(Env.threads, fn) end
@@ -160,13 +164,18 @@ function Natives.install()
         return out
     end
     _G.GetPlayerPed = function(src) return 1000 + tonumber(src) end
+    -- A vector3, as the game answers: type() says 'vector3', not 'table'
+    -- (tests/harness/vector.lua). A new one each call, as the native's. An
+    -- entity the game has none for is at the origin.
     _G.GetEntityCoords = function(ped)
         local v = Env.vehicles and Env.vehicles[ped]
-        if v then return { x = v.x, y = v.y, z = v.z } end
+        if v then return Vector.vector3(v.x, v.y, v.z) end
         local src = ped - 1000
         local p = Env.players[src]
-        if not p then return { x = 0.0, y = 0.0, z = 0.0 } end
-        return p._coords
+        if not p then return Vector.vector3(0.0, 0.0, 0.0) end
+        local c = p._coords
+        if c == nil then return nil end
+        return Vector.vector3(c.x, c.y, c.z)
     end
     -- What the nearby list reads about who is standing there: which routing
     -- bucket they are in (0, the shared world, unless a test puts them in
@@ -597,6 +606,16 @@ Natives.json = {}
 
 local function encodeValue(v, out)
     local t = type(v)
+    -- A game vector is written as the object of its axes, so it reads back
+    -- as a plain { x, y, z } table, as from a real store.
+    local kind = Vector.kind(v)
+    if kind then
+        local axes = { 'x', 'y', 'z', 'w' }
+        local n = kind == 'vector2' and 2 or kind == 'vector3' and 3 or 4
+        local plain = {}
+        for i = 1, n do plain[axes[i]] = rawget(v, axes[i]) end
+        v, t = plain, 'table'
+    end
     if t == 'nil' then out[#out + 1] = 'null'
     elseif t == 'boolean' or t == 'number' then out[#out + 1] = tostring(v)
     elseif t == 'string' then

@@ -2646,8 +2646,9 @@ describe('the admin panel page', function()
         eq(sent('open').access.canWrite, false, 'the page is told what this player may do')
 
         -- The page's own two threads, as the engine runs them: the focus
-        -- asked for again, then the Escape watch, which closes it on its
-        -- first frame with Escape released in the game, and ends once its
+        -- asked for again, then the Escape watch, which passes Escape
+        -- released in the game to the page and, with no page here to
+        -- answer, closes it a second later, and ends once its
         -- guard after closing has run out. Not the client's other loops,
         -- which never end. A frame is 16 ms of the game's clock.
         Client.released[200] = true
@@ -2658,7 +2659,7 @@ describe('the admin panel page', function()
         local asked = 0
         for _, call in ipairs(Client.focus) do if call.focus then asked = asked + 1 end end
         eq(asked, 6, 'once, then five more times')
-        eq(Client.admin.isOpen(), false, 'Escape in the game closes it')
+        eq(Client.admin.isOpen(), false, 'Escape in the game, unanswered by the page, closes it')
         eq(lastFocus().focus, false, 'and gives the focus back')
         eq(lastFocus().cursor, false)
         truthy(sent('close'), 'and the page is told')
@@ -2692,6 +2693,61 @@ describe('the admin panel page', function()
         truthy(after[200] and after[322], 'both pause keys held off after it closed')
         truthy(last - first >= 300, 'for a moment: ' .. tostring(last - first) .. ' ms')
         truthy(last - first < 500, 'and no longer: the watch ended')
+    end)
+
+    -- Review 84 T3: one Escape release in the game closed the whole panel
+    -- whatever the page had open, so the page's own layered Escape (the
+    -- drawer first) was undone and the reason typed there lost.
+    it('passes an Escape the game saw to the page, and stays open while the page answers it (R84 T3)', function()
+        booted()
+        Client.fire('crimson-hitman:adminOpen', { canWrite = true })
+        local watch = Env.threads[#Env.threads]
+        local frames, escapes = 0, 0
+        local realWait = _G.Wait
+        _G.Wait = function()
+            Env.gameTimer = Env.gameTimer + 16
+            frames = frames + 1
+            -- The key is released in one frame only, as the game reports it.
+            Client.released[200] = nil
+            for _, m in ipairs(Client.nuiMessages) do
+                if m.type == 'escape' and not m.seen then
+                    m.seen = true
+                    escapes = escapes + 1
+                    -- The page closed its drawer and says so.
+                    Client.nuiCall('adminEscaped', {})
+                end
+            end
+            -- Two seconds on, still open: the page closes itself.
+            if frames == 125 then
+                eq(Client.admin.isOpen(), true, 'the panel stays: the page closed only its innermost layer')
+                Client.nuiCall('adminClose', {})
+            end
+        end
+        Client.released[200] = true
+        watch()
+        _G.Wait = realWait
+        eq(escapes, 1, 'the page was told of the one Escape')
+        eq(Client.admin.isOpen(), false, 'closed once the page closed itself')
+    end)
+
+    it('closes from the game when the page does not answer an Escape passed to it (R84 T3)', function()
+        booted()
+        Client.fire('crimson-hitman:adminOpen', { canWrite = true })
+        local watch = Env.threads[#Env.threads]
+        local start, closedAt = Env.gameTimer, nil
+        local realWait = _G.Wait
+        _G.Wait = function()
+            Env.gameTimer = Env.gameTimer + 16
+            Client.released[200] = nil
+            if not closedAt and not Client.admin.isOpen() then closedAt = Env.gameTimer end
+        end
+        Client.released[200] = true
+        watch()
+        _G.Wait = realWait
+        truthy(closedAt, 'a page that cannot answer keeps nobody in it')
+        truthy(closedAt - start >= 1000 and closedAt - start < 1100,
+            'about a second after the key: ' .. tostring(closedAt and closedAt - start))
+        truthy(sent('close'), 'and the page is told')
     end)
 
     it('starts no second watch when it opens again while the first still trails', function()

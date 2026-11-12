@@ -24,6 +24,7 @@ CrimsonBoot.define('server.settings', function() --- Settings staff change from 
 
 local Util = CrimsonBoot.requireShared('util')
 local Log = CrimsonBoot.requireShared('log')
+local Geo = CrimsonBoot.requireShared('geo')
 local Lock = CrimsonBoot.require('server.lib.lock')
 local Integrations = CrimsonBoot.require('server.adapters.init')
 local L = CrimsonBoot.requireShared('locale').t
@@ -2909,7 +2910,9 @@ function Settings.view()
             local ok, got = pcall(GetConvar, rule.convar, '')
             value = (ok and type(got) == 'string' and got ~= '') and L('settings.set') or L('settings.not_set')
         else
-            value = copyOf(read(Config, key))
+            -- A game vector (vector4(...) for a spot in config.lua) is
+            -- shown as the table of its axes: it cannot be sent as one.
+            value = Geo.plain(copyOf(read(Config, key)))
             if value == nil then value = L('settings.not_set_2') end
             if type(value) == 'table' then value = json and json.encode(value) or L('settings.a_table') end
         end

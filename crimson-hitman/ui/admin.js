@@ -6203,11 +6203,23 @@
      The client holds the pause keys off for a moment after, too. */
   function isEscape(event) { return event.key === 'Escape' || event.key === 'Esc'; }
 
-  document.addEventListener('keyup', function (event) {
-    if (!S.open || !isEscape(event)) return;
-    if (event.preventDefault) event.preventDefault();
+  /* One Escape can reach the page twice: its own keyup, and the client's
+     word that the game saw the key too ({ type: 'escape' }, client/admin.lua).
+     The second, from the other side within ESCAPE_SAME_MS, is the same
+     keystroke and does nothing: handled twice, it closed the drawer and
+     then the whole panel. A second press from the same side is a press. */
+  var ESCAPE_SAME_MS = 300;
+  var lastEscape = null;
+
+  function escapeOnce(from, target) {
+    var now = Date.now();
+    if (lastEscape && lastEscape.from !== from && now - lastEscape.at < ESCAPE_SAME_MS) {
+      lastEscape = null;
+      return;
+    }
+    lastEscape = { from: from, at: now };
     // Escape in the header search clears it; the panel stays.
-    if (S.search.open || (event.target && event.target.getAttribute && event.target.getAttribute('data-bind') === 'gs.q')) {
+    if (S.search.open || (target && target.getAttribute && target.getAttribute('data-bind') === 'gs.q')) {
       closeSearch();
       return;
     }
@@ -6218,6 +6230,12 @@
     if (S.drawer.id) { closeDrawer(); return; }
     if (S.navOpen) { S.navOpen = false; drawChrome(); return; }
     close();
+  }
+
+  document.addEventListener('keyup', function (event) {
+    if (!S.open || !isEscape(event)) return;
+    if (event.preventDefault) event.preventDefault();
+    escapeOnce('page', event.target);
   });
 
   /** Whether a key was typed into a box (where / is a slash). */
@@ -7443,6 +7461,13 @@
       // The language the client names (Config.Locale), over English.
       Text.use(message.locale);
       open(message.access);
+    } else if (message.type === 'escape') {
+      // Escape the game saw (client/admin.lua): the same layers as the
+      // page's own, and the client told it was handled, or it closes the
+      // panel itself in a moment (a page that cannot answer keeps no one
+      // stuck in it).
+      if (S.open) escapeOnce('game', document.activeElement);
+      nui('adminEscaped', {});
     } else if (message.type === 'close') {
       // Closed from the game (Escape there, the resource stopping). One the
       // page closed itself is already closed, and keeps what it said as it

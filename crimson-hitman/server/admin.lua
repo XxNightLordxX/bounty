@@ -1063,9 +1063,7 @@ function Admin.reviewAnswer(id, ok, err, detail, panel)
     if panel then
         return L('admin.say_refund_pay_or_dismiss_and')
     end
-    return ('Usage: /%s [all] | /%s <id> refund <citizenid|role> <amount> '
-        .. '[cash|bank|dirty] | refund <citizenid|role> items | pay <citizenid|role> | '
-        .. L('admin.dismiss_note_id_alone_finishes_one'))
+    return (L('admin.dismiss_note_id_alone_finishes_one'))
         :format(names.review, names.review, names.review)
 end
 
@@ -2290,8 +2288,7 @@ function Admin.diagnose(source, subjectId, later, opts)
     --- every way it ends. Marked with a dot, which the admin panel's
     --- overview does not take for something to act on.
     local function consoleNotes()
-        say((L('admin.console_debug_output_config_debug_what')
-            .. 'since:'):format(kept.debug and 'on' or L('admin.off_so_only_what_needs_you')), 'console')
+        say((L('admin.console_debug_output_config_debug_what')):format(kept.debug and 'on' or L('admin.off_so_only_what_needs_you')), 'console')
         if #kept.boot == 0 and #kept.recent == 0 then say('  · nothing') end
         for _, text in ipairs(kept.boot) do say('  · ' .. text) end
         if (kept.bootLeft or 0) > 0 then
@@ -2840,8 +2837,7 @@ function Admin.diagnose(source, subjectId, later, opts)
         say((L('admin.photo_hosts')):format(#hosts,
             #hosts > 0 and (' (' .. table.concat(hosts, ', ') .. ')') or ''))
         if #hosts == 0 then
-            say(L('admin.no_upload_host_is_allowed_every')
-                .. 'fivemanage.com, fmfile.com)')
+            say(L('admin.no_upload_host_is_allowed_every'))
         end
     end
 

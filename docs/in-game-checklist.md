@@ -869,6 +869,14 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Panel (`mysql`): save an own preset *Night*, then one as *night*: the reply says the one before is replaced, and one *Night* is listed
 - [ ] Phone: with a slow link, a kill photo whose claim gets no answer in 60 s, and an organisation deposit or withdrawal with no answer in 15 s, say *No answer yet. It may still go through*, never *Try again*
 
+## 36. Review 84 checks
+
+- [ ] Body disposal on (`Config.Disposal.Enabled = true`), both spots set in the panel: make and verify a kill (at the scene, and once by photo). The payout is not paid at once; the disposal vehicle appears at the spawn spot with keys for the hitman, the body can be loaded with the vehicle beside it and dropped off at the drop-off, and the payout arrives then
+- [ ] Clear both panel spots and write `VehicleSpawn = vector4(x, y, z, h)` and `DropOff = vector3(x, y, z)` in `config.lua`, `restart crimson-hitman`: no config warning about them, the vehicle is made there facing `h`, and Settings › Edit in config.lua shows the spot as text
+- [ ] Staff panel: open a contract, type a reason under Deadline, press Escape once: the drawer closes, the panel stays, and the pause menu does not open; Escape again closes the panel
+- [ ] Staff with the identity ACE: freeze and suspend a player who is offline by typing their citizen id; staff without it open All measures: the rows say no citizen id
+- [ ] `Config.Locale` set to a copy of `en.lua` with the disposal bands and `bridges.the_buyout_on_is_now_run` changed: the disposal notice and the `/cleanse <id>` price prompt read in the copy's words, end to end
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

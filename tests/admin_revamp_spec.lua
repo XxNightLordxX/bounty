@@ -251,6 +251,37 @@ describe('one Measures area: every measure on a player in one list (server/measu
         eq(ask(8, 'measures', { kind = 'freeze' }).data.rows[1].cid, 'CREATOR1', 'the citizen id with IdentityAce')
     end)
 
+    -- Review 84 SOAK-1: a player away from the city, frozen (or suspended,
+    -- or protected) by the citizen id staff with IdentityAce typed, had
+    -- that citizen id stored as their name, and Measures showed it to every
+    -- reader, though a lookup of it by those readers answers not found.
+    it('never names a player away by the citizen id typed for them, to a reader without IdentityAce (R84 SOAK-1)', function()
+        local s, f = world()
+        local c = s.contracts.create(f.creator, { targetCid = 'TARGET01', reason = 'x', mode = CH.MODE.COMPETITIVE,
+            reward = { baseline = { cash = 5000 } } })
+        truthy(c and s.contracts.accept(f.hitman, c.id, true), 'taken anonymously')
+        Env.removePlayer(3)
+        truthy(ask(8, 'freeze', { subject = 'HITMAN01', reason = 'report under review' }).ok, 'frozen by citizen id')
+        Env.advance(1)
+        local suspended = ask(8, 'suspend', { ref = lookedUp(8, 'HITMAN01'), days = 1, reason = 'spam' })
+        truthy(suspended and suspended.ok, tostring(suspended and suspended.message))
+        for _, src in ipairs({ 6, 7 }) do
+            local reply = ask(src, 'measures')
+            truthy(reply and reply.ok)
+            eq(#reply.data.rows, 2, src .. ': both listed')
+            local W = require('tests.workflows.lib')
+            eq(W.leaks(reply.data, { 'HITMAN01' }), nil, src .. ': no citizen id anywhere in Measures')
+        end
+        -- A row a build before this one stored, the citizen id as its name.
+        truthy(s.holds.freeze('ADMIN001', 'TARGET02', 'an old row', 'TARGET02'))
+        eq(require('tests.workflows.lib').leaks(ask(7, 'measures').data, { 'TARGET02' }), nil,
+            'an old row is scrubbed as it is read')
+        local identity = ask(8, 'measures').data.rows
+        local seen = false
+        for _, row in ipairs(identity) do if row.cid == 'HITMAN01' then seen = true end end
+        truthy(seen, 'IdentityAce still sees whose they are')
+    end)
+
     it('lifts each from its row, by the one handle, through each kind\'s own op', function()
         setUp()
         local rows = ask(6, 'measures').data.rows

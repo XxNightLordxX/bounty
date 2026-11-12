@@ -8345,6 +8345,47 @@ async function main() {
     clean(app, 'escape layers');
   })();
 
+  // Review 84 T3: an Escape the game saw is passed to the page
+  // ({ type: 'escape' }) and runs the same layers; the same keystroke seen
+  // by both counts once.
+  await (async function () {
+    const app = boot(standardServer());
+    app.open(ADMIN);
+    await settled();
+    app.nav('contracts');
+    await settled();
+    app.click(app.$('tr.row'));
+    await settled();
+    const box = inDrawer(app, 'dr.dl.reason') || app.drawer().querySelector('input');
+    if (box) app.type(box, 'ticket 7');
+    app.keyUp(box || app.body, 'Escape');
+    app.message({ type: 'escape' });
+    await settled();
+    it('R84 T3 one Escape seen by the page and the game closes the drawer only', function () {
+      eq(app.drawer().hidden, true, 'drawer closed');
+      eq(app.byId('panel').hidden, false, 'panel open');
+      falsy(app.sent.some(function (s) { return s.event === 'adminClose'; }), 'no adminClose');
+      truthy(app.sent.some(function (s) { return s.event === 'adminEscaped'; }), 'the client is told it was handled');
+    });
+    app.click(app.$('tr.row'));
+    await settled();
+    it('R84 T3 (the drawer open again)', function () { eq(app.drawer().hidden, false); });
+    app.message({ type: 'escape' });
+    await settled();
+    it('R84 T3 an Escape only the game saw closes the drawer, and the panel stays', function () {
+      eq(app.drawer().hidden, true, 'drawer closed');
+      eq(app.byId('panel').hidden, false, 'panel open');
+      falsy(app.sent.some(function (s) { return s.event === 'adminClose'; }), 'no adminClose');
+    });
+    app.message({ type: 'escape' });
+    await settled();
+    it('R84 T3 and the next, with nothing open, closes the panel', function () {
+      eq(app.byId('panel').hidden, true);
+      truthy(app.sent.some(function (s) { return s.event === 'adminClose'; }));
+    });
+    clean(app, 'escape from the game');
+  })();
+
   // VISUAL-3: one toast for the same words; one overview read at open.
   await (async function () {
     const slow = { ok: false, err: 'rate_limited', message: 'Slow down: too many requests. Try again in a moment.' };

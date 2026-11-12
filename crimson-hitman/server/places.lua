@@ -209,7 +209,7 @@ function Places.positionOf(src)
     src = tonumber(src)
     if not src or src <= 0 then return nil end
     local at = Geo.position(src)
-    if type(at) ~= 'table' and type(at) ~= 'vector3' and type(at) ~= 'userdata' then return nil end
+    if not Geo.isPoint(at) then return nil end
     local _, h = pcall(function() return GetEntityHeading(GetPlayerPed(src)) end)
     local x, y, z = Geo.finite(at.x), Geo.finite(at.y), Geo.finite(at.z)
     if not x or not y or not z or (x == 0 and y == 0 and z == 0) then return nil end
@@ -221,9 +221,15 @@ end
 ---@param at table|nil { x, y, z, h }
 ---@return table|nil { x, y, z, h }
 function Places.point(at)
-    if type(at) ~= 'table' then return nil end
+    -- A table, or one of the game's vectors (a vector4's w the heading).
+    if not Geo.isPoint(at) then return nil end
     local x, y, z = Geo.finite(at.x), Geo.finite(at.y), Geo.finite(at.z)
-    local h = at.h == nil and 0 or Geo.finite(at.h)
+    local h
+    if type(at) == 'table' then
+        h = at.h == nil and 0 or Geo.finite(at.h)
+    else
+        h = Geo.headingOf(at) or 0
+    end
     if not x or not y or not z or not h then return nil end
     local b = Places.BOUNDS
     if x < b.minX or x > b.maxX or y < b.minY or y > b.maxY or z < b.minZ or z > b.maxZ then return nil end

@@ -40,20 +40,17 @@ function HandoverConfirm.validate(warn)
     local seconds = k.ConfirmSeconds
     if type(seconds) ~= 'number' or seconds ~= seconds or seconds < 10 or seconds > 600
         or seconds ~= math.floor(seconds) then
-        warn[#warn + 1] = (L('handover_confirm.config_kidnap_confirmseconds_is_it_has')
-            .. 'from 10 to 600. Using 60.'):format(tostring(seconds))
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_confirmseconds_is_it_has')):format(tostring(seconds))
         k.ConfirmSeconds = 60
     end
     if k.ConfirmMissed ~= 'rearm' and k.ConfirmMissed ~= 'pay' then
-        warn[#warn + 1] = (L('handover_confirm.config_kidnap_confirmmissed_is_it_has')
-            .. '\'rearm\'.'):format(tostring(k.ConfirmMissed))
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_confirmmissed_is_it_has')):format(tostring(k.ConfirmMissed))
         k.ConfirmMissed = 'rearm'
     end
     local most = k.MaxDeclines
     if most ~= nil and (type(most) ~= 'number' or most ~= most or most < 0 or most > 20
         or most ~= math.floor(most)) then
-        warn[#warn + 1] = (L('handover_confirm.config_kidnap_maxdeclines_is_it_has')
-            .. 'Using 2.'):format(tostring(most))
+        warn[#warn + 1] = (L('handover_confirm.config_kidnap_maxdeclines_is_it_has')):format(tostring(most))
         k.MaxDeclines = 2
     end
 end

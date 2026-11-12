@@ -546,8 +546,7 @@ local function baseFromWeb()
     -- server that still carries such an address would hand phones links
     -- that lead nowhere, and the photo would be lost from their Photos.
     if name:lower():find('users%.cfx%.re$') then
-        return nil, (L('photos.web_baseurl_is_a_users_cfx')
-            .. 'on 30 June 2026'):format(host)
+        return nil, (L('photos.web_baseurl_is_a_users_cfx')):format(host)
     end
     -- A bare address has no certificate a phone accepts for https.
     if name:match('^%d+%.%d+%.%d+%.%d+$') then

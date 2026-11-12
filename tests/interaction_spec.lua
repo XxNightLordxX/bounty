@@ -1993,6 +1993,33 @@ describe('a player the app is closed to can still buy out', function()
         eq(s.storage.readContract(c.id).state, CH.STATE.BAILED_OUT)
     end)
 
+    -- Review 84 T2: the price prompt ended its sentence in English joined
+    -- on after the language file's words ('it, or /%s %s %d.'), so a
+    -- translator could not finish it.
+    it('says the price now in one sentence of the language file (R84 T2)', function()
+        local Locale = require('crimson-hitman.shared.locale')
+        local real = Config.Locale
+        local zz = {}
+        for key, value in pairs(CrimsonLocales.en) do zz[key] = 'ZZ[' .. value .. ']' end
+        CrimsonLocales.zz = zz
+        local ok, err = pcall(function()
+            local s, f, c = officer()
+            Locale.reset()
+            Config.Locale = 'zz'
+            Env.chat = {}
+            Env.commands[Config.Bailout.Command](2, { c.id })
+            local said = ''
+            for _, line in ipairs(Env.chat) do said = said .. line.text .. '\n' end
+            truthy(said:find('to pay it, or /' .. Config.Bailout.Command .. ' ' .. c.id .. ' 15000.]', 1, true),
+                'the whole prompt is the translation\'s: ' .. said)
+            eq(s.storage.readContract(c.id).state, CH.STATE.ACTIVE, 'nothing bought on the prompt')
+        end)
+        Config.Locale = real
+        CrimsonLocales.zz = nil
+        Locale.reset()
+        if not ok then error(err, 0) end
+    end)
+
     it('does not spend the allowance on a purchase that was refused', function()
         local s, f, c = officer()
         Env.players[2].PlayerData.money.bank = 0

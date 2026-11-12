@@ -583,8 +583,8 @@ Map markers for each step of a contract, to the one party who acts on it (docs/f
 | `Config.StepMarkers.Protection` | `true` | the guard: their client's meeting pin while on the job |
 | `Config.Disposal.Enabled` | `false` | a verified kill pays once the body is dropped off |
 | `Config.Disposal.VehicleModel` | `'romero'` | the disposal vehicle (the hearse) |
-| `Config.Disposal.VehicleSpawn` | `{}` | { x, y, z, h } where it is made; the panel's spot wins |
-| `Config.Disposal.DropOff` | `{}` | { x, y, z } the drop-off; the panel's spot wins |
+| `Config.Disposal.VehicleSpawn` | `{}` | { x, y, z, h } where it is made; the panel's spot wins. `vector4(x, y, z, h)` works too |
+| `Config.Disposal.DropOff` | `{}` | { x, y, z } the drop-off; the panel's spot wins. `vector3(x, y, z)` works too |
 | `Config.Disposal.PayNowPercent` | `0` | of a cash or bank payout handed over at the kill |
 | `Config.Disposal.TimeLimitMinutes` | `30` | minutes of the hitman's time in the city to finish |
 | `Config.Disposal.OnTimeout` | `'pay'` | 'pay' \| 'reduced' \| 'refund' (to the placer) |
