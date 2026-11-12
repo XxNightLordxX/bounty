@@ -124,9 +124,16 @@ organisation checks its money under both backends (`Funds.emptyEverywhere`).
 Money paid out to a member (bonus, withdrawal, salary) is decided by what
 arrived (`handOver`: `Util.credit`), marked `:paid` (kept before it is awaited),
 given back `:back` only when nothing arrived, left for staff
-(`org_funds_give_raised`) when part of it, or no telling, did; a crash inside the
+(`org_funds_give_raised`, its `:review` marker kept before it is awaited, as
+`:paid` is) when part of it, or no telling, did; a crash inside the
 give is left for staff (`org_funds_give_unconfirmed`), and a debit row with neither
-never reached the member, so the retry pays it (mysql). A cut taken on a give
+never reached the member, so the retry pays it (mysql). Nothing pays a give
+again while staff hold it: an open review item naming its reference, or its
+`:review` marker waiting to be written (`staffHold`). A member's deposit the
+funds refuse, whose give-back fails too, is owed to them (`Bailout.owe`); its
+write-ahead item becomes a staff item (`org_funds_deposit_refund_failed`,
+`Review.recast`) before the owe is minted or awaited, and goes only once the
+owe's line is written, so a store that raises there leaves it for staff. A cut taken on a give
 that never arrived is given back (`cut:<line>:back`) when the line goes to
 anyone else. Every movement is one `crimson_org_funds` row under a
 reference written once (`insertOrgRowOnce`), marked with its `backend`; the

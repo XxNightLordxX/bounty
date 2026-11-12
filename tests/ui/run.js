@@ -4169,6 +4169,31 @@ async function main() {
         'the ticked lines, and only those');
     });
 
+    /* Step 8g: the second tap sent it and left the armed words on the
+       button. Refused, the editor stays open, and the button still said
+       "Tap again to take back ..." while it was no longer armed: the tap it
+       asked for only armed it again, and a third was needed to send. */
+    const takeRefused = await openEditor({ withdrawReward: { ok: false, err: 'invalid_reward' } });
+    const takeBoxes = takeRefused.view.all().filter(function (n) {
+      return n.tagName === 'INPUT' && n.type === 'checkbox';
+    });
+    takeBoxes[1].checked = true; takeBoxes[1].onchange();
+    const armedTake = click(takeRefused, 'Take back what I ticked');
+    await settle();
+    armedTake.onclick();
+    await settle(); await settle();
+    it('puts the button\'s words back once the second tap has sent it', function () {
+      eq(takeRefused.sent.filter(function (s) { return s.name === 'withdrawReward'; }).length, 1, 'sent once');
+      eq(armedTake.textContent, 'Take back what I ticked', 'the armed words left behind');
+      falsy(armedTake.classList.contains('is-armed'), 'still drawn as armed');
+    });
+    armedTake.onclick();
+    await settle(); await settle();
+    it('and, refused, the next tap does what the button says: it arms', function () {
+      eq(takeRefused.sent.filter(function (s) { return s.name === 'withdrawReward'; }).length, 1, 'nothing more sent');
+      eq(armedTake.textContent, 'Tap again to take back $2,500');
+    });
+
     /* Nothing ticked is not a request. It used to be worth sending, and the
        server answered invalid_input — an error the player had done nothing
        to earn. */

@@ -4,7 +4,9 @@
 ---   S8-STATE-1  an app pause whose end the store could not keep is not given
 ---               back a second time at the next start;
 ---   S8-STATE-3  a kill made in time outlives a staff freeze longer than its
----               verify window, and runs out on the time it had left;
+---               verify window, and runs out on the time it had left; its
+---               photo can still be taken after a freeze or a restart hold
+---               longer than two windows (8g);
 ---   S8-STATE-5  a stranger's accept on a frozen contract answers as an open
 ---               one would, and is refused only where an open one is taken;
 ---   S8-STATE-6  an unfreeze's awaits never let a proposal it holds expire;
@@ -76,12 +78,25 @@ describe('S8-STATE-1: the end of an app pause the store could not keep', functio
     end)
 end)
 
+-- Kill photos on (the shipped config has them off), taken as links to a
+-- host the tests send them to.
+-- send links to. F.kill.setup turns them off from the panel; they are
+-- turned back on the same way once it has run.
+local function photos()
+    Config.Completion.PhotoStorage = 'host'
+    Config.Completion.ExtraPhotoHosts = { 'cdn.fivemanage.com' }
+end
+local function photosOn()
+    W.opOk(6, 'setSetting', { key = 'Completion.KillPhotos', value = true }, 'kill photos on')
+end
+
 describe('S8-STATE-3: a kill pending a photo, under a staff freeze', function()
-    local function killed(holdSeconds, who)
-        local main, s = W.boot('memory', 'shipped')
+    local function killed(holdSeconds, who, configure)
+        local main, s = W.boot('memory', 'shipped', configure)
         W.cast(s)
         local ctx = { reward = 5000 }
         F.kill.setup(ctx)
+        if configure then photosOn() end
         F.stepPlace().run(ctx)
         F.stepAccept().run(ctx)
         F.stepKill().run(ctx)
@@ -112,6 +127,47 @@ describe('S8-STATE-3: a kill pending a photo, under a staff freeze', function()
         truthy(s.death.getPending(ctx.id, 'HITMAN01'), 'still within what it had left')
         Env.advance(10)
         eq(s.death.getPending(ctx.id, 'HITMAN01'), nil, 'gone once that ran out')
+    end)
+
+    -- Step 8g: a photo token asked for after the freeze was capped at two
+    -- lifetimes from the death, a time the freeze had already passed, so it
+    -- was born expired and the photo route could not claim the kill.
+    it('is photographed after a freeze longer than two windows', function()
+        local window = Config.Completion.PhotoTokenLifetimeSeconds
+        local _, s, ctx = killed(2 * window + 360, nil, photos)
+        Env.advance(20)
+        W.at(3, 100.0, 100.0, 30.0)
+        local t = W.phone(3, 'requestPhotoToken', { id = ctx.id })
+        truthy(t and t.ok and t.data and t.data.token, 'a token: ' .. tostring(t and t.err))
+        Env.advance(5)
+        local r = W.phone(3, 'submitPhoto', { token = t.data.token, url = 'https://cdn.fivemanage.com/p.png' })
+        truthy(r and r.ok, 'the photo claimed it: ' .. tostring(r and r.err))
+    end)
+end)
+
+describe('S8-STATE-3 (8g): a kill pending a photo, under a restart hold', function()
+    it('is photographed after a restart hold longer than two windows, skipped', function()
+        local _, s = W.boot('memory', 'shipped', photos)
+        W.cast(s)
+        local ctx = { reward = 5000 }
+        F.kill.setup(ctx)
+        photosOn()
+        F.stepPlace().run(ctx)
+        F.stepAccept().run(ctx)
+        F.stepKill().run(ctx)
+        Env.advance(10)
+        Config.Holds.RestartPauseBeforeSeconds = 1800
+        Config.Holds.RestartMaxHoldMinutes = 45
+        truthy(s.holds.scheduledRestart({ secondsRemaining = 900 }), 'held')
+        Env.advance(2 * Config.Completion.PhotoTokenLifetimeSeconds + 360)
+        truthy(s.holds.releaseRestart('skipped'), 'let go')
+        Env.advance(20)
+        W.at(3, 100.0, 100.0, 30.0)
+        local t = W.phone(3, 'requestPhotoToken', { id = ctx.id })
+        truthy(t and t.ok and t.data and t.data.token, 'a token: ' .. tostring(t and t.err))
+        Env.advance(5)
+        local r = W.phone(3, 'submitPhoto', { token = t.data.token, url = 'https://cdn.fivemanage.com/p.png' })
+        truthy(r and r.ok, 'the photo claimed it: ' .. tostring(r and r.err))
     end)
 end)
 

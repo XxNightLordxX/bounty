@@ -324,6 +324,43 @@ function Review.prepare(spec)
     return item
 end
 
+--- A prepared item that now stands for something else, under the same id:
+--- kept on this machine again at once, before anything is awaited, so a
+--- restart finds the one or the other, never both and never neither. A
+--- deposit whose give-back failed is left for staff rather than made by the
+--- server at the next start (Org.deposit) the moment that is known.
+--- Review.discard(item) once what it stands for is written elsewhere;
+--- Review.open(item) to leave it for staff now.
+---@param item table from Review.prepare
+---@param spec table as Review.open takes it
+---@return table item
+function Review.recast(item, spec)
+    local fresh = build(spec, item.id)
+    if Storage.remote then keep(fresh) end
+    fresh.prepared = true
+    return fresh
+end
+
+--- Whether an open item (or one left part-way resolved) answers `match`:
+--- one the store has, or one this process keeps until the store takes it,
+--- which is every item kept on this machine at the start. A give staff
+--- hold (Org's settleGive and settleRepeat) is never paid again meanwhile.
+---@param match fun(item: table): boolean
+---@return boolean found
+---@return boolean|nil unknown the store could not be read
+function Review.anyOpen(match)
+    for i = 1, #unwritten do
+        local item = unwritten[i]
+        if item.state ~= Review.STATE.RESOLVED and match(item) then return true end
+    end
+    local ok, rows = pcall(Storage.reviewItems, true, 1000)
+    if not ok then return false, true end
+    for _, row in ipairs(rows or {}) do
+        if match(row) then return true end
+    end
+    return false
+end
+
 --- The write a prepared item stood for was answered: nothing to keep.
 ---@param item table|nil from Review.prepare
 function Review.discard(item)

@@ -15,6 +15,14 @@
 --- M9  an armory move whose put-in raised after placing is not put back.
 --- M10 money moves are audited whatever LogAllActions says.
 --- (M5 and M11, the crash windows, are in tests/workflows/matrix_spec.lua.)
+---
+--- Step 8g, the final review:
+--- MONEY-1 a deposit whose give-back failed is a staff item before the
+---         owe's id is minted or its line awaited, and let go only once the
+---         line is written; on the record first.
+--- MONEY-2 a give left for staff keeps its ':review' marker ahead of time,
+---         and is never paid again while staff hold it: the bonus retried
+---         and the pay day run again after a restart.
 
 local W = require('tests.harness.org_world')
 local QbxJobs = W.QbxJobs
@@ -429,5 +437,260 @@ describe('step 8d M10: money moves are audited whatever LogAllActions says', fun
         eq(#W.audit('org_funds_deposit'), 1)
         eq(#W.audit('org_funds_withdraw'), 1)
         eq(#W.audit('org_bonus'), 1)
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Step 8g: the final review's money findings (MONEY-1, MONEY-2)
+--------------------------------------------------------------------------
+
+local Exec = require('tests.harness.mysql_exec')
+
+--- The server's modules dropped, so the next start loads them afresh.
+local function forget()
+    for name in pairs(package.loaded) do
+        if type(name) == 'string' and (name:sub(1, 7) == 'server.' or name == 'server') then
+            package.loaded[name] = nil
+        end
+    end
+end
+
+local function purse(src)
+    local money = Env.players[src].PlayerData.money
+    return (money.bank or 0) + (money.cash or 0)
+end
+
+--- A city on mysql (every give kept before its marker: Funds.marksKept),
+--- the organisation on with a boss and a recruit, the funds seeded.
+local function mysqlCity()
+    forget()
+    Env.reset()
+    resetConfig()
+    Config.Database.Mode = 'mysql'
+    Exec.install(Natives)
+    QbxJobs.install()
+    Natives.convars['qbx:max_jobs_per_player'] = '3'
+    W.player(6, 'ADMIN001')
+    W.player(11, 'BOSS0001')
+    W.player(13, 'RECRUIT1')
+    Config.Organisation.Enabled = true
+    Config.Organisation.Payroll = true
+    Config.Integrations.Banking = 'none'
+    local modules = require('server.main').start()
+    assert(modules.org.hire(STAFF, { cid = 'BOSS0001', name = 'Boss', source = 11 }, 3))
+    assert(modules.org.hire(STAFF, { cid = 'RECRUIT1', name = 'Recruit', source = 13 }, 0))
+    assert(modules.org.staffDeposit(STAFF, 6000, 'seed', 's1'))
+    return modules
+end
+
+local function restarted(modules)
+    pcall(modules.storage.flush)
+    pcall(modules.storage.close)
+    forget()
+    return require('server.main').start()
+end
+
+--- The recruit's AddMoney lets part of the money arrive, then raises: the
+--- give is 'unknown', left for staff. And the store will not take the
+--- ':review' marker. Undone by the function it answers.
+local function unknownGive(modules)
+    local p = Env.players[13]
+    local real = p.Functions.AddMoney
+    p.Functions.AddMoney = function(account, amount, reason)
+        real(account, math.floor(amount / 2), reason)
+        error('a hook raised after the credit', 0)
+    end
+    local insert = modules.storage.insertOrgRowOnce
+    modules.storage.insertOrgRowOnce = function(name, row)
+        if name == 'funds' and tostring(row.id):sub(-7) == ':review' then error('db down', 0) end
+        return insert(name, row)
+    end
+    return function()
+        p.Functions.AddMoney = real
+        modules.storage.insertOrgRowOnce = insert
+    end
+end
+
+local function reviewsOf(modules, kind)
+    local out = {}
+    for _, item in ipairs(modules.storage.reviewItems(true, 100) or {}) do
+        if item.kind == kind then out[#out + 1] = item end
+    end
+    return out
+end
+
+describe('step 8g MONEY-2: a give left for staff is never paid again after a restart', function()
+    it('a bonus retried with the same nonce: its kept marker is written at the start', function()
+        local modules = mysqlCity()
+        local before = purse(13)
+        local undo = unknownGive(modules)
+        local ok, err = modules.org.bonus(STAFF, 'RECRUIT1', 900, 'well done', 'g8b')
+        undo()
+        falsy(ok)
+        eq(err, 'org_left_for_staff')
+        eq(purse(13) - before, 450, 'half arrived')
+        local m2 = restarted(modules)
+        local again = m2.org.bonus(STAFF, 'RECRUIT1', 900, 'well done', 'g8b')
+        truthy(again, 'answered as the first was')
+        eq(purse(13) - before, 450, 'and paid nothing more')
+        forget()
+    end)
+
+    it('a bonus retried with the same nonce while the marker still cannot be written', function()
+        local modules = mysqlCity()
+        local before = purse(13)
+        local undo = unknownGive(modules)
+        falsy(modules.org.bonus(STAFF, 'RECRUIT1', 900, 'well done', 'g8c'))
+        undo()
+        pcall(modules.storage.flush)
+        pcall(modules.storage.close)
+        forget()
+        -- Still refused at the start: the marker waits (Funds.markWaiting).
+        local m2 = require('server.main').start()
+        local insert = m2.storage.insertOrgRowOnce
+        m2.storage.insertOrgRowOnce = function(name, row)
+            if name == 'funds' and tostring(row.id):sub(-7) == ':review' then error('db down', 0) end
+            return insert(name, row)
+        end
+        local again = m2.org.bonus(STAFF, 'RECRUIT1', 900, 'well done', 'g8c')
+        m2.storage.insertOrgRowOnce = insert
+        truthy(again, 'answered as the first was')
+        eq(purse(13) - before, 450, 'and paid nothing more')
+        forget()
+    end)
+
+    it('a bonus retried after a restart with nothing kept on the machine: the staff item holds it', function()
+        local modules = mysqlCity()
+        local before = purse(13)
+        local undo = unknownGive(modules)
+        local realKvp = _G.SetResourceKvp
+        _G.SetResourceKvp = function() error('no kvp here', 0) end
+        falsy(modules.org.bonus(STAFF, 'RECRUIT1', 900, 'well done', 'g8d'))
+        _G.SetResourceKvp = realKvp
+        undo()
+        eq(#reviewsOf(modules, 'org_funds_give_raised'), 1, 'left for staff')
+        local m2 = restarted(modules)
+        local again = m2.org.bonus(STAFF, 'RECRUIT1', 900, 'well done', 'g8d')
+        truthy(again, 'answered as the first was')
+        eq(purse(13) - before, 450, 'and paid nothing more')
+        forget()
+    end)
+
+    it('a pay day run again after a restart that lost its next pay day', function()
+        local modules = mysqlCity()
+        truthy(modules.org.setSalary(STAFF, 0, 400))
+        local t0 = os.time()
+        modules.org.payrollTick(t0)
+        local at = modules.org.current().settings.payroll.nextAt
+        local before = purse(13)
+        local undo = unknownGive(modules)
+        local write = modules.storage.writeOrgRow
+        modules.storage.writeOrgRow = function() error('db down', 0) end
+        pcall(modules.org.payrollTick, at)
+        modules.storage.writeOrgRow = write
+        undo()
+        eq(purse(13) - before, 200, 'half the salary arrived')
+        local m2 = restarted(modules)
+        eq(m2.org.current().settings.payroll.nextAt, at, 'the pay day was not saved')
+        pcall(m2.org.payrollTick, at + 10)
+        eq(purse(13) - before, 200, 'and is not paid again')
+        forget()
+    end)
+end)
+
+describe('step 8g MONEY-1: a deposit whose give-back failed is never left with nothing naming it', function()
+    local function refusedDeposit(s, fault)
+        W.crew(s)
+        W.allow(s, 2, 'C6')
+        W.office(s, 0.0, 0.0)
+        W.at(12, 0.0, 0.0)
+        QbxJobs.refuse.add = true
+        Env.players[12]._refuseMoney = true
+        local undo = fault()
+        local ran, ok = pcall(s.org.deposit, W.boss(12, 'LIEUT001'), 650, 'bank', 'd8g')
+        undo()
+        Env.players[12]._refuseMoney = nil
+        QbxJobs.refuse.add = nil
+        return ran, ok
+    end
+
+    local function staffItems(s)
+        local out = {}
+        for _, item in ipairs(s.review.list() or {}) do
+            if item.kind == 'org_funds_deposit_refund_failed' then out[#out + 1] = item end
+        end
+        return out
+    end
+
+    it('the store raising while the owe\'s id is minted: on the record, and left for staff', function()
+        local s = W.world({ bank = true })
+        local ran, ok = refusedDeposit(s, function()
+            local real = s.storage.readEscrow
+            s.storage.readEscrow = function() error('db down', 0) end
+            return function() s.storage.readEscrow = real end
+        end)
+        truthy(ran, 'the deposit answers, it does not raise')
+        falsy(ok)
+        eq(#W.audit('org_funds_deposit_refund_failed'), 1, 'on the record')
+        local items = staffItems(s)
+        eq(#items, 1, 'left for staff')
+        eq(items[1].amount, 650)
+        eq(items[1].cids.member, 'LIEUT001')
+        falsy(items[1].known.decide, 'never made by the server as well')
+    end)
+
+    it('the owe\'s line raising: left for staff', function()
+        local s = W.world({ bank = true })
+        local ran = refusedDeposit(s, function()
+            local real = s.storage.writeEscrow
+            s.storage.writeEscrow = function() error('db down', 0) end
+            return function() s.storage.writeEscrow = real end
+        end)
+        truthy(ran)
+        eq(#staffItems(s), 1, 'left for staff')
+    end)
+
+    it('owed as before: no staff item, and the owe named on the record', function()
+        local s = W.world({ bank = true })
+        local ran = refusedDeposit(s, function() return function() end end)
+        truthy(ran)
+        eq(#staffItems(s), 0, 'nothing for staff')
+        local owed = W.audit('org_funds_deposit_owed')
+        eq(#owed, 1, 'the owe on the record')
+    end)
+end)
+
+describe('step 8g MONEY-1 on mysql: the staff item stands in for the deposit across a restart', function()
+    it('with the store down throughout, the next start leaves it for staff and makes no deposit', function()
+        local modules = mysqlCity()
+        W.allow(modules, 3, 'C6')
+        W.office(modules, 0.0, 0.0)
+        W.at(11, 0.0, 0.0)
+        local org = modules.org.current()
+        local funds0 = modules.org.Funds.balance(org)
+        local before = purse(11)
+        local st = modules.storage
+        local insert, readEscrow, writeReview = st.insertOrgRowOnce, st.readEscrow, st.writeReview
+        st.insertOrgRowOnce = function(name, row)
+            if name == 'funds' and row.kind == 'deposit' then error('db down', 0) end
+            return insert(name, row)
+        end
+        st.readEscrow = function() error('db down', 0) end
+        st.writeReview = function() error('db down', 0) end
+        Env.players[11]._refuseMoney = true
+        local ran, ok = pcall(modules.org.deposit, W.boss(11, 'BOSS0001'), 650, 'bank', 'd8m')
+        Env.players[11]._refuseMoney = nil
+        st.insertOrgRowOnce, st.readEscrow, st.writeReview = insert, readEscrow, writeReview
+        truthy(ran, 'answered, not raised')
+        falsy(ok)
+        eq(before - purse(11), 650, 'the member was charged')
+        local m2 = restarted(modules)
+        local items = {}
+        for _, item in ipairs(m2.review.list() or {}) do
+            if item.kind == 'org_funds_deposit_refund_failed' then items[#items + 1] = item end
+        end
+        eq(#items, 1, 'left for staff after the restart')
+        eq(m2.org.Funds.balance(m2.org.current()), funds0, 'and the server made no deposit as well')
+        forget()
     end)
 end)

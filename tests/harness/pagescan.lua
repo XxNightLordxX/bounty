@@ -76,9 +76,18 @@ function PageScan.literals(src)
                 end
                 local after = src:match('^%s*([^%s])', j + 1) or ''
                 local after2 = src:match('^%s*([=!]=)', j + 1)
+                -- The nearest call it is inside, through any bare brackets
+                -- ('a' + (b ? ' c' : '')): which argument of el() it is.
+                local outer
+                for k = #stack, 1, -1 do
+                    if stack[k].callee then outer = stack[k]; break end
+                end
+                local lineStart = src:sub(1, i - 1):match('.*\n()') or 1
                 out[#out + 1] = { text = src:sub(i + 1, j - 1), line = line,
                     callee = frame and frame.callee, arg = frame and frame.args or 0, inCall = skipCall,
-                    before = last, after = after2 or after }
+                    before = last, after = after2 or after,
+                    outer = outer and outer.callee, outerArg = outer and outer.args or 0,
+                    lead = src:sub(lineStart, i - 1) }
             end
             i = j + 1
             last = 'string'
@@ -158,13 +167,33 @@ function PageScan.hardCoded(src, classes, allow)
     return found
 end
 
+--- Whether a literal is where a page puts CSS classes: el()'s class
+--- argument, or after `className =`, `class:` or `classList.` on its line.
+--- Not merely words that happen to be class names: ' more', 'with ' and
+--- ' switch' are classes in the style sheets and English in the sentence
+--- they were joined to (8g).
+local function asClass(lit)
+    if lit.outer == 'el' and lit.outerArg == 1 then return true end
+    local lead = lit.lead or ''
+    return lead:find('className%s*%+?=') ~= nil or lead:find('class%s*:') ~= nil
+        or lead:find('classList%.') ~= nil
+end
+
 --- English joined to other text with `+` (L1): ' of ', ' minute', ' ago',
 --- 'Stake: '. Each is a piece of a sentence a translator cannot reorder,
 --- and one word is enough, which hardCoded (two words or a title) lets by.
 --- A literal next to a `+` counts when it holds a word of two letters or
---- more and is not a class list, a key prefix ('admin.') or a lone symbol.
---- Plurals built in place ("? '' : 's'", "n === 1 ? ' item' : ' items'")
---- count too.
+--- more and is not a class list where the page puts classes (asClass), a
+--- key prefix ('admin.') or a lone symbol. Plurals built in place
+--- ("? '' : 's'", "? '' : 'es'", "n === 1 ? ' item' : ' items'", and
+--- "n === 1 ? t('a') : t('b')", two keys where tn() gives the forms) count
+--- too.
+---
+--- Not counted: keys joined to values or to each other
+--- (t('app.min_ago') after a number, t('a') + t('b')). The scan reads
+--- literals, and a key's is inside t(); each piece is still a key a
+--- translator can change, though not reorder. A known carve-out, left for
+--- a wider pass over the pages' sentences.
 ---@param src string
 ---@param classes table<string, boolean>
 ---@param allow table|nil
@@ -175,14 +204,15 @@ function PageScan.joined(src, classes, allow)
         local text = lit.text
         local joined = lit.before == '+' or lit.after == '+'
         if joined and not lit.inCall and text:find('%a%a') and text:find('%s')
-            and not classy(text, classes) and not (allow and allow[text]) then
+            and not (asClass(lit) and classy(text, classes)) and not (allow and allow[text]) then
             found[#found + 1] = lit
         end
     end
     local line = 1
     for text in (src .. '\n'):gmatch('([^\n]*)\n') do
-        if text:find("%?%s*''%s*:%s*'s'") or text:find("%?%s*'s'%s*:%s*''")
-            or text:find("===?%s*1%s*%?%s*'[^']*%a%a[^']*'%s*:%s*'") then
+        if text:find("%?%s*''%s*:%s*'e?s'") or text:find("%?%s*'e?s'%s*:%s*''")
+            or text:find("===?%s*1%s*%?%s*'[^']*%a%a[^']*'%s*:%s*'")
+            or text:find("===?%s*1%s*%?%s*t%(.-:%s*t%(") then
             found[#found + 1] = { text = "'' : 's'", line = line }
         end
         line = line + 1

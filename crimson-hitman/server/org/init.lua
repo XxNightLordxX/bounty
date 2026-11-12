@@ -2148,8 +2148,16 @@ local function handOver(org, g)
     raise = raise or {}
     deps.audit.financial('org_funds_give_raised', g.cid, nil, { org = org.id, amount = g.amount, ref = g.ref,
         give = g.kind, period = g.period, error = raise.error, arrived = raise.arrived, before = raise.before })
-    if not Funds.mark(org, g.ref .. ':review', { kind = g.reviewKind or 'give_review', actor = g.cid,
-        reason = L('org.left_for_staff_handing_it_over') }) then
+    -- Kept before the marker is awaited, as ':paid' is: a marker the
+    -- store would not take was guarded only in this process, and after a
+    -- restart the debit with no marker was taken for a give that never
+    -- happened, and paid again (8g).
+    local review = { kind = g.reviewKind or 'give_review', actor = g.cid,
+        reason = L('org.left_for_staff_handing_it_over') }
+    local kept = Funds.willMark(org, g.ref .. ':review', review)
+    if Funds.mark(org, g.ref .. ':review', review) then
+        Funds.settled(kept)
+    else
         PaidHere[g.ref] = true
     end
     local item = unsure or { cids = { member = g.cid }, amount = g.amount,
@@ -2159,6 +2167,31 @@ local function handOver(org, g)
         arrived = raise.arrived, before = raise.before }
     if deps.review and deps.review.open then pcall(deps.review.open, item) end
     return 'unknown', raise
+end
+
+--- The kinds of review item a give left for staff opens (handOver,
+--- settleGive, settleRepeat, Funds.giving), each naming the give's ref.
+local GIVE_REVIEWS = { org_funds_give_raised = true, org_funds_give_unconfirmed = true,
+    org_payroll_unconfirmed = true }
+
+--- Whether staff hold a give, so nothing pays it again meanwhile: its
+--- ':review' marker kept and waiting to be written (Funds.willMark), or an
+--- open review item naming it, in the store or kept on this machine. A
+--- give left for staff whose marker the store would not take was paid a
+--- second time by the retry, or by the pay day run again, after a restart
+--- (8g). `unknown` when the review store could not be read: never paid on
+--- a guess then.
+---@return boolean held
+---@return boolean|nil unknown
+local function staffHold(ref)
+    local review = (ref .. ':review'):sub(1, 96)
+    if Funds.markWaiting(review) then return true end
+    if not (deps.review and deps.review.anyOpen) then return false end
+    return deps.review.anyOpen(function(item)
+        local known = type(item.known) == 'table' and item.known or {}
+        if GIVE_REVIEWS[item.kind] then return known.ref == ref end
+        return item.kind == 'org_funds_interrupted' and known.how == 'mark' and known.ref == review
+    end)
 end
 
 --- A bonus's or a withdrawal's debit row found already written (the same
@@ -2176,11 +2209,13 @@ local function settleGive(org, g)
         or Funds.markWaiting(ref .. ':paid') then
         return true, nil, { repeated = true }
     end
+    local held, unknown = staffHold(ref)
+    if held then return true, nil, { repeated = true } end
     local row = Funds.byRef(ref)
     local debited = row and -math.floor(tonumber(row.amount) or 0) or 0
     if debited <= 0 or not g.cid then return true, nil, { repeated = true } end
     g.amount = debited
-    if Funds.marksKept() then
+    if Funds.marksKept() and not unknown then
         Paying[ref] = true
         local ok, how = pcall(handOver, org, g)
         Paying[ref] = nil
@@ -2200,6 +2235,59 @@ local function settleGive(org, g)
     Funds.mark(org, ref .. ':review', { kind = 'give_review', actor = g.cid,
         reason = L('org.left_for_staff_not_known_whether') })
     return fail(ERR.LEFT_FOR_STAFF)
+end
+
+--- A member was charged for a deposit the funds refused, and the give-back
+--- did not land: owed to them (paid at the next retry or login), or left
+--- for staff where part of it, or no telling, arrived; on the record.
+---
+--- The record first, whatever follows raises. The deposit's write-ahead
+--- item (Funds.charged) is turned into a staff item at once, before the
+--- owe's id is minted or its line awaited, and let go only once the line
+--- is written: dropped first, a store that raised while the id was minted
+--- or the line written left the money gone from the member with nothing
+--- naming it (8g). Never made by the server at the next start once it is
+--- a staff item: the member may be owed it as well.
+local function depositOwed(org, who, ref, amount, account, charged, raised, arrived, before)
+    pcall(deps.audit.financial, 'org_funds_deposit_refund_failed', who.cid, nil, { org = org.id,
+        amount = amount, account = account, ref = ref, error = raised, arrived = arrived })
+    local item = charged
+    local spec = { kind = 'org_funds_deposit_refund_failed', cids = { member = who.cid }, amount = amount,
+        account = account, known = { org = org.id, ref = ref, error = raised, arrived = arrived,
+            before = before } }
+    if charged and deps.review and deps.review.recast then item = deps.review.recast(charged, spec) end
+    local raise = raised and { error = raised, arrived = arrived, before = before } or nil
+    local minted, owner = pcall(Util.mintId, deps.storage.nextId, 'odep', function(candidate)
+        return #(deps.storage.readEscrow(candidate) or {}) > 0
+    end)
+    local okOwe, line = false, nil
+    if minted and owner and deps.bailout and deps.bailout.owe then
+        okOwe, line = pcall(deps.bailout.owe, who.cid, owner, amount, account, 'org_funds_deposit_refund', raise)
+    end
+    if okOwe then
+        -- Owed (or, where no id could be had, left for staff by the owe
+        -- itself): written, so nothing more is kept for it.
+        Funds.settled(item)
+        if line then
+            pcall(deps.audit.financial, 'org_funds_deposit_owed', who.cid, nil, { org = org.id, amount = amount,
+                account = account, ref = ref, owed = line })
+        end
+        return
+    end
+    local why = not minted and owner or line
+    -- The line's contract id where one was had: the owe may have written
+    -- its line before it raised, and staff check it before paying.
+    local oweId = minted and owner or nil
+    if item and item ~= charged then
+        item.known.owe_error = why ~= nil and Util.dbError(why) or nil
+        item.known.owe = oweId
+        if deps.review.open then pcall(deps.review.open, item) end
+    elseif deps.review and deps.review.open then
+        spec.known.owe_error = why ~= nil and Util.dbError(why) or nil
+        spec.known.owe = oweId
+        Funds.settled(charged)
+        pcall(deps.review.open, spec)
+    end
 end
 
 --- A member's own money into the funds (C6): taken from them first, given
@@ -2225,21 +2313,10 @@ function Org.deposit(who, amount, account, nonce)
         reason = account, title = L('org.member_deposit'), charged = charged })
     if not ok then
         local back, raised, arrived, before = Util.credit(actor.player, account, amount)
-        Funds.settled(charged)
-        if not back then
-            -- The member was charged and the give-back did not land: owed
-            -- to them (paid at the next retry or login), or left for staff
-            -- where part of it, or no telling, arrived; on the record.
-            local raise = raised and { error = raised, arrived = arrived, before = before } or nil
-            local owner = Util.mintId(deps.storage.nextId, 'odep', function(candidate)
-                return #(deps.storage.readEscrow(candidate) or {}) > 0
-            end)
-            local okOwe, line = false, nil
-            if owner and deps.bailout and deps.bailout.owe then
-                okOwe, line = pcall(deps.bailout.owe, who.cid, owner, amount, account, 'org_funds_deposit_refund', raise)
-            end
-            deps.audit.financial('org_funds_deposit_refund_failed', who.cid, nil, { org = org.id, amount = amount,
-                account = account, ref = ref, owed = okOwe and line or nil, error = raised, arrived = arrived })
+        if back then
+            Funds.settled(charged)
+        else
+            depositOwed(org, who, ref, amount, account, charged, raised, arrived, before)
         end
         return fail(ferr == 'busy' and ERR.BUSY or ferr == 'bank_down' and ERR.BANK_DOWN or ERR.BANK_REFUSED)
     end
@@ -2527,8 +2604,10 @@ local function settleRepeat(org, member, amount, period, ref)
         or Funds.markWaiting(ref .. ':paid') then
         return 'repeat'
     end
+    local held, unknown = staffHold(ref)
+    if held then return 'repeat' end
     local row = Funds.byRef(ref)
-    if row and Funds.marksKept() then
+    if row and Funds.marksKept() and not unknown then
         return payMember(org, member, math.abs(math.floor(tonumber(row.amount) or 0)), period, ref)
     end
     local debited = row and math.abs(math.floor(tonumber(row.amount) or 0)) or amount

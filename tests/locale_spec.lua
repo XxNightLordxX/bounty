@@ -284,6 +284,24 @@ describe('Translations: the language files', function()
         eq(found[1].text, ' minute')
     end)
 
+    -- 8g: words that are class names too (.more, .with) passed as classes
+    -- wherever they stood, and "? '' : 'es'" and two keys picked by a
+    -- count were not seen as plurals.
+    it('the joined scan counts a class name used as words, and plurals of every shape', function()
+        local classes = { more = true, with = true, btn = true, ico = true, chip = true, state = true }
+        local found = PageScan.joined("say(n + ' more');\nel('div', 'with', 'with ' + who);\n"
+            .. "h('span', n + ' switch' + (n === 1 ? '' : 'es'));\n"
+            .. "var w = n + (n === 1 ? t('app.day_ago') : t('app.days_ago'));\n", classes)
+        local texts = {}
+        for _, lit in ipairs(found) do texts[#texts + 1] = lit.text end
+        eq(table.concat(texts, '|'), " more|with | switch|'' : 's'|'' : 's'",
+            'the words joined on, and both plurals')
+        local none = PageScan.joined("take.className = 'btn ' + kind;\n"
+            .. "el('span', 'chip' + (icon ? ' ico ' + icon : ''), text);\n"
+            .. "h('span.chip', { class: 'state ' + cls }, label);\nnode.classList.add('btn ' + x);\n", classes)
+        eq(#none, 0, 'classes where the page puts classes are not words')
+    end)
+
     it('the page scan finds a sentence written back, and not a key, a class or a console line', function()
         local found = PageScan.hardCoded("el('div', 'notice gold', 'Nothing is out on you.');\n"
             .. "console.warn('a console line'); t('app.cancel'); if (x === 'Some words') {}\n"

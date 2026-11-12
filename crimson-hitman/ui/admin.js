@@ -3766,7 +3766,7 @@
     var answer = S.settings.photos;
     var n = kept ? Number(kept.count) || 0 : 0;
     if (entry.value === true || n < 1) return answer ? answerBox(answer) : null;
-    var photos = n === 1 ? t('admin.kill_photo') : t('admin.kill_photos_2');
+    var photos = tn('admin.kill_photos_count', n);
     var files = Number(kept.files) || 0, links = Number(kept.links) || 0;
     var open = Math.max(Number(kept.open) || 0, Number(kept.waiting) || 0);
     var facts = [];
@@ -4160,7 +4160,7 @@
         var switches = mine.filter(function (e) { return e.kind === 'switch'; }).length;
         return h('button.card.gr-card', { type: 'button', 'data-act': 'gr-area', 'data-value': a.id },
           h('span.gr-card-title', icon(a.icon), ' ', a.label),
-          h('span.sub', num(mine.length) + t('admin.settings') + num(switches) + ' switch' + (switches === 1 ? '' : 'es')));
+          h('span.sub', num(mine.length) + t('admin.settings') + tn('admin.switches_count', switches, num(switches))));
       }));
     } else if (!rows.length) {
       body = empty(q ? t('admin.no_setting_matches_clear_the_filter') : t('admin.nothing_here_with_this_filter'));
@@ -7203,7 +7203,7 @@
       var value = pair[0] === 'reason'
         ? frag(String(view.reason || '—'), view.staffEdited ? h('span.chip', t('admin.edited_by_staff')) : null)
         : (pair[0] === 'reward' && view.reward && typeof view.reward === 'object'
-          ? money(Number(view.reward.baseline) || 0) + (Number(view.reward.bonus) ? ' + ' + money(view.reward.bonus) + ' bonus' : '')
+          ? money(Number(view.reward.baseline) || 0) + (Number(view.reward.bonus) ? t('admin.plus_bonus', money(view.reward.bonus)) : '')
           : viewValue(view[pair[0]]));
       rows.push(h('dt', pair[1]), h('dd', value));
     });

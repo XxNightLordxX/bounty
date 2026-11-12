@@ -4946,7 +4946,7 @@
     if (h.restartHold) {
       var ends = Number(h.restartHold.endsIn) || 0;
       lines.push(t('app.contracts_are_paused_for_the_server')
-        + (ends > 0 ? t('app.for_at_most') + durationText(Math.max(1, Math.ceil(ends / 60))) + ' more'
+        + (ends > 0 ? t('app.for_at_most_more', durationText(Math.max(1, Math.ceil(ends / 60))))
           : '') + t('app.kills_handovers_and_buyouts_wait_and'));
     }
     if (state.board && state.board.suspended) {
@@ -6828,7 +6828,7 @@
   function buyoutWait(seconds) {
     if (!(seconds > 0)) { return null; }
     return seconds < 60 ? t('app.under_a_minute')
-      : 'about ' + durationText(Math.ceil(seconds / 60));
+      : t('app.about_duration', durationText(Math.ceil(seconds / 60)));
   }
 
   /* What every buyout says, in its dialog and once paid (spec §14.40):
@@ -6952,8 +6952,7 @@
   function lookUpsLeftText(left, most) {
     if (Number(left) === 1) { return t('app.this_is_your_last_one_on'); }
     if (Number(most) > 0) {
-      return t('app.you_can_ask_about_one_contract') + Number(most)
-        + (Number(most) === 1 ? t('app.time_in_total') : t('app.times_in_total'));
+      return tn('app.you_can_ask_times', Number(most));
     }
     return '';
   }
@@ -7401,8 +7400,7 @@
         if (proposal.mine) { applyRow.appendChild(takeBack(proposal)); }
         item.appendChild(applyRow);
       } else if (proposal.mine || proposal.answered) {
-        item.appendChild(el('div', 'hint', t('app.waiting_on') + waiting
-              + (waiting === 1 ? t('app.other_party') : t('app.other_parties'))
+        item.appendChild(el('div', 'hint', tn('app.waiting_on_parties', waiting)
               + (lapses ? ' ' + lapses + t('app.if_nobody_answers') : '')));
         /* The proposer's own: taken back rather than left holding the
            contract's one open proposal until it lapses. The server takes
@@ -7536,7 +7534,7 @@
     var hours = Math.floor(minutes / 60);
     if (hours < 24) { return hours + t('app.h_ago'); }
     var days = Math.floor(hours / 24);
-    return days + (days === 1 ? t('app.day_ago') : t('app.days_ago'));
+    return tn('app.days_ago_count', days);
   }
 
   function durationText(minutes) {
@@ -8135,7 +8133,7 @@
           setTimeout(function () { if (edit.armed && take === armedButton) { disarmTake(); } }, TIP_CONFIRM_MS);
           return;
         }
-        edit.armed = false;
+        disarmTake();
         withdrawChosen(edit);
       };
       row.appendChild(take);
@@ -8373,8 +8371,8 @@
       options.push({ label: t('app.items'), note: t('app.something_from_your_pockets'), run: addItem });
     }
     if (weapons.length) {
-      options.push({ label: t('app.weapons'), note: t('app.you_carry') + weapons.length
-        + (weapons.length === 1 ? t('app.weapon_2') : t('app.weapons_2')), run: addWeapon });
+      options.push({ label: t('app.weapons'), note: tn('app.you_carry_weapons', weapons.length),
+        run: addWeapon });
     }
     if (bonusRoom) {
       options.push({ label: t('app.kidnapping_bonus_2'), note: t('app.now_percent_paid_on_top', bonusNow), run: raiseBonus });
@@ -9576,7 +9574,7 @@
       about.appendChild(el('div', 'about', tv.contract.targetName));
     }
     if (withWhom) {
-      about.appendChild(el('div', 'with', 'with ' + withWhom));
+      about.appendChild(el('div', 'with', t('app.with_whom', withWhom)));
     }
     row.appendChild(about);
 
@@ -12877,8 +12875,7 @@
     }
     var what;
     if (d.mode === 'shorten') {
-      what = t('app.while_nobody_takes_it_it_runs_2') + d.percent + t('app.sooner_every')
-        + d.hours + (d.hours === 1 ? t('app.hour') : t('app.hours'));
+      what = tn('app.runs_out_sooner_hours', d.hours, d.percent, d.hours);
     } else {
       what = tn('app.decay_rise_hours', d.hours, d.percent, d.hours, d.maxPercent,
         d.account === 'cash' ? 'cash' : 'bank');

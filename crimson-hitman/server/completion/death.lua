@@ -1427,6 +1427,17 @@ local function aged(record, now)
     return true
 end
 
+--- The time a hold gave back to a pending kill, kept on it so that the
+--- cap on its photo tokens (Death.holdPending) moves with it: a token
+--- asked for after a freeze longer than two lifetimes was capped at a time
+--- already past, and the photo route could never claim the kill the
+--- carry had kept. As far as the carry moved its end, and no further.
+---@param record table a pending kill
+---@param spanMs number
+local function carried(record, spanMs)
+    if spanMs > 0 then record.carried = (record.carried or 0) + spanMs end
+end
+
 --- A staff freeze on a contract has been let go (Holds.unfreeze), or the
 --- freezes could be read again (contractId nil: every contract): each kill
 --- still waiting on it when the hold began is given the time it had left
@@ -1445,6 +1456,7 @@ function Death.carryOverHold(contractId, since, resume)
             local ends = endsAt(record)
             if ends > startMs then
                 record.heldUntil = math.max(record.heldUntil or 0, resumeMs + (ends - startMs))
+                carried(record, endsAt(record) - ends)
             end
         end
     end
@@ -1462,6 +1474,7 @@ function Death.carryOverRestartHold(since, now)
         local ends = endsAt(record)
         if ends > startMs then
             record.heldUntil = math.max(record.heldUntil or 0, nowMs + (ends - startMs))
+            carried(record, endsAt(record) - ends)
         end
     end
 end
@@ -1483,12 +1496,14 @@ end
 --- still stood for extended it, and a token can be asked for while the
 --- kill is held, so asking again every few minutes kept it alive for good:
 --- a target revived out of sight of the watcher, or back after a restart
---- the revive was lost in, could be claimed an hour later.
+--- the revive was lost in, could be claimed an hour later. Two lifetimes
+--- of the kill's own clock: the time a freeze or a restart hold gave back
+--- to it (record.carried) moves the cap as far, the time it stood still.
 ---@return integer|nil heldUntil how long this hold keeps it, for the token to match
 function Death.holdPending(contractId, hitmanCid, untilMs)
     local record = pending[contractId .. ':' .. hitmanCid]
     if not record then return nil end
-    local cap = record.at + 2 * Config.Completion.PhotoTokenLifetimeSeconds * 1000
+    local cap = record.at + 2 * Config.Completion.PhotoTokenLifetimeSeconds * 1000 + (record.carried or 0)
     local held = math.min(untilMs, cap)
     record.heldUntil = math.max(record.heldUntil or 0, held)
     return held
