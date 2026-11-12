@@ -331,6 +331,17 @@ function App.reconcile()
     end
 end
 
+--- A character left (a logout, a character switch) and the one that loads
+--- next has not yet been told what it may have. The app stays registered
+--- across the switch, so the access the next login brings reads as "had the
+--- app already": its meeting point and informant tips were never asked for
+--- again, and an open page kept the last character's wallet and draft.
+local characterLeft = false
+local function characterGone() characterLeft = true end
+-- Listeners beside forgetDeath's, which registers the two as net events.
+AddEventHandler('QBCore:Client:OnPlayerUnload', characterGone)
+AddEventHandler('qbx_core:client:playerLoggedOut', characterGone)
+
 --- The server's decision about whether this player may have the app.
 ---
 --- Sent on join, on any job change, on the maintenance tick, and whenever
@@ -338,13 +349,23 @@ end
 --- blacklist is the server's config and a client that could answer it could
 --- grant itself the app.
 RegisterNetEvent('crimson-hitman:access', function(allowed, mode)
-    local hadApp = accessAllowed == true and accessMode == 'full'
+    local newCharacter = characterLeft
+    characterLeft = false
+    local hadApp = not newCharacter and accessAllowed == true and accessMode == 'full'
     accessAllowed = allowed == true
     accessMode = (mode == 'full' or mode == 'whitelisted' or mode == 'closed') and mode or nil
     CreateThread(App.reconcile)
-    -- The whole app theirs again (a start, a restart, back in the city): the
-    -- informant tips they bought that are still showing come back on the map.
+    -- The whole app theirs again (a start, a restart, back in the city, a
+    -- character logged in): the informant tips they bought that are still
+    -- showing and their meeting point come back on the map.
     if accessAllowed and accessMode == 'full' and not hadApp and App.askTips then App.askTips() end
+    -- A page still open from the character before drops all it holds of
+    -- theirs and reads again, as a job change between screens does.
+    if newCharacter and accessAllowed then
+        phone('SendCustomAppMessage', function()
+            Phone().SendCustomAppMessage('crimson-hitman', { type = 'push', reason = 'access' })
+        end)
+    end
 end)
 
 --- The page asking, as it opens, which screen the server said is this
@@ -598,8 +619,15 @@ RegisterNetEvent('crimson-hitman:notify', function(data)
     local title = tostring(data.title or L('client.crimson_hitman'))
     local content = tostring(data.content or '')
     if not CrimsonIntegrations.has('phone') then
-        BeginTextCommandThefeedPost('STRING')
-        AddTextComponentSubstringPlayerName(('%s: %s'):format(title, content):sub(1, 99))
+        -- The whole text, in pieces: one component takes 99 bytes, and the
+        -- one it was cut to lost the second half of most notices — the
+        -- part that says what to do ("within 12 m of them both, for 30
+        -- seconds"). CELL_EMAIL_BCON takes several components, and each
+        -- piece ends on a whole character.
+        BeginTextCommandThefeedPost('CELL_EMAIL_BCON')
+        for _, piece in ipairs(CrimsonUtil.utf8Pieces(('%s: %s'):format(title, content), 99, 10)) do
+            AddTextComponentSubstringPlayerName(piece)
+        end
         EndTextCommandThefeedPostTicker(false, true)
         return
     end

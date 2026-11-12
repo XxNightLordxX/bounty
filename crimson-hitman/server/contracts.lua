@@ -721,6 +721,19 @@ Contracts.afterClaim = {}
 Contracts.acceptGate = nil
 Contracts.afterAccept = nil
 
+--- Whether this player has played too little to be a target yet
+--- (Config.Immunity.MinTargetPlaytimeHours): the playtime half of isImmune,
+--- and what the target search marks them with before anybody fills in the
+--- whole form. A character from before the built-in tracker first started
+--- counts as having played enough, whatever it has counted for them since.
+--- Unknown playtime is not too new.
+---@param targetActor table
+---@return boolean
+function Contracts.tooNew(targetActor)
+    local hours, _, grandfathered = Identity.playtimeHours(targetActor)
+    return hours ~= nil and not grandfathered and hours < Config.Immunity.MinTargetPlaytimeHours
+end
+
 --- Playtime, session and post-respawn immunity (§14.19, §14.39).
 ---
 --- A check we can perform fails closed. A check we have no data for does
@@ -750,19 +763,19 @@ function Contracts.isImmune(targetActor, opts)
         -- let the kill expire. Quitting was already not a way out of a kill;
         -- rejoining was.
         local sessionAgo = Identity.sessionSeconds and Identity.sessionSeconds(targetActor.cid)
-        if not (deathAgo ~= nil and sessionAgo ~= nil and deathAgo > sessionAgo) then
+        -- And a claim by the operative who was at work on them when they
+        -- left (a handover counting, or a hit landed): coming back is not a
+        -- fresh arrival for them (Identity.leftEngagedWith).
+        local leftMidJob = opts and opts.hitmanCid and Identity.leftEngagedWith
+            and Identity.leftEngagedWith(targetActor.cid, opts.hitmanCid)
+        if not leftMidJob and not (deathAgo ~= nil and sessionAgo ~= nil and deathAgo > sessionAgo) then
             local floor = Config.Immunity.MinTargetSessionMinutes * 60
             return true, CH.ERR.TARGET_JUST_ON,
                 math.max(0, math.ceil(floor - (sessionAgo or session * 60)))
         end
     end
 
-    -- A character from before the built-in tracker first started counts as
-    -- having played enough, whatever it has counted for them since.
-    local hours, _, grandfathered = Identity.playtimeHours(targetActor)
-    if hours ~= nil and not grandfathered and hours < Config.Immunity.MinTargetPlaytimeHours then
-        return true, CH.ERR.TARGET_TOO_NEW
-    end
+    if Contracts.tooNew(targetActor) then return true, CH.ERR.TARGET_TOO_NEW end
 
     -- Someone who just got back up is not immediately fair game again:
     -- without this a multi-slot contract becomes respawn camping.
@@ -3470,7 +3483,12 @@ local function claimSlot(contractId, hitmanCid, fulfilment, opts)
     -- target who had just logged in that the target had just got up.
     local targetActor = Identity.byCitizenId(contract.target_cid)
     local immune, why, endsIn = false, nil, nil
-    if targetActor then immune, why, endsIn = Contracts.isImmune(targetActor, opts) end
+    if targetActor then
+        -- Who is claiming, for the one exemption that depends on it.
+        local immOpts = { hitmanCid = hitmanCid }
+        for k, v in pairs(opts or {}) do immOpts[k] = v end
+        immune, why, endsIn = Contracts.isImmune(targetActor, immOpts)
+    end
     -- With how long that protection has to run, so Verify kill can say
     -- whether the kill outlasts it (Photo.verifyAtScene).
     if immune then

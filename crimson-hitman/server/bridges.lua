@@ -173,6 +173,21 @@ function Bridges.onPlayerDropped(modules, cid)
         and GetResourceState(GetCurrentResourceName()) ~= 'stopping' then
         pcall(modules.kidnap.partyDropped, cid)
     end
+    -- And a target leaving while an operative was at work on them, kept for
+    -- their return (Identity.noteLeftEngaged): a handover counting on them,
+    -- or a hit landed within the session floor. Not as the resource stops.
+    if modules.identity.noteLeftEngaged
+        and GetResourceState(GetCurrentResourceName()) ~= 'stopping' then
+        pcall(function()
+            local hitmen = modules.kidnap.handlersOf and modules.kidnap.handlersOf(cid) or {}
+            if modules.death and modules.death.hitWithin then
+                local within = (Config.Immunity.MinTargetSessionMinutes or 0) * 60
+                for attacker in pairs(modules.death.hitWithin(cid, within)) do hitmen[attacker] = true end
+            end
+            hitmen[cid] = nil
+            modules.identity.noteLeftEngaged(cid, hitmen)
+        end)
+    end
 
     Lifecycle.run('a player leaving', modules, ON_PLAYER_LEFT, cid)
 
@@ -229,6 +244,11 @@ function Bridges.install(modules)
     -- released through this hook when a contract resolves.
     modules.contracts.onResolved = function(contractId)
         Lifecycle.run('a contract ending', modules, ON_CONTRACT_RESOLVED, contractId)
+        -- And the area its rumour named, kept across restarts until now.
+        if modules.intelRumours and modules.intelRumours.clearContract then
+            local ok, err = pcall(modules.intelRumours.clearContract, contractId)
+            if not ok then Log.always('a contract ending: intelRumours.clearContract raised: ' .. tostring(err)) end
+        end
     end
 
     --- A hitman who is no longer on a contract has no handover on it either.

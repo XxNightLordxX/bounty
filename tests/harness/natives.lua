@@ -5,6 +5,16 @@ local Env = require('tests.harness.env')
 
 local Natives = { env = Env }
 
+--- The vehicles.meta type of a few stock models, for the server vehicle
+--- natives' stubs: what CreateVehicleServerSetter must be given for each.
+Natives.VEHICLE_TYPES = {
+    romero = 'automobile', sultan = 'automobile', baller = 'automobile',
+    bati = 'bike', sanchez = 'bike', buzzard = 'heli', dinghy = 'boat',
+}
+--- The ones qbx_core's shared vehicle list has (GetVehiclesByHash); the rest
+--- of VEHICLE_TYPES are found by making one (CreateVehicle, GetVehicleType).
+Natives.SHARED_VEHICLES = { romero = true, sultan = true, baller = true, bati = true }
+
 --------------------------------------------------------------------------
 -- Core runtime
 --------------------------------------------------------------------------
@@ -230,12 +240,36 @@ function Natives.install()
     end
     -- Server-made vehicles, for the organisation's garage adapter
     -- (server/adapters/garage/onesync.lua). Entities from 900000 up.
+    --
+    -- The type must be the model's own (vehicles.meta), as the native's
+    -- documentation says: a bike made as an automobile is a broken entity.
+    -- The stub knows a few stock models (Natives.VEHICLE_TYPES) and makes
+    -- nothing (0) for one given the wrong type, noted in Env.badVehicles.
+    -- It took whatever it was given, so nothing could see 'automobile'
+    -- passed for every model.
     _G.CreateVehicleServerSetter = function(model, kind, x, y, z, h)
+        local want = Natives.VEHICLE_TYPES[model]
+        if want and want ~= kind then
+            Env.badVehicles = Env.badVehicles or {}
+            Env.badVehicles[#Env.badVehicles + 1] = { model = model, kind = kind, want = want }
+            return 0
+        end
         Env.vehicleSeq = (Env.vehicleSeq or 0) + 1
         local id = 900000 + Env.vehicleSeq
         Env.vehicles[id] = { model = model, kind = kind, x = x, y = y, z = z, h = h, state = {} }
         return id
     end
+    -- The server's own CreateVehicle and GetVehicleType, which
+    -- server/lib/vehicles.lua uses for a model the framework's shared list
+    -- does not have: a vehicle that exists, and its type.
+    _G.CreateVehicle = function(model, x, y, z, h)
+        Env.vehicleSeq = (Env.vehicleSeq or 0) + 1
+        local id = 900000 + Env.vehicleSeq
+        Env.vehicles[id] = { model = model, kind = Natives.VEHICLE_TYPES[model] or 'automobile',
+                             x = x, y = y, z = z, h = h, state = {}, probe = true }
+        return id
+    end
+    _G.GetVehicleType = function(v) return Env.vehicles[v] and Env.vehicles[v].kind or nil end
     _G.GetHashKey = function(name) return name end
     _G.SetVehicleNumberPlateText = function(v, plate) if Env.vehicles[v] then Env.vehicles[v].plate = plate end end
     _G.SetVehicleDoorsLocked = function(v, lock) if Env.vehicles[v] then Env.vehicles[v].locked = lock end end
@@ -842,6 +876,16 @@ function Natives.exportsProxy()
         GetPlayerByCitizenId = function(_, cid)
             local src = Env.byCitizen[cid]
             return src and Env.players[src] or nil
+        end,
+        --- qbx_core's shared vehicle list by hash (server/main.lua): the
+        --- row, or the whole list for a hash it does not have. The harness
+        --- hashes a name to itself (GetHashKey), and its list holds the
+        --- models in Natives.SHARED_VEHICLES.
+        GetVehiclesByHash = function(_, hash)
+            if Natives.SHARED_VEHICLES[hash] then
+                return { model = hash, type = Natives.VEHICLE_TYPES[hash] }
+            end
+            return { [1] = { model = 'sultan', type = 'automobile' } }
         end,
         --- qbx_core's offline lookup (server/player.lua): a character from
         --- the players table, in the city or away, or nil when none has the

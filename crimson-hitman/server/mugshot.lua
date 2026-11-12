@@ -94,6 +94,25 @@ local function rendererRunning()
     return Integrations.has('mugshot')
 end
 
+--- How soon to ask again for a face that has never arrived, per request
+--- that went unanswered: the client's own floor between renders. The
+--- refresh floor (Config.Mugshot.MinRefreshMinutes) is for replacing an
+--- image somebody already has. Applied to an entry with none, one first
+--- render that failed (a ped still loading, a slow upload) left the board
+--- without a headshot for five minutes. After three quick tries unanswered,
+--- it waits the refresh floor, as before.
+local NO_IMAGE_RETRY_SECONDS = 30
+local NO_IMAGE_QUICK_TRIES = 3
+
+--- How long an entry waits before it is asked for again, and from when.
+local function nextAsk(entry, floor)
+    if entry.data then return floor, entry.at end
+    local misses = entry.misses or 0
+    local since = entry.askedAt or entry.at
+    if misses >= NO_IMAGE_QUICK_TRIES then return floor, since end
+    return math.min(floor, NO_IMAGE_RETRY_SECONDS * math.max(1, misses)), since
+end
+
 --- Ask a player's own client for a fresh headshot, subject to the refresh
 --- floor. Returns whatever is cached right now; the new image arrives later.
 function Mugshot.request(cid)
@@ -111,14 +130,19 @@ function Mugshot.request(cid)
         entry.pending = false
         entry.misses = (entry.misses or 0) + 1
         -- After repeated silence, stop serving an image nobody is refreshing.
-        if entry.misses >= 3 then
+        -- An entry with no image serves nothing, and is kept: it is what
+        -- spaces out the asking (nextAsk).
+        if entry.misses >= 3 and entry.data then
             dropHandle(entry)
             cache[cid] = nil
             entry = nil
         end
     end
 
-    if entry and (os.time() - entry.at) < floor then return entry.data end
+    if entry then
+        local wait, since = nextAsk(entry, floor)
+        if (os.time() - since) < wait then return entry.data end
+    end
 
     local actor = Identity.byCitizenId(cid)
     if not actor then return entry and entry.data or nil end
@@ -133,6 +157,8 @@ function Mugshot.request(cid)
         misses = entry and entry.misses or 0,
         pending = true,
         pendingSince = os.time(),
+        -- When it was last asked, for an entry with no image yet (nextAsk).
+        askedAt = os.time(),
     }
     TriggerClientEvent('crimson-hitman:renderMugshot', actor.source)
 
@@ -204,7 +230,9 @@ function Mugshot.invalidate(cid)
     local entry = cache[cid]
     if not entry then return false end
     -- The floor still applies: an appearance change is a hint, not a licence
-    -- to render on demand.
+    -- to render on demand. To a face somebody has: an entry with none is
+    -- spaced out by its own wait (nextAsk), and keeping it is what does so.
+    if not entry.data then return false end
     if (os.time() - entry.at) < ((Config.Mugshot.MinRefreshMinutes or 5) * 60) then
         return false
     end

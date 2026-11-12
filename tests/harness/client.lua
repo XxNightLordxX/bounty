@@ -132,13 +132,30 @@ local BLIP_NATIVES = {
     SetBlipAsShortRange = function(blip, on) onBlip(blip, function(r) r.shortRange = on end) end,
     BeginTextCommandSetBlipName = function(kind) blipName = { kind = kind } end,
     AddTextComponentSubstringPlayerName = function(text)
-        if blipName then blipName.text = text end
+        if not blipName then return end
+        if blipName.feed then
+            -- As the game shows a feed post: each component is cut to 99
+            -- bytes, and a 'STRING' label shows only its first, where
+            -- CELL_EMAIL_BCON shows up to ten one after another. A stub
+            -- that kept whatever it was given could not see a notice lose
+            -- its second half.
+            blipName.parts = blipName.parts or {}
+            local most = blipName.kind == 'CELL_EMAIL_BCON' and 10 or 1
+            if #blipName.parts < most then
+                blipName.parts[#blipName.parts + 1] = tostring(text):sub(1, 99)
+            end
+            blipName.text = table.concat(blipName.parts)
+        else
+            blipName.text = text
+        end
     end,
     -- The game's feed ticker: a notice shown with no phone adapter.
     BeginTextCommandThefeedPost = function(kind) blipName = { kind = kind, feed = true } end,
     EndTextCommandThefeedPostTicker = function()
         Client.feed = Client.feed or {}
         Client.feed[#Client.feed + 1] = blipName and blipName.text
+        Client.feedParts = Client.feedParts or {}
+        Client.feedParts[#Client.feed] = blipName and blipName.parts
         blipName = nil
     end,
     EndTextCommandSetBlipName = function(blip)
@@ -440,10 +457,20 @@ function Client.runThreads()
 end
 
 --- Fire one of the client's net-event handlers, as the server would.
+---
+--- Every listener runs, as the engine runs them: the one RegisterNetEvent
+--- gave a handler and each AddEventHandler for the same name. Running only
+--- the first hid every file's own logout listener (missionsteps, org,
+--- rp_npc, main's characterGone) from any test that fired a logout.
 function Client.fire(event, ...)
-    local handler = Client.netEvents[event] or Client.handlers[event]
-    if not handler then return false, 'no handler for ' .. tostring(event) end
-    return withPhone(handler, ...)
+    local net, added = Client.netEvents[event], Client.handlers[event]
+    if not net and not added then return false, 'no handler for ' .. tostring(event) end
+    if net and added then
+        local args = table.pack(...)
+        withPhone(net, table.unpack(args, 1, args.n))
+        return withPhone(added, table.unpack(args, 1, args.n))
+    end
+    return withPhone(net or added, ...)
 end
 
 --- Invoke an NUI callback the way the page does, and collect its answer.

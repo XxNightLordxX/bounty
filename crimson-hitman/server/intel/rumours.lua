@@ -129,10 +129,47 @@ local function nearestDistrict(coords)
     return best
 end
 
+--- The area a rumour first named, kept in FXServer's KVP store beside this
+--- process's copy (areaOf), as `rumourArea:<mode>:<contractId>`. Kept only
+--- in memory, it was worked out again after every restart or crash from
+--- where the target stood then, so every hitman's board quietly gave them
+--- the target's new district a few times a day, without the broker.
+--- Dropped when the contract resolves (Rumours.clearContract).
+local KEPT = 'rumourArea:'
+
+local function keptKey(contractId)
+    return KEPT .. tostring(Config.Database.Mode) .. ':' .. tostring(contractId)
+end
+
+local function keptArea(contractId)
+    if type(GetResourceKvpString) ~= 'function' then return nil end
+    local ok, text = pcall(GetResourceKvpString, keptKey(contractId))
+    return ok and type(text) == 'string' and text ~= '' and text or nil
+end
+
+local function keepArea(contractId, area)
+    if type(SetResourceKvp) ~= 'function' then return end
+    pcall(SetResourceKvp, keptKey(contractId), area)
+end
+
+--- Forget the area a resolved contract's rumour named (Bridges'
+--- ON_CONTRACT_RESOLVED), here and in the KVP store.
+---@param contractId string
+function Rumours.clearContract(contractId)
+    if not contractId then return end
+    areaOf[contractId] = nil
+    if type(DeleteResourceKvp) == 'function' then pcall(DeleteResourceKvp, keptKey(contractId)) end
+end
+
 --- The district nearest where the target stood the first time the rumour
 --- was told, or a zone name where that cannot be read.
 local function areaFor(contract)
     if areaOf[contract.id] then return areaOf[contract.id] end
+    local kept = keptArea(contract.id)
+    if kept then
+        areaOf[contract.id] = kept
+        return kept
+    end
     local area
     if Feature.block(BLOCK).AreaMode == 'district' then
         local target = deps.identity.byCitizenId(contract.target_cid)
@@ -141,6 +178,7 @@ local function areaFor(contract)
     end
     area = area or zoneFor(contract)
     areaOf[contract.id] = area
+    keepArea(contract.id, area)
     return area
 end
 

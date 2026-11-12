@@ -162,6 +162,35 @@ function Util.toValidUtf8(text)
     return table.concat(out)
 end
 
+--- Cut text into pieces of at most `maxBytes` bytes each, never inside a
+--- character (a cut steps back past UTF-8 continuation bytes), and at most
+--- `maxPieces` of them; what is past the last piece is dropped. For the
+--- game's feed, whose text components take 99 bytes each.
+---@param text string
+---@param maxBytes integer
+---@param maxPieces integer
+---@return string[]
+function Util.utf8Pieces(text, maxBytes, maxPieces)
+    local out = {}
+    if type(text) ~= 'string' or text == '' then return out end
+    local i, n = 1, #text
+    while i <= n and #out < maxPieces do
+        local last = math.min(n, i + maxBytes - 1)
+        if last < n then
+            -- The byte after the cut is a continuation byte: the cut is
+            -- inside a character, so it moves back to that character's start.
+            while last >= i and (text:byte(last + 1) or 0) >= 0x80
+                and (text:byte(last + 1) or 0) <= 0xBF do
+                last = last - 1
+            end
+            if last < i then last = math.min(n, i + maxBytes - 1) end
+        end
+        out[#out + 1] = text:sub(i, last)
+        i = last + 1
+    end
+    return out
+end
+
 --- Clean a player-supplied string: trim, collapse whitespace, cap length and
 --- strip control characters. Returns nil when nothing usable remains.
 ---@param text any
@@ -764,6 +793,17 @@ end
 local function balance(src, account)
     local ok, value = pcall(function() return Framework().GetMoney(src, account) end)
     return ok and tonumber(value) or nil
+end
+
+--- A loaded character's balance in one account, or nil when it cannot be
+--- read: what a refusal tells the player about their own money.
+---@param player table qbx_core player
+---@param account string
+---@return number|nil
+function Util.balanceOf(player, account)
+    local src = liveSource(player)
+    if not src then return nil end
+    return balance(src, account)
 end
 
 --- Take money from a player, refusing rather than overdrawing them.

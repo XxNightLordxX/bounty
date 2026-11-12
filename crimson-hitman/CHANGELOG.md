@@ -6,6 +6,26 @@ say how things work now.
 
 ## 1.2.0
 
+**Player review fixes (1)**
+- A target who quits mid-handover, or while being shot, no longer comes back
+  with ten minutes' immunity for the operative at work on them; a crash with
+  nobody at work on them keeps the floor (`Config.Immunity
+  .MinTargetSessionMinutes`).
+- The Place form, the officer warning and the second tap say when a contract
+  goes out under the placer's name, and who sees it.
+- A character relog brings back the meeting point and informant tips on the
+  map, and an open app drops the last character's form and wallet.
+- A hitman who crashes during the placer's confirm window keeps the
+  handover; one who crashes right after a kill can still verify it.
+- Garage and disposal vehicles are made as their model's own type (bikes,
+  boats, helicopters), from qbx_core's shared list or the game.
+- A rumour's area stays the one first told across restarts.
+- Clearer refusals: a buyout the target cannot pay at all, a handover re-arm
+  with how long is left; *too new to be a target* in the Place search;
+  notices on the game feed (no phone) keep every word; a first headshot that
+  failed is asked for again within a minute; translated board and record
+  labels; "held" said once on a held payout.
+
 **Fixes (sweep 9)**
 - A kidnapping bonus raised after a reward top-up is escrowed as the full
   new percentage of every payout still held.

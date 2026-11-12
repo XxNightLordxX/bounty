@@ -212,11 +212,19 @@ function Kidnap.arm(contractId, hitmanCid)
         -- Its own code. This is the one refusal on the delivery path that
         -- waiting fixes, and BAD_STATE is worded "Not right now." — the same
         -- words as the contract having been cancelled underneath them.
-        return false, CH.ERR.HANDOVER_COOLDOWN
+        -- With how long is left: the setting can be anything from 0 to an
+        -- hour, and fixed words ("give it a minute") were wrong for every
+        -- value but the shipped one.
+        return false, CH.ERR.HANDOVER_COOLDOWN,
+            { retryAfter = math.max(1, cooldown - (os.time() - failedAt)) }
     end
     local farAt = lastFar[key(contractId, hitmanCid)]
-    if farAt and (os.time() - farAt) < math.min(cooldown, FAR_RETRY_SECONDS) then
-        return false, CH.ERR.HANDOVER_COOLDOWN
+    local farWait = math.min(cooldown, FAR_RETRY_SECONDS)
+    if farAt and (os.time() - farAt) < farWait then
+        -- No handover failed here: the last try found the placer too far,
+        -- and that is what the page says (far), with the seconds left.
+        return false, CH.ERR.HANDOVER_COOLDOWN,
+            { retryAfter = math.max(1, farWait - (os.time() - farAt)), far = true }
     end
 
     local count = 0
@@ -274,7 +282,7 @@ function Kidnap.arm(contractId, hitmanCid)
     -- one thing it could not be.
     if targetActor then
         local immune, why = Contracts.isImmune(targetActor,
-            { fulfilment = CH.FULFILMENT.KIDNAPPING })
+            { fulfilment = CH.FULFILMENT.KIDNAPPING, hitmanCid = hitmanCid })
         if immune then return false, why or CH.ERR.TARGET_PROTECTED end
     end
 
@@ -940,10 +948,18 @@ end
 --- Nothing accumulates: a cooldown older than its own length is dropped here,
 --- whoever it belongs to, and clearContract drops every one of a contract's
 --- the moment it resolves.
+---
+--- Except a countdown already held to the end and waiting on the placer's
+--- word (Config.Kidnap.PlacerConfirms): the hold is the proof, and nothing
+--- in that window needs the hitman here. Dropped, a hitman whose game
+--- crashed after holding the target the whole time lost the handover, and
+--- the placer's Confirm answered that none was waiting. It is confirmed or
+--- runs out as it would have; a payout to a hitman who is away is kept for
+--- them and delivered at their next login, as any is.
 function Kidnap.clearPlayer(cid)
     local now = os.time()
     for k, state in pairs(active) do
-        if state.hitmanCid == cid then
+        if state.hitmanCid == cid and not state.confirmLeftMs then
             active[k] = nil
             lastFailure[k] = now
             -- A countdown ended this way left only its kidnap_armed row, so
@@ -985,6 +1001,18 @@ function Kidnap.partyDropped(cid)
         end
     end
     return recorded
+end
+
+--- The operatives with a handover counting on this target now: who was at
+--- work on them, should they leave (Identity.noteLeftEngaged).
+---@param targetCid string
+---@return table<string, boolean> hitmen
+function Kidnap.handlersOf(targetCid)
+    local out = {}
+    for _, state in pairs(active) do
+        if state.targetCid == targetCid then out[state.hitmanCid] = true end
+    end
+    return out
 end
 
 function Kidnap.clearContract(contractId)

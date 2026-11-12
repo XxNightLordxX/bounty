@@ -1054,6 +1054,27 @@ function Death.lastHit(hitmanCid, targetCid)
     return targetCid and hitBy[targetCid] and hitBy[targetCid][hitmanCid] or nil
 end
 
+--- Everybody who landed a corroborated hit on this player in the last
+--- `withinSeconds`, and everybody whose hit, in range and against a
+--- baseline, still waits for the damage to show: who was at work on them,
+--- should they leave (Identity.noteLeftEngaged). A target who quits the
+--- moment they are shot leaves before the next reading corroborates it.
+---@param victimCid string
+---@param withinSeconds number
+---@return table<string, boolean> attackers
+function Death.hitWithin(victimCid, withinSeconds)
+    local out = {}
+    if not victimCid then return out end
+    local now = os.time()
+    for attackerCid, at in pairs(hitBy[victimCid] or {}) do
+        if now - at <= withinSeconds then out[attackerCid] = true end
+    end
+    for _, hit in ipairs(inflight[victimCid] or {}) do
+        if hit.attackerCid then out[hit.attackerCid] = true end
+    end
+    return out
+end
+
 --- Seconds since this player was last revived, or nil if never seen.
 function Death.sinceRespawn(cid)
     local at = respawnedAt[cid]
@@ -1766,13 +1787,18 @@ end
 
 --- Forget a player who disconnected.
 ---
---- A pending kill goes with its HITMAN, not with its victim. It used to go
+--- A pending kill goes with neither its victim nor its hitman. It used to go
 --- with either, so a target who closed the game while lying dead destroyed a
 --- kill the server itself had attributed: the hitman, standing over the body,
 --- was told there was no kill to verify. Nothing in the proof needs the victim
 --- online — the body's position is recorded with the death, and the revive
 --- check only applies to a victim who is still here to be revived. Quitting
---- is not a way out of a contract.
+--- is not a way out of a contract. Nor does it need the hitman online between
+--- the kill and the verify: one whose game crashed seconds after a kill, back
+--- over the body inside the window, was told no kill was waiting and to give
+--- it a few seconds, over and over. Their pending kill (and a kill their
+--- target's game named them for, unseen) stays for the rest of its life
+--- (Death.lastsFor), keyed by their citizen id, so only they can verify it.
 ---
 --- Nothing accumulates: a pending kill ages out of getPending and sweep on
 --- the photo token lifetime, whoever is online.
@@ -1829,11 +1855,8 @@ function Death.clearPlayer(cid)
     for src, watchedCid in pairs(watching) do
         if watchedCid == cid then watching[src] = nil end
     end
-    for key, record in pairs(pending) do
-        if record.hitmanCid == cid then pending[key] = nil end
-    end
     for key, record in pairs(unobserved) do
-        if record.hitmanCid == cid or record.victimCid == cid then unobserved[key] = nil end
+        if record.victimCid == cid then unobserved[key] = nil end
     end
 end
 

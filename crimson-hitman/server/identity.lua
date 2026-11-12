@@ -36,6 +36,55 @@ function Identity.endSession(cid)
     sessionStart[cid] = nil
 end
 
+--- Targets who left the city while an operative was at work on them:
+--- [cid] = { at = os.time() they left, hitmen = { [hitmanCid] = true } }.
+---
+--- Leaving ends the session and coming back starts a new one, and a new
+--- session is under the login-camping floor (Config.Immunity
+--- .MinTargetSessionMinutes). So a target who quit in the middle of a
+--- handover, or while being shot, came back with ten fresh minutes in which
+--- no handover could be armed and no kill paid: quitting was a reliable way
+--- out of a contract already running on them. The floor is there to stop
+--- people being camped as they walk in, not to shelter somebody who left
+--- mid-engagement. What is kept is only who was at work on them, and only
+--- for the floor's own length: the floor still applies to every other
+--- operative, and to anybody who left without one at work on them, so a
+--- genuine crash of somebody nobody was engaging costs them nothing.
+local leftEngaged = {}
+
+--- Note that this target left while these operatives were at work on them
+--- (Bridges.onPlayerDropped, before anything is cleared). Leaving again
+--- with nobody at work on them keeps what was noted: a second quickly
+--- repeated reconnect does not buy the floor back.
+---@param cid string the target who left
+---@param hitmen table<string, boolean> who was at work on them
+---@return boolean noted
+function Identity.noteLeftEngaged(cid, hitmen)
+    local now = os.time()
+    local floor = (Config.Immunity.MinTargetSessionMinutes or 0) * 60
+    for k, rec in pairs(leftEngaged) do
+        if now - rec.at > floor then leftEngaged[k] = nil end
+    end
+    if not cid or type(hitmen) ~= 'table' or next(hitmen) == nil or floor <= 0 then return false end
+    leftEngaged[cid] = { at = now, hitmen = hitmen }
+    return true
+end
+
+--- Whether this target's present session began within the session floor of
+--- their leaving while this operative was at work on them: the floor does
+--- not apply to that operative's claims on them (Contracts.isImmune).
+---@param cid string
+---@param hitmanCid string|nil
+---@return boolean
+function Identity.leftEngagedWith(cid, hitmanCid)
+    local rec = cid and leftEngaged[cid]
+    if not rec or not hitmanCid or not rec.hitmen[hitmanCid] then return false end
+    local began = sessionStart[cid]
+    if not began or began.observed then return false end
+    local floor = (Config.Immunity.MinTargetSessionMinutes or 0) * 60
+    return began.at >= rec.at and (began.at - rec.at) <= floor
+end
+
 --- How recently resolve() must have noticed somebody for a login event to
 --- count as the start of that same session.
 local FRESH_LOGIN_SECONDS = 60

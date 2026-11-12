@@ -19,6 +19,8 @@ local Mugshot = {}
 --- The floor means "not more than once per thirty seconds". It never meant
 --- "not for the first thirty seconds".
 local lastRender = nil
+--- Whether a render is under way now.
+local rendering = false
 
 --- How fast a headshot goes to the server, in bytes a second. A full-size
 --- one is tens of KB, which FiveM says to send as a latent event rather
@@ -40,9 +42,12 @@ local function renderSelf()
     -- Not GetGameTimer: it wraps, and after a wrap this subtraction is
     -- permanently negative, so the floor would refuse every render for the
     -- rest of the session and this player would have no mugshot at all.
+    -- Counted from the last render that produced a face: one that failed
+    -- (MugShotBase64 returning nothing while the ped loads) used up the
+    -- thirty seconds all the same, and the server's next ask was refused.
+    -- One render at a time, so a request landing during one starts no other.
     local now = CrimsonUtil.monotonicMs()
-    if lastRender and now - lastRender < 30000 then return false end
-    lastRender = now
+    if rendering or (lastRender and now - lastRender < 30000) then return false end
 
     local ped = PlayerPedId()
     if not ped or ped == 0 then return false end
@@ -51,10 +56,13 @@ local function renderSelf()
     -- (Config.Mugshot.RemoveBackground): cutting it out loads a 2.6 MB
     -- model in MugShotBase64's page for every render and never frees it.
     local cutOut = type(rules) == 'table' and rules.RemoveBackground == true
+    rendering = true
     local ok, image = pcall(function()
         return renderer.GetMugShotBase64(ped, cutOut)
     end)
+    rendering = false
     if not ok or type(image) ~= 'string' then return false end
+    lastRender = CrimsonUtil.monotonicMs()
 
     TriggerLatentServerEvent('crimson-hitman:mugshot', MUGSHOT_BPS, image)
     return true

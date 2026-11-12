@@ -904,6 +904,17 @@ function App.register()
         }
     end)
 
+    --- Whether a person listed for Place has played too little to be a
+    --- target (Contracts.tooNew): true, or nil so the row carries nothing.
+    --- Only the playtime floor, a standing fact the refusal already says:
+    --- never the session floor or the post-respawn one, which would say who
+    --- has just walked in or just got up.
+    local function tooNew(candidate)
+        if not deps.contracts.tooNew then return nil end
+        local ok, yes = pcall(deps.contracts.tooNew, candidate)
+        return (ok and yes) and true or nil
+    end
+
     -- Target search: returns opaque handles and capped results, never a
     -- roster of everyone online (§14.33). The handles are minted per
     -- searcher and expire, so a citizen id never reaches a client and one
@@ -934,6 +945,9 @@ function App.register()
                     -- The kind of job only ('law', 'emergency', 'legal'), so a
                     -- medic is not warned about as a sworn officer.
                     protectedAs = protecting and deps.identity.protectedCategory(protecting) or nil,
+                    -- Played too little to be a target yet: marked, as the
+                    -- refusal at Place says, before the form is filled in.
+                    tooNew = tooNew(candidate),
                 }
                 if #out >= Config.Targeting.MaxResults then break end
             end
@@ -1050,6 +1064,7 @@ function App.register()
                 -- to the metre, and asked again every second it tracked a
                 -- moving person through walls.
                 metres = entry.band and (entry.band * NEARBY_BAND) or nil,
+                tooNew = tooNew(entry.actor),
             }
         end
 
@@ -1478,8 +1493,8 @@ function App.register()
     end)
 
     handler('armKidnap', 'accept', function(actor, payload)
-        local ok, err = deps.kidnap.arm(payload.id, actor.cid)
-        if not ok then return false, err end
+        local ok, err, data = deps.kidnap.arm(payload.id, actor.cid)
+        if not ok then return false, err, data end
         return { armed = true }
     end)
 

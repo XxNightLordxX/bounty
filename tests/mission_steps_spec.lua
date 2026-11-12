@@ -329,7 +329,10 @@ describe('the markers across a leave and a return', function()
         end
     end)
 
-    it('a kill to verify goes with a hitman who leaves, and is not drawn again', function()
+    -- HITMAN-4: a hitman whose game crashed seconds after a kill, back over
+    -- the body inside its window, can still verify it. It went with them
+    -- (Death.clearPlayer), and they were told no kill was waiting.
+    it('a kill to verify stays with a hitman who leaves and is back in its window, and is drawn again', function()
         local s, f = stack()
         local c = taken(s, f)
         kill(s)
@@ -342,7 +345,25 @@ describe('the markers across a leave and a return', function()
         _G.source = 3
         Env.events['crimson-hitman:locationTips']({ __rid = 1 })
         _G.source = nil
-        falsy(sent()[3], 'the kill went with them (Death.clearPlayer), and its marker')
+        truthy(sent()[3] and sent()[3]['kill:' .. c.id], 'its marker drawn again')
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'still waiting to be verified')
+    end)
+
+    it('a kill a hitman who left was not back for in time is gone, and is not drawn again', function()
+        local s, f = stack()
+        local c = taken(s, f)
+        kill(s)
+        local saved = Env.players[3]
+        s.bridges.onPlayerDropped(s, 'HITMAN01')
+        Env.removePlayer(3)
+        Env.advance(Config.Completion.PhotoTokenLifetimeSeconds + 5)
+        Env.players[3] = saved
+        Env.byCitizen.HITMAN01 = 3
+        Env.clientEvents = {}
+        _G.source = 3
+        Env.events['crimson-hitman:locationTips']({ __rid = 1 })
+        _G.source = nil
+        falsy(sent()[3] and sent()[3]['kill:' .. c.id], 'no marker for a kill past its life')
         falsy(s.death.getPending(c.id, 'HITMAN01'))
     end)
 end)

@@ -354,8 +354,14 @@ buyUnlocked = function(actor, contractId, shown)
     -- With how much, and that it is whole from either account, so the page
     -- names the figure the server asked for (§14.18).
     if not paid then
+        -- And whether the two together would cover it (short: they would
+        -- not), so the page tells a target who has not got it that they
+        -- have not, rather than to move it into one account.
+        local bank = Util.balanceOf(actor.player, 'bank')
+        local cash = Util.balanceOf(actor.player, 'cash')
+        local short = bank ~= nil and cash ~= nil and (math.max(0, bank) + math.max(0, cash)) < amount
         return false, CH.ERR.INSUFFICIENT,
-            { part = 'buyout', need = amount, account = 'bank_or_cash' }
+            { part = 'buyout', need = amount, account = 'bank_or_cash', short = short or nil }
     end
 
     Audit.financial('bailout_paid', actor.cid, contractId, { amount = amount })

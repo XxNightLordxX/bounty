@@ -1551,6 +1551,14 @@
         + retryIn(result.data.retryAfter) + '.';
     }
 
+    // How long until a handover may be armed again (Config.Kidnap
+    // .RearmCooldownSeconds), and why: one that failed, or a try a moment
+    // ago that found the placer too far, when no handover had started.
+    if (result.err === 'handover_cooldown' && result.data && Number(result.data.retryAfter) > 0) {
+      return (result.data.far ? t('app.handover_far_a_moment_ago') : t('app.handover_failed_a_moment_ago'))
+        + retryIn(result.data.retryAfter) + '.';
+    }
+
     // How long until the placer's informant asks again.
     if (result.err === 'informant_cooldown' && result.data && Number(result.data.minutes) > 0) {
       var minutes = Math.ceil(Number(result.data.minutes));
@@ -2118,7 +2126,7 @@
     // A payout of theirs held for proof of intent: what is still missing.
     if (contract.intentHold) {
       node.appendChild(el('div', 'notice gold intent-hold',
-        intentHoldText(contract.intentHold, t('app.your_payout_here_is_held'))));
+        intentHoldText(contract.intentHold, t('app.your_payout_here_is_held'), true)));
     } else if (contract.intentRule && Number(contract.intentRule.messages) > 0) {
       // The rule while it can still be met, before a payout is held by it.
       var times = Number(contract.intentRule.messages);
@@ -3657,7 +3665,7 @@
     }
     asList(info.rows).forEach(function (q) {
       box.appendChild(el('div', 'hint', String(q.name) + ': ' + ({ pending: t('app.waiting_for_staff'),
-        placed: 'placed', declined: 'declined', expired: t('app.ran_out') }[q.state] || String(q.state))));
+        placed: t('app.placed_label'), declined: t('app.declined_label'), expired: t('app.ran_out') }[q.state] || String(q.state))));
     });
     return box;
   }
@@ -6589,6 +6597,7 @@
         };
         // With how long, which the reply carries (failText).
         if (r.err === 'rate_limited') { return fail(r); }
+        if (r.err === 'handover_cooldown' && r.data && Number(r.data.retryAfter) > 0) { return fail(r); }
         return say(reasons[r.err] || ERRORS[r.err] || t('app.cannot_start_the_handover'));
       }
       say(t('app.hold_position_2'), 'caution');
@@ -6882,6 +6891,10 @@
                 // can have been re-set under the dialog.
                 if (r.err === 'insufficient_funds') {
                   var need = Number(r.data && r.data.need) > 0 ? money(r.data.need) : amount;
+                  // Not there at all, in the two together: said plainly.
+                  if (r.data && r.data.short === true) {
+                    return say(t('app.you_do_not_have_the_buyout') + need + t('app.nothing_was_taken'));
+                  }
                   return say(t('app.your_bank_or_your_cash_has') + need
                     + t('app.on_its_own_it_is_never')
                     + t('app.account_and_try_again'));
@@ -8892,7 +8905,8 @@
   function homeSummary() {
     var data = state.mine;
     if (!data || data.burnerMissing) { return null; }
-    var parts = [['mine', asList(data.accepted).length, 'taken'], ['mine', asList(data.created).length, 'placed'],
+    var parts = [['mine', asList(data.accepted).length, t('app.taken_label')],
+      ['mine', asList(data.created).length, t('app.placed_label')],
       ['onme', asList(data.onMe).length, t('app.on_you')]];
     var row = el('div', 'row home-summary');
     parts.forEach(function (p) {
@@ -9136,7 +9150,7 @@
     asList(data.intentHeld).forEach(function (h) {
       any = true;
       view.appendChild(el('div', 'notice gold intent-hold', (h.ref ? t('app.ref_prefix', h.ref) : '')
-        + intentHoldText(h, t('app.a_payout_of_yours_is_held'))));
+        + intentHoldText(h, t('app.a_payout_of_yours_is_held'), true)));
     });
 
     // The one they came here for (just accepted, or tapped on the board)
@@ -9376,16 +9390,16 @@
       // Figures rather than pills: three grey capsules in a row read as
       // three buttons, and the numbers were the smallest thing in them.
       var stats = el('div', 'stats');
-      stats.appendChild(tally(record.completed, 'completed'));
+      stats.appendChild(tally(record.completed, t('app.completed_label')));
       // What the success rate is worked out from beside it: the rate was
       // drawn and the contracts that brought it down were not.
       if (typeof record.failed === 'number') {
         stats.appendChild(tally(record.failed, t('app.abandoned_or_lost')));
       }
-      stats.appendChild(tally(record.placed, 'placed'));
-      stats.appendChild(tally(record.survived, 'survived'));
+      stats.appendChild(tally(record.placed, t('app.placed_label')));
+      stats.appendChild(tally(record.survived, t('app.survived_label')));
       if (record.rate !== undefined && record.rate !== null) {
-        stats.appendChild(tally(record.rate + '%', 'success'));
+        stats.appendChild(tally(record.rate + '%', t('app.success_label')));
       }
       card.appendChild(stats);
       view.appendChild(card);
@@ -9990,7 +10004,13 @@
     terms.appendChild(anonSlot);
     function drawAnonOption() {
       anonSlot.innerHTML = '';
-      if (!anonymityOffered('creator', state.draft.targetProtected === true)) { return; }
+      // Not offered: placed under the placer's name, and said before they
+      // pay. The target's On Me card names who placed it, and a police
+      // target's screen shows it at once; nothing on the form said so.
+      if (!anonymityOffered('creator', state.draft.targetProtected === true)) {
+        anonSlot.appendChild(el('div', 'hint', t('app.placed_under_your_name_notice')));
+        return;
+      }
       var anon = make('input');
       anon.type = 'checkbox'; anon.id = 'anon';
       anon.checked = state.draft.anon === true;
@@ -10978,6 +10998,7 @@
             : advised('accepted')
               ? t('app.every_officer_in_the_city_will')
               : '')
+            + (placedNamed() ? t('app.placed_under_your_name_notice') + ' ' : '')
             + t('app.place_a_contract_on_them_anyway'),
           function () { state.leoConfirmed = true; submitContract(); },
           { yes: t('app.place_it'), no: t('app.cancel') });
@@ -10994,7 +11015,8 @@
         && !(state.placeArmed && state.placeArmed.key === armKey)) {
       var armedAt = Date.now();
       state.placeArmed = { key: armKey, at: armedAt,
-        label: t('app.tap_again_to_place') + (totalTaken > 0 ? ' \u2014 ' + money(totalTaken) : '') };
+        label: (placedNamed() ? t('app.tap_again_to_place_under_your_name') : t('app.tap_again_to_place'))
+          + (totalTaken > 0 ? ' \u2014 ' + money(totalTaken) : '') };
       setTimeout(function () {
         if (state.placeArmed && state.placeArmed.at === armedAt) {
           state.placeArmed = null;
@@ -11330,6 +11352,13 @@
      AllowAnonymousHitman, as the listing's settings carry them, or their
      whitelisted-target counterparts for a target on a whitelisted job. Off,
      the option is not drawn at all. A server that does not say offers it. */
+  /* Whether the contract on the Place form goes out under the placer's
+     name with no choice about it: anonymity is not offered for this target.
+     Where it is offered, its box says which it is. */
+  function placedNamed() {
+    return !anonymityOffered('creator', state.draft.targetProtected === true);
+  }
+
   function anonymityOffered(role, targetProtected) {
     var rules = anonymityRules(targetProtected);
     if (!rules) { return true; }
@@ -11654,6 +11683,13 @@
       // A band, never the figure: "under 20m" (app.lua, NEARBY_BAND).
       if (person.metres !== undefined && person.metres !== null) {
         tags.appendChild(el('span', 'chip ico i-pin', t('app.under_m', person.metres)));
+      }
+      // Played too little to be a target yet (Config.Immunity
+      // .MinTargetPlaytimeHours): said on the row and not pickable, rather
+      // than refused once the whole form is filled in.
+      if (person.tooNew === true) {
+        tags.appendChild(el('span', 'chip', t('app.too_new_to_target')));
+        pick.disabled = true;
       }
       if (tags.children.length > 0) { pick.appendChild(tags); }
 
@@ -12645,16 +12681,19 @@
      drawn from what the server sent; nothing here names a party it did
      not. */
 
-  function intentHoldText(hold, lead) {
+  /* `saysHeld`: the lead already says the payout is held ("Your payout
+     here is held."), so the rest does not say it again; it read "… is
+     held. Your payout is held until …". */
+  function intentHoldText(hold, lead, saysHeld) {
     var minutes = Number(hold.minutesLeft !== undefined ? hold.minutesLeft : hold.minutes) || 0;
     // Nothing left to do on it: the payout closed the contract, and with it
     // its thread and its meeting point. Listing them as ways to release it
     // offered what the server would refuse. Only the wait is said.
     if (hold.closed || !hold.missing) {
-      return lead + t('app.payout_held_released_within')
+      return lead + (saysHeld ? t('app.it_is_released_within') : t('app.payout_held_released_within'))
         + (minutes > 0 ? durationText(minutes) : t('app.a_moment')) + '.';
     }
-    return lead + t('app.your_payout_is_held_until_you')
+    return lead + (saysHeld ? t('app.it_is_released_once_you_show_intent') : t('app.your_payout_is_held_until_you'))
       + (hold.missing || t('app.proof_of_intent')) + '.'
       + (minutes > 0 ? t('app.it_is_released_anyway_within') + durationText(minutes) + '.' : '');
   }

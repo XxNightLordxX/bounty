@@ -17,13 +17,17 @@ CrimsonBoot.define('server.adapters.garage.onesync', function() --[[
 --- A server with its own garage script writes its own adapter beside this one
 --- (docs/dev/adapters.md).
 
+local Vehicles = CrimsonBoot.require('server.lib.vehicles')
+
 local Adapter = { resource = 'onesync', label = 'OneSync server vehicles' }
 
 function Adapter.detect() return type(CreateVehicleServerSetter) == 'function' end
 
 ---@return integer entity
 function Adapter.spawn(model, at)
-    return CreateVehicleServerSetter(GetHashKey(model), 'automobile', at.x, at.y, at.z, at.h or 0.0)
+    -- As the model's own type (vehicles.meta): a bike made as an automobile
+    -- is broken for everybody near it.
+    return CreateVehicleServerSetter(GetHashKey(model), Vehicles.typeOf(model), at.x, at.y, at.z, at.h or 0.0)
 end
 
 --- Kept by the server whoever is near it (orphan mode 2, KeepEntity), in the

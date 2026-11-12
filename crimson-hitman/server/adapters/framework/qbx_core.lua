@@ -49,5 +49,15 @@ function Adapter.RemovePlayerFromJob(...) return exports.qbx_core:RemovePlayerFr
 -- onDuty)); optional: an adapter without it leaves qbx duty as it is.
 function Adapter.SetJobDuty(...) return exports.qbx_core:SetJobDuty(...) end
 
+-- ============================================================================
+--                              VEHICLES
+-- ============================================================================
+
+-- The shared vehicle list's row for a model hash (server/main.lua:
+-- GetVehiclesByHash(key), which answers the whole list for a hash it does
+-- not have); optional: its `type` is what a server-made vehicle is made as
+-- (server/lib/vehicles.lua).
+function Adapter.GetVehiclesByHash(...) return exports.qbx_core:GetVehiclesByHash(...) end
+
 return Adapter
 end)

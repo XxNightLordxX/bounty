@@ -351,10 +351,14 @@ describe('a kill whose victim leaves', function()
         local _ = f
     end)
 
-    it('still lets the kill go with the hitman who made it', function()
+    -- HITMAN-4: nor with the hitman who made it, for the rest of its life:
+    -- one whose game crashed seconds after the kill verifies it once back.
+    it('keeps the kill for the hitman who made it while it lasts, then lets it go', function()
         local s, f, c = killed()
         s.death.clearPlayer('HITMAN01')
-        falsy(s.death.getPending(c.id, 'HITMAN01'))
+        truthy(s.death.getPending(c.id, 'HITMAN01'), 'kept for their return')
+        Env.advance(Config.Completion.PhotoTokenLifetimeSeconds + 5)
+        falsy(s.death.getPending(c.id, 'HITMAN01'), 'gone once its life is over')
     end)
 end)
 

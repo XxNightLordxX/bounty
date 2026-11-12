@@ -61,7 +61,7 @@ All off as shipped, each `Config.Intel.<Feature>.Enabled`:
 | **Tip safe zones** (`SafeZones`) | No tip while the target is inside a zone (`'x, y, radius, name'`); the hitman is told only that the informant can't place them |
 | **Go dark** (`GoDark`) | A tipped-off target pays to make tips on them find nothing for `Minutes`; the hitman gets their money back. Sold only while tips on that contract are (`Config.Intel.Enabled`, `Config.Intel.LocationTip.Enabled`, and `Config.TargetClasses.whitelisted.LocationTip` for a whitelisted-job target); a window already paid for holds, and stays on the card, to its end. The window stands still while its contract is on hold (a staff freeze, the restart hold and the restart, the app pause), as an informant tip's showing and wait do. Kept across a restart only once paid: a purchase the store could not keep is refunded, and a window that has passed is cleared from the store on the minute |
 | **The informant in person** (`InPerson`) | Every informant purchase only beside the informant NPC, which moves between its places |
-| **Rumours and a broker** (`Rumours`) | New contracts show only as rumours (area, reward band) until the broker NPC, or a player on a broker job, briefs the hitman for `BriefValidMinutes` |
+| **Rumours and a broker** (`Rumours`) | New contracts show only as rumours (area, reward band) until the broker NPC, or a player on a broker job, briefs the hitman for `BriefValidMinutes`. The area is the one first told, kept across restarts (FXServer's KVP store) until the contract ends |
 
 ## A hitman's record
 
@@ -475,7 +475,10 @@ character that loaded before the job was registered (a late start).
     a time, `GarageMaxOut` for the organisation): made by the server through
     the garage adapter (`Config.Integrations.Garage`, `onesync`: server
     vehicles, nobody's own car, kept by the server, a random plate, locked,
-    keys from the keys adapter), and returned near the spot. Out for
+    keys from the keys adapter; any model, made as its own vehicles.meta type,
+    bike, boat or helicopter included, read from qbx_core's shared vehicle list
+    or, failing that, from the game: server/lib/vehicles.lua, which body
+    disposal's vehicle uses too), and returned near the spot. Out for
     `GarageKeepMinutes`, or its member gone from the city or the organisation,
     it is taken away; every one goes at the resource's stop. Staff take one
     away from the panel. With the adapter `none`, the garage says so.

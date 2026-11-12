@@ -6832,7 +6832,7 @@ async function main() {
     click(cooling, 'Deliver alive');
     await settle();
     it('tells a hitman to wait out a failed handover, not "not right now"', function () {
-      truthy(cooling.notice().indexOf('minute') !== -1, cooling.notice());
+      truthy(cooling.notice().indexOf('Wait a little before you start another') !== -1, cooling.notice());
     });
   })();
 
@@ -14111,7 +14111,8 @@ async function main() {
       intentHold: { closed: true, minutesLeft: 30 } })]);
     it('W2: a hold on a closed contract says only when it is released', function () {
       const text = closedHold.view.textContent;
-      truthy(text.indexOf('Payout held: released within 30 minutes.') !== -1, text);
+      // Once (VISUAL-6): the card's own lead already says it is held.
+      truthy(text.indexOf('Your payout here is held. It is released within 30 minutes.') !== -1, text);
       falsy(/message the (client|person who placed it)|meeting point/.test(text), text);
     });
     const rule = await onMine([], [base({ role: 'hitman', myAlias: 'Operative #1',
@@ -15928,6 +15929,199 @@ async function main() {
       truthy(sentNames(org).indexOf('orgMine') !== -1, 'read');
     });
     void _p;
+  })();
+
+  /* ================================================================
+     Player review, part 1: the page's half of each finding
+     (tests/player_review_spec.lua has the server's).
+     ================================================================ */
+  await (async function playerReview1() {
+    function buttons(app) {
+      return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; })
+        .map(function (n) { return n.textContent; });
+    }
+    async function placeTab(settings, people) {
+      const board = JSON.parse(JSON.stringify(BOARD));
+      Object.assign(board.data.settings, settings || {});
+      const app = placeForm({ list: board,
+        searchTargets: { ok: true, data: people || [{ handle: 'tg00000001', name: 'Dana Reyes', protected: false }] } });
+      await settle(); await settle();
+      tab(app, 'place');
+      await settle(); await settle();
+      return app;
+    }
+    async function search(app, text) {
+      const query = pick(app, 'target-query');
+      query.value = text;
+      query.oninput();
+      app.timers.filter(function (t) { return t.ms === 300; }).forEach(function (t) { t.fn(); });
+      await settle(); await settle();
+    }
+    async function choose(app, name) {
+      await search(app, name);
+      const row = app.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf(name) === 0;
+      })[0];
+      truthy(row, 'listed: ' + name);
+      row.onclick();
+      await settle();
+      return row;
+    }
+    const NAMED = 'This contract is placed under your name: the target sees who placed it, '
+      + 'and a police target sees it at once.';
+
+    /* NEWCOMER-1: placed under the placer's name, said before they pay. */
+    const named = await placeTab({ anonymity: { placer: false, hitman: true } });
+    await choose(named, 'Dana');
+    it('NEWCOMER-1: the Place form says a named contract carries the placer\'s name, and who sees it', function () {
+      truthy(named.view.textContent.indexOf(NAMED) !== -1, named.view.textContent);
+    });
+    pick(named, 'reason', 'Unpaid debt');
+    pick(named, 'slot-cash-1', 5000);
+    named.document.getElementById('place-submit').onclick();
+    await settle();
+    it('NEWCOMER-1: and the second tap says so too', function () {
+      const label = named.document.getElementById('place-submit').textContent;
+      eq(label.indexOf('Tap again to place under your name'), 0, label);
+    });
+    const offered = await placeTab({ anonymity: { placer: true, hitman: true } });
+    await choose(offered, 'Dana');
+    it('NEWCOMER-1: not on the form where anonymity is offered (its box says it)', function () {
+      falsy(offered.view.textContent.indexOf(NAMED) !== -1, offered.view.textContent);
+      truthy(offered.view.textContent.indexOf('Place anonymously') !== -1);
+    });
+    pick(offered, 'reason', 'Unpaid debt');
+    pick(offered, 'slot-cash-1', 5000);
+    offered.document.getElementById('anon').checked = true;
+    offered.document.getElementById('anon').onclick();
+    offered.document.getElementById('place-submit').onclick();
+    await settle();
+    it('NEWCOMER-1: placing anonymously, the second tap does not say "under your name"', function () {
+      const label = offered.document.getElementById('place-submit').textContent;
+      eq(label.indexOf('Tap again to place'), 0, label);
+      eq(label.indexOf('under your name'), -1, label);
+    });
+    const officer = await placeTab({ anonymity: { placer: false, hitman: true } },
+      [{ handle: 'tg00000001', name: 'Ann Ryder', protected: true }]);
+    await choose(officer, 'Ann Ryder');
+    pick(officer, 'reason', 'Unpaid debt');
+    pick(officer, 'slot-cash-1', 5000);
+    officer.document.getElementById('place-submit').onclick();
+    await settle();
+    it('NEWCOMER-1: the officer warning says the contract carries their name', function () {
+      const text = officer.view.textContent;
+      truthy(text.indexOf(NAMED + ' Place a contract on them anyway?') !== -1, text);
+    });
+
+    /* NEWCOMER-5: somebody too new to be a target is marked, and not pickable. */
+    const fresh = await placeTab({}, [{ handle: 'tg00000002', name: 'Finn Friend', protected: false, tooNew: true },
+      { handle: 'tg00000001', name: 'Dana Reyes', protected: false }]);
+    await search(fresh, 'Fri');
+    it('NEWCOMER-5: a person too new to be a target says so on their row, and cannot be picked', function () {
+      const row = fresh.view.all().filter(function (n) {
+        return n.tagName === 'BUTTON' && n.textContent.indexOf('Finn Friend') === 0;
+      })[0];
+      truthy(row, 'listed: ' + buttons(fresh).join(' | '));
+      truthy(row.textContent.indexOf('Too new to be a target yet') !== -1, row.textContent);
+      truthy(row.disabled, 'not pickable');
+    });
+
+    /* NEWCOMER-2: a buyout the target has not got at all. */
+    const card = { id: 'ct00000002', reason: 'x', mode: 'exclusive', state: 'active',
+      reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+      hitmenActive: 0, targetName: 'You', role: 'target', bailoutAmount: 3000, bailoutAvailable: true };
+    async function buyout(data) {
+      const app = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [], onMe: [card] } },
+        ledger: LEDGER, bailout: { ok: false, err: 'insufficient_funds', data: data } });
+      await settle(); await settle();
+      tab(app, 'onme');
+      await settle(); await settle();
+      click(app, 'Buy out — $3,000');
+      click(app, 'Pay $3,000');
+      await settle(); await settle();
+      return app;
+    }
+    const broke = await buyout({ part: 'buyout', need: 3000, account: 'bank_or_cash', short: true });
+    it('NEWCOMER-2: a target who has not got the price is told so, not to move it into one account', function () {
+      eq(broke.notice(), 'You do not have $3,000. Nothing was taken.');
+    });
+    const split = await buyout({ part: 'buyout', need: 3000, account: 'bank_or_cash' });
+    it('NEWCOMER-2: one with it split between bank and cash is still told to move it', function () {
+      truthy(split.notice().indexOf('never split') !== -1, split.notice());
+    });
+
+    /* NEWCOMER-3: the board summary and the record tallies read their words by key. */
+    const qq = JSON.parse(JSON.stringify(LOCALE_EN));
+    Object.keys(qq.app).forEach(function (k) { qq.app[k] = '«' + qq.app[k]; });
+    require('./dom.js').localeXhr.extra['qq.json'] = qq;
+    const words = boot({ list: BOARD,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [] } },
+      ledger: { ok: true, data: { entries: [],
+        record: { completed: 7, failed: 1, placed: 2, survived: 1, rate: 87, standing: 'Known' } } } },
+      { location: { hostname: 'cfx-nui-renamed-by-the-operator', search: '?lang=qq' } });
+    await settle(); await settle(); await settle();
+    const summary = buttons(words).filter(function (l) { return /^\d+ /.test(l); });
+    tab(words, 'ledger');
+    await settle(); await settle();
+    const stats = words.view.all().filter(function (n) {
+      return n.classList && n.classList.contains('stats');
+    })[0];
+    const tallies = stats ? stats.children.map(function (n) { return n.textContent; }) : [];
+    delete require('./dom.js').localeXhr.extra['qq.json'];
+    it('NEWCOMER-3: the board\'s "taken" and "placed" are in the page\'s language', function () {
+      eq(summary.length, 3, summary.join(' | '));
+      summary.forEach(function (l) { truthy(l.indexOf('«') !== -1, 'in English: ' + l); });
+    });
+    it('NEWCOMER-3: and so is every tally on the Ledger record', function () {
+      truthy(tallies.length >= 5, tallies.join(' | '));
+      tallies.forEach(function (l) { truthy(l.indexOf('«') !== -1, 'in English: ' + l); });
+    });
+
+    /* FAILPATHS-3: how long a re-arm waits, and why. */
+    const HELD = { id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
+      state: 'accepted', role: 'hitman', mode: 'exclusive', reward: { total: 5000 }, canDeliver: true, hitmen: [] };
+    async function rearm(data) {
+      const app = boot({ list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: {} } },
+        mine: { ok: true, data: { created: [], accepted: [HELD], onMe: [] } }, ledger: LEDGER,
+        armKidnap: { ok: false, err: 'handover_cooldown', data: data } });
+      await settle(); await settle();
+      tab(app, 'mine');
+      await settle(); await settle();
+      click(app, 'Deliver alive');
+      await settle(); await settle();
+      return app;
+    }
+    const failed = await rearm({ retryAfter: 240 });
+    it('FAILPATHS-3: after a failed handover, the wait the server sent', function () {
+      eq(failed.notice(), 'Your last handover on this contract failed a moment ago. '
+        + 'You can start another in about 4 minutes.');
+    });
+    const far = await rearm({ retryAfter: 12, far: true });
+    it('FAILPATHS-3: after the placer was too far, that, and the seconds', function () {
+      eq(far.notice(), 'The person who placed this contract was not close enough a moment ago. '
+        + 'You can try again in 12 seconds.');
+    });
+
+    /* VISUAL-6: "held" once. */
+    const held = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    held.role = 'hitman'; held.myAlias = 'Operative #1';
+    held.intentHold = { missing: '2 more messages to the person who placed it', minutesLeft: 30 };
+    const hold = boot({ list: BOARD, ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [held], onMe: [],
+        intentHeld: [{ ref: 'ct00000009', missing: '3 more messages', minutesLeft: 12 }] } } });
+    await settle(); await settle();
+    tab(hold, 'mine');
+    await settle(); await settle();
+    it('VISUAL-6: a held payout says it is held once, on the card and in the banner', function () {
+      const text = hold.view.textContent + ' ' + hold.notice();
+      truthy(text.indexOf('Your payout here is held. It is released once you show intent: 2 more messages') !== -1, text);
+      truthy(text.indexOf('A payout of yours is held. It is released once you show intent: 3 more messages') !== -1, text);
+      falsy(/is held\.\s*Your payout is held/.test(text), text);
+    });
+    [named, offered, officer, fresh, broke, split, words, failed, far, hold].forEach(function (app, i) {
+      it('player review 1: drew cleanly (' + i + ')', function () { drewCleanly(app, 'player review ' + i); });
+    });
   })();
 
   console.log('');

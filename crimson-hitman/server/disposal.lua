@@ -53,6 +53,7 @@ local Geo = CrimsonBoot.requireShared('geo')
 local Feature = CrimsonBoot.require('server.lib.feature')
 local Registry = CrimsonBoot.require('server.places')
 local Integrations = CrimsonBoot.require('server.adapters.init')
+local Vehicles = CrimsonBoot.require('server.lib.vehicles')
 local L = CrimsonBoot.requireShared('locale').t
 
 --- The adapters answering now (server/adapters/): nil while none does.
@@ -327,7 +328,8 @@ Disposal.world = {
     spawn = function(model, at)
         -- A server-made networked vehicle (OneSync): nobody's own car, with
         -- no row in any garage's table, so nothing can store or sell it.
-        return CreateVehicleServerSetter(GetHashKey(model), 'automobile', at.x, at.y, at.z, at.h or 0.0)
+        -- As the model's own type (server/lib/vehicles.lua).
+        return CreateVehicleServerSetter(GetHashKey(model), Vehicles.typeOf(model), at.x, at.y, at.z, at.h or 0.0)
     end,
     -- Kept by the server whoever owns it or is near it: a server-made
     -- entity is otherwise deleted by OneSync once nobody is in scope of it
