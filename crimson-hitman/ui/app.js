@@ -543,8 +543,13 @@
     create: true, accept: true, cancel: true, withdrawReward: true, abandon: true,
     bailout: true, informant: true, placerInformant: true, addEscrow: true, improve: true,
     respondAmendment: true, submitPhoto: true, verifyKill: true, locationTip: true,
-    goDark: true, proofItem: true
+    goDark: true, proofItem: true, protectionPost: true
   };
+
+  /* And the organisation's money moves, each a request of
+     server/org/boss_ops.lua (rule 37 too): every tap makes a fresh nonce, so
+     a "Try again" after a timeout was a real second transfer. */
+  var ORG_MONEY_EVENTS = { orgDeposit: true, orgWithdraw: true, orgBonus: true };
 
   /* What each reward source is called when a refusal names it. */
   var SOURCE_WORDS = { cash: 'cash', bank: t('app.bank_money'), dirty: t('app.dirty_money'),
@@ -3142,6 +3147,9 @@
   }
 
   function orgWords(r) {
+    if (r && r.err === 'timeout' && ORG_MONEY_EVENTS[r.event] === true) {
+      return t('app.no_answer_yet_it_may_still');
+    }
     return (r && r.data && typeof r.data.message === 'string' && r.data.message)
       || (r && ERRORS[r.err]) || t('app.not_done_try_again');
   }

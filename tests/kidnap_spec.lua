@@ -680,7 +680,7 @@ describe('alive-only goods beside a percentage bonus', function()
 
     it('still tops the percentage up when it is raised', function()
         local s, f, c = placed()
-        eq(#s.escrow.bonusTopUp(c.id, 50, 100), 1, 'the cash bonus is recomputed')
+        eq(#s.escrow.bonusTopUp(c.id, 100), 1, 'the cash bonus is recomputed')
     end)
 end)
 

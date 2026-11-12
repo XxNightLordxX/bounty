@@ -764,7 +764,7 @@ local suites = {
     'meeting_blip_spec',
     'sweep6_spec',
     'target_limits_spec',
-    'org_core_spec', 'org_powers_spec', 'org_money_spec', 'money_sweep8_spec', 'org_places_spec', 'org_review_spec',
+    'org_core_spec', 'org_powers_spec', 'org_money_spec', 'money_sweep8_spec', 'sweep9_spec', 'org_places_spec', 'org_review_spec',
     'review_mst_spec',
     'admin_revamp_spec',
     'staff_reward_spec', 'handover_confirm_spec',

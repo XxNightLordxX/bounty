@@ -411,6 +411,17 @@ function Extras.probationGate(org, member, actor, contractId, contract, opts, ga
     return nil
 end
 
+--- Whether a member is a party to a contract: its placer or its target.
+--- An anonymous accept is never shown to either, nor decided by them: the
+--- member's name beside the contract would tell its placer exactly who
+--- chose not to be named.
+local function partyTo(cid, contractId)
+    if type(cid) ~= 'string' then return false end
+    local ok, contract = pcall(deps().storage.readContract, contractId)
+    if not ok or type(contract) ~= 'table' then return false end
+    return contract.creator_cid == cid or contract.target_cid == cid
+end
+
 --- After every other rule of the organisation passed: the accept held for
 --- a boss's approval where it needs one (AcceptApproval).
 ---@return string|nil err
@@ -451,7 +462,8 @@ function Extras.approvalGate(org, member, actor, contractId, opts, gate)
         worth = value(), probation = onProbation and true or nil, at = now(), expires = now() + wait * 60 }
     d.audit.action('org_accept_requested', actor.cid, contractId, { org = org.id, worth = value() })
     for cid in pairs(org.members) do
-        if cid ~= actor.cid and O.Engine.holds(org, cid, 'K6') then
+        if cid ~= actor.cid and O.Engine.holds(org, cid, 'K6')
+            and not (Pending[k].anonymous and partyTo(cid, contractId)) then
             tell(cid, L('org_extras.a_member_asks_to_take_a'))
         end
     end
@@ -483,6 +495,7 @@ function Org.decideAccept(who, id, approve)
         Pending[k] = nil
         return fail(ERR.NOT_FOUND)
     end
+    if p.anonymous and not who.staff and partyTo(who.cid, p.contractId) then return fail(ERR.NOT_FOUND) end
     local why = mayActOn(org, who, p.cid)
     if why then return fail(why) end
     Pending[k] = nil
@@ -835,9 +848,15 @@ end
 --- A contract as the organisation sees it: what any board card shows (the
 --- target's name, the worth, the rule, the mode, whether it is staked),
 --- never who placed it.
-local function contractView(org, viewer, id, entry, contract)
+local function contractView(org, viewer, id, entry, contract, party)
     local worth = worthOf(id)
     local member = entry.cid and org.members[entry.cid]
+    -- Taken: the member who accepted it is never named to its placer or
+    -- its target, who may have been told nothing else about the hitman.
+    if entry.state == 'taken' and party and contract
+        and (contract.creator_cid == party or contract.target_cid == party) then
+        member = nil
+    end
     return { id = id, state = entry.state, expiresIn = entry.state ~= 'taken' and math.max(0, entry.expires - now())
         or nil, targetName = contract and contract.target_name or nil, worth = worth,
         rule = contract and contract.fulfilment_rule or nil, mode = contract and contract.mode or nil,
@@ -870,7 +889,8 @@ function Org.work(who)
         out.contracts = {}
         local d = deps()
         for id, entry in pairs(org.settings.orgContracts) do
-            out.contracts[#out.contracts + 1] = contractView(org, viewer, id, entry, d.storage.readContract(id))
+            out.contracts[#out.contracts + 1] = contractView(org, viewer, id, entry, d.storage.readContract(id),
+                not who.staff and who.cid or nil)
         end
         table.sort(out.contracts, function(a, b) return a.id < b.id end)
         if held.K4 or held.K5 then
@@ -905,11 +925,14 @@ function Org.work(who)
         for k, p in pairs(Pending) do
             if p.expires <= now() then
                 Pending[k] = nil
-            elseif org.members[p.cid] then
+            elseif org.members[p.cid] and not (p.anonymous and not who.staff and partyTo(who.cid, p.contractId)) then
                 local m = org.members[p.cid]
+                -- Anonymous: staff see who only with IdentityAce.
+                local hidden = p.anonymous and who.staff and not who.canIdentify
                 out.approvals[#out.approvals + 1] = { id = p.id, contractId = p.contractId, worth = p.worth,
                     probation = p.probation, expiresIn = p.expires - now(),
-                    member = { ref = O.refFor(viewer, p.cid), name = (O.codenamesOn() and m.codename) or m.name },
+                    member = not hidden and { ref = O.refFor(viewer, p.cid),
+                        name = (O.codenamesOn() and m.codename) or m.name } or nil,
                     own = (not who.staff and p.cid == who.cid) or nil }
             end
         end
@@ -980,7 +1003,8 @@ function Extras.memberView(org, m, out)
 end
 
 --- What the panel's orgGet adds: each feature on, and its state.
-function Extras.staffView(org, viewer, out)
+---@param canIdentify boolean|nil the viewer holds IdentityAce
+function Extras.staffView(org, viewer, out, canIdentify)
     local any = false
     local view = {}
     for _, name in ipairs({ 'OrgContracts', 'AcceptApproval', 'Probation', 'Duty', 'Channel', 'Dossiers' }) do
@@ -989,7 +1013,7 @@ function Extras.staffView(org, viewer, out)
     end
     if not any then return end
     if on('OrgContracts') or on('AcceptApproval') then
-        local _, _, work = O.work({ staff = true, cid = viewer })
+        local _, _, work = O.work({ staff = true, cid = viewer, canIdentify = canIdentify == true })
         view.work = work
     end
     if on('Channel') then

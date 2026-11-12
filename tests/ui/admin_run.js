@@ -342,6 +342,9 @@ function settingsView(extra) {
       { key: 'Bailout.Command', category: 'rules-limits', group: 'Buyouts', label: 'Buyout command', kind: 'text',
         live: false, inflight: 'Read once at start: kept now, and in force after the next restart.',
         value: 'cleanse', default: 'cleanse', shipped: 'cleanse', hasShipped: true, source: 'config' },
+      { key: 'Roleplay.WitnessHeat.Title', category: 'rules-limits', group: 'Buyouts', label: 'Witness report title',
+        kind: 'text', live: true, maxLength: 60, says: 'plain text, no < or >',
+        value: 'Witness report', default: 'Witness report', shipped: 'Witness report', hasShipped: true, source: 'config' },
       { key: 'Cooldowns.create.per', category: 'developer', group: 'Rate limits', label: 'create: refill window (s)',
         about: 'Placing a contract. A full allowance refills over this many seconds: longer is stricter.',
         kind: 'number', min: 0.5, max: 3600, live: true, inflight: 'Read each time it is used.', stricter: 'up',
@@ -2344,6 +2347,27 @@ async function main() {
     await settled();
     it('a text key goes as the word typed', function () {
       eq(app.last('setSetting').data, { key: 'Bailout.Command', value: 'buyout' });
+    });
+    // Sweep 9 ADMIN-3: a text key's own rule, not one rule for every key.
+    const title = function () { return app.byId('st-row-Roleplay.WitnessHeat.Title'); };
+    it('a text key\'s hint is its own rule and length', function () {
+      has(app.text(title()), 'plain text, no < or >, up to 60 characters');
+    });
+    app.type(title().querySelector('input'), 'Shots fired downtown');
+    app.click(app.button('Save', title()));
+    app.click(app.button('Save', title()));
+    await settled();
+    it('a text with spaces is sent, the server checks its rule (sweep 9 ADMIN-3)', function () {
+      eq(app.last('setSetting').data, { key: 'Roleplay.WitnessHeat.Title', value: 'Shots fired downtown' });
+    });
+    const titleSets = app.requests('setSetting').length;
+    app.type(title().querySelector('input'), 'x'.repeat(61));
+    app.click(app.button('Save', title()));
+    app.click(app.button('Save', title()));
+    await settled();
+    it('and one longer than its own length is refused before it is sent', function () {
+      eq(app.requests('setSetting').length, titleSets);
+      has(app.text(title()), 'takes 1 to 60 characters');
     });
     const limit = app.byId('st-row-Limits.MaxAcceptedPerHitman');
     app.type(limit.querySelector('input'), '0');

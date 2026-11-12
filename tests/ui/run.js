@@ -13621,6 +13621,26 @@ async function main() {
         refused.notice());
       falsy(refused.notice().indexOf('Your protection job is posted.') !== -1, refused.notice());
     });
+
+    // Sweep 9 PHONE-2: a protection post out of time may have been charged.
+    const slowPost = boot({
+      list: board, ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [offerCard] } },
+      protectionPost: { ok: false, err: 'timeout', event: 'protectionPost' }
+    });
+    await settle(); await settle();
+    tab(slowPost, 'onme');
+    await settle(); await settle();
+    click(slowPost, 'Hire protection');
+    await settle();
+    slowPost.document.getElementById('dialog-amount').value = '1500';
+    click(slowPost, 'Next');
+    await settle();
+    click(slowPost, 'Pay $1,500');
+    await settle(); await settle();
+    it('hire protection out of time: may still go through, not try again (sweep 9 PHONE-2)', function () {
+      truthy(slowPost.notice().indexOf('No answer yet. It may still go through') !== -1, slowPost.notice());
+    });
   })();
 
   /* The roleplay features (Config.Roleplay): a rumour on the board in place
@@ -15072,6 +15092,23 @@ async function main() {
       eq(w[0].body.amount, 300);
       eq(w[0].body.reason, 'rent');
       truthy(/^[A-Za-z0-9_-]{1,32}$/.test(w[0].body.nonce), 'a nonce the server takes: ' + w[0].body.nonce);
+    });
+
+    // Sweep 9 PHONE-2: a money move out of time may have gone through; a
+    // second press is a new nonce, so a real second transfer.
+    const slowMoney = await openOrg(memberMine(ALL, { payroll: { salary: 0 } }), {
+      orgWithdraw: function () { return { ok: false, err: 'timeout', event: 'orgWithdraw' }; },
+      orgDeposit: function () { return { ok: false, err: 'timeout', event: 'orgDeposit' }; } });
+    await screen(slowMoney, 'Money');
+    type(slowMoney, 'wd-amount', '300');
+    type(slowMoney, 'wd-reason', 'rent');
+    click(slowMoney, 'Withdraw');
+    await settle();
+    click(slowMoney, 'Tap again to withdraw');
+    await settle(); await settle(); await settle();
+    const slowWithdraw = slowMoney.notice();
+    it('ORG TAB: a withdrawal out of time may still go through, never try again (sweep 9 PHONE-2)', function () {
+      truthy(slowWithdraw.indexOf('No answer yet. It may still go through') !== -1, slowWithdraw);
     });
 
     // Codename, own.

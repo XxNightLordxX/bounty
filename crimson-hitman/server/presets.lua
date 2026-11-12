@@ -151,8 +151,10 @@ local function find(name)
                      about = L('presets.the_values_these_settings_had_when') }
         end
     end
+    -- Own names are one name whatever their case: the store's id column is
+    -- case-insensitive on mysql, so 'night' and 'Night' are one row there.
     for _, row in ipairs(readOwn()) do
-        if row.name == name then
+        if row.name:lower() == tostring(name):lower() then
             return { name = row.name, values = row.values, at = row.at, by = row.by, own = true,
                      about = (L('presets.saved_by_the_settings_changed_from'))
                          :format(tostring(row.by or 'staff')) }
@@ -169,17 +171,20 @@ local function previewOf(preset)
     local Settings = deps.settings
     local keys = {}
     for key in pairs(preset.values) do keys[#keys + 1] = key end
-    table.sort(keys)
+    -- Ceilings first, each checked with the values before it.
+    Settings.order(keys)
     local out = { changes = {}, refused = {}, same = 0 }
+    local with = {}
     for _, key in ipairs(keys) do
         local entry = Settings.entry(key)
         local label = entry and entry.label or key
-        local value, _, why = Settings.check(key, Util.copy(preset.values[key]))
+        local value, _, why = Settings.check(key, Util.copy(preset.values[key]), with)
         if value == nil then
             out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(why or 'refused') }
         else
             local now = Settings.valueOf(key)
-            if Settings.describe(now) == Settings.describe(value) then
+            with[key] = value
+            if Settings.same(now, value) then
                 out.same = out.same + 1
             else
                 out.changes[#out.changes + 1] = { key = key, label = label,
@@ -246,8 +251,14 @@ function Presets.saveOwn(name, staff, actorCid)
     if not clean then return false, 'invalid_input', why end
     local rows = readRows()
     if not rows then return false, 'store_failed', L('presets.the_store_did_not_answer_nothing') end
+    -- One name whatever its case, on every store: the one saved under it is
+    -- replaced and keeps its name. On mysql the row id is case-insensitive,
+    -- so 'night' silently overwrote 'Night' and said a new one was saved,
+    -- while memory and json kept both.
     local own, replacing = readOwn(), false
-    for _, row in ipairs(own) do if row.name == clean then replacing = true end end
+    for _, row in ipairs(own) do
+        if row.name:lower() == clean:lower() then replacing, clean = true, row.name end
+    end
     if not replacing and #own >= Presets.OWN_MAX then
         return false, 'limit_reached', (L('presets.this_server_keeps_presets_of_its'))
             :format(Presets.OWN_MAX)

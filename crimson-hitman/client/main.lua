@@ -1308,7 +1308,9 @@ RegisterNUICallback('crimson:sendVerificationPhoto', function(data, rawCb)
 
     heldTokens[tostring(contractId)] = nil
     App.request('submitPhoto', { token = held.token, image = image }, function(result)
-        cb({ ok = result.ok, err = result.err, data = result.data })
+        -- The event named too, so a claim with no answer in time reads as one
+        -- that may still go through (the page's MONEY_EVENTS), never 'try again'.
+        cb({ ok = result.ok, err = result.err, data = result.data, event = result.event })
     end, { latent = true, timeoutMs = 60000 })
 end)
 
@@ -1402,7 +1404,7 @@ RegisterNUICallback('crimson:takeVerificationPhoto', function(data, rawCb)
                 end
                 App.request('submitPhoto', { token = token, url = src }, function(submitResult)
                     cb({ ok = submitResult.ok, err = submitResult.err,
-                         data = submitResult.data })
+                         data = submitResult.data, event = submitResult.event })
                 end)
             end)
             if not ok then

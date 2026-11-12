@@ -416,7 +416,7 @@ improveUnlocked = function(actor, contractId, kind, payload)
         -- so a payout landing during the take would move this underneath us.
         local slotAtRead = contract.next_slot or 1
 
-        local extra = Escrow.bonusTopUp(contractId, was, percent, slotAtRead)
+        local extra = Escrow.bonusTopUp(contractId, percent, slotAtRead)
 
         -- The same ceiling the rest of the escrow answers to. This path
         -- builds its lines itself rather than going through validate, so

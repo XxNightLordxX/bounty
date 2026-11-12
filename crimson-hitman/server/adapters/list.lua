@@ -2,9 +2,10 @@ CrimsonBoot.define('server.adapters.list', function() --- The adapters this buil
 --- (docs/dev/adapters.md). A server that writes its own adds its name here,
 --- in front of the shipped one to be tried first, and its file beside the
 --- others: server/adapters/<kind>/<name>.lua for a server kind, or
---- client/adapters/<kind>/<name>.lua (plus its line in fxmanifest.lua) for
---- a client kind. Client kinds are listed here too, so the server can say
---- which is in use and the admin panel can offer it.
+--- client/adapters/<kind>/<name>.lua for a client kind (fxmanifest.lua
+--- loads every file in both folders by pattern). Client kinds are listed
+--- here too, so the server can say which is in use and the admin panel can
+--- offer it.
 
 return {
     framework   = { 'qbx_core' },

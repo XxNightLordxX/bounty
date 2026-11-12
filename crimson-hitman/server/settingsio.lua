@@ -102,9 +102,19 @@ function SettingsIO.preview(text)
     local Settings = deps.settings
     local keys = {}
     for key in pairs(body.settings or {}) do keys[#keys + 1] = key end
-    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+    -- Ceilings first, each checked with the values before it: a key under
+    -- a ceiling the same text raises is checked, and applied, after it.
+    local named, other = {}, {}
+    for _, key in ipairs(keys) do
+        if type(key) == 'string' then named[#named + 1] = key else other[#other + 1] = key end
+    end
+    Settings.order(named)
+    table.sort(other, function(a, b) return tostring(a) < tostring(b) end)
+    for _, key in ipairs(other) do named[#named + 1] = key end
+    keys = named
     local out = { changes = {}, refused = {}, same = 0, presets = {}, resource = body.resource,
                   values = {} }
+    local with = {}
     for _, key in ipairs(keys) do
         local raw = body.settings[key]
         local entry = type(key) == 'string' and Settings.entry(key) or nil
@@ -122,12 +132,14 @@ function SettingsIO.preview(text)
         elseif entry.readonly then
             out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(entry.readonly) }
         else
-            local value, _, refusal = Settings.check(key, Util.copy(raw))
+            local value, _, refusal = Settings.check(key, Util.copy(raw), with)
             if value == nil then
                 out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(refusal or 'refused') }
-            elseif Settings.describe(Settings.valueOf(key)) == Settings.describe(value) then
+            elseif Settings.same(Settings.valueOf(key), value) then
                 out.same = out.same + 1
+                with[key] = value
             else
+                with[key] = value
                 out.changes[#out.changes + 1] = { key = key, label = label,
                     from = Settings.describe(Settings.valueOf(key)), to = Settings.describe(value) }
                 out.values[key] = raw

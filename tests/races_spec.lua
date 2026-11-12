@@ -1494,7 +1494,7 @@ describe('more of the acceptance, pinned', function()
                 s.escrow.release(c.id, f.creator.cid, { line = l.id }, 'test_returned')
             end
         end
-        local extra = s.escrow.bonusTopUp(c.id, 20, 30)
+        local extra = s.escrow.bonusTopUp(c.id, 30)
         local onTwo = false
         for _, l in ipairs(extra) do if l.slot == 2 then onTwo = true end end
         truthy(onTwo, 'a collection nobody has been paid for was treated as paid')
@@ -1546,7 +1546,7 @@ describe('more of the acceptance, pinned', function()
         Env.players[1]._refuseMoney = false
         eq(s.storage.readEscrowLine(bankLine).owed_to, 'CREATOR1', 'queued back to the client')
 
-        local extra = s.escrow.bonusTopUp(c.id, 10, 50, 1)
+        local extra = s.escrow.bonusTopUp(c.id, 50, 1)
         for _, l in ipairs(extra) do
             falsy(l.source == 'bank', 'a bonus on a baseline the client is being given back')
         end

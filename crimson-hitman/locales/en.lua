@@ -1308,6 +1308,7 @@ CrimsonLocales.en = {
     ['settings.has_to_be_two_numbers'] = 'has to be two numbers',
     ['settings.has_to_be_whole_numbers'] = 'has to be whole numbers',
     ['settings.has_to_be_within_to'] = 'has to be within %s to %s',
+    ['settings.range_from_to'] = '%s to %s',
     ['settings.has_its_from_above_its_to'] = 'has its from above its to',
     ['settings.cannot_be_changed_here'] = 'cannot be changed here',
     ['settings.the_start_up_checks_refuse_it'] = 'the start-up checks refuse it',

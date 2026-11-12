@@ -2716,6 +2716,22 @@ do
                 .. 'timeout that may still pay'):format(name)
         end
     end
+    -- And the organisation's (ORG_MONEY_EVENTS), each a request of
+    -- server/org/boss_ops.lua.
+    local bossSrc = read('crimson-hitman/server/org/boss_ops.lua') or ''
+    local orgBlock = uiSrc:match('var ORG_MONEY_EVENTS%s*=%s*(%b{})') or ''
+    local orgNames = 0
+    for name in orgBlock:gmatch('([%a_][%w_]*)%s*:') do
+        orgNames = orgNames + 1
+        if not bossSrc:find("{ '" .. name .. "'", 1, true) then
+            failures[#failures + 1] = ('ui/app.js ORG_MONEY_EVENTS names %s, which server/org/boss_ops.lua '
+                .. 'has no request for'):format(name)
+        end
+    end
+    if orgNames < 3 then
+        failures[#failures + 1] = ('the money-request check read %d names from ui/app.js '
+            .. 'ORG_MONEY_EVENTS'):format(orgNames)
+    end
 end
 
 --------------------------------------------------------------------------

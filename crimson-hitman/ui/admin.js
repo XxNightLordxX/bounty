@@ -3499,7 +3499,7 @@
      every open of the section and after every change. */
   var SCHEMA_FIELDS = ['group', 'label', 'about', 'category', 'money', 'area', 'shipped', 'hasShipped',
     'kind', 'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter',
-    'strict', 'whole', 'default'];
+    'strict', 'whole', 'default', 'maxLength', 'says'];
   var settingsSchema = null; // { hash, rows: { [key]: fixed parts } }
   /** What else redraws when the settings arrive (Organisation, Locations,
       Boss permissions' limits, the header search). */
@@ -3648,7 +3648,7 @@
     var shownValue = String(entry.value == null ? '' : entry.value);
     var range = entry.kind === 'number'
       ? t('admin.range_to', entry.min != null ? entry.min : '…', entry.max != null ? entry.max : '…') + (entry.integer ? t('admin.whole_suffix') : '')
-      : 'letters, digits, - and _';
+      : (entry.says ? String(entry.says) : 'letters, digits, - and _') + ', ' + t('admin.up_to_characters', Number(entry.maxLength) || 64);
     return h('div.st-edit',
       field(bind, { value: shownValue, class: entry.kind === 'text' ? 'is-grow' : 'is-short',
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
@@ -4233,9 +4233,15 @@
       return { value: n };
     }
     if (entry.kind === 'text') {
+      /* Only the length here (the catalogue's own, sent with the row): each
+         text key has its own rule (a title takes spaces, an event name a
+         colon), and the server checks it and says why in its refusal. One
+         rule for every key refused 'Witness report' and even the shipped
+         value before anything was sent. */
       var word = trim(text);
-      if (!/^[A-Za-z0-9_-]{1,64}$/.test(word)) {
-        return { error: t('admin.not_changed') + entry.key + t('admin.is_letters_digits_and_only') };
+      var most = Number(entry.maxLength) || 64;
+      if (!word.length || word.length > most) {
+        return { error: t('admin.not_changed_takes_1_to_characters', entry.key, most) };
       }
       return { value: word };
     }

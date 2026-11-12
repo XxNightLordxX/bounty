@@ -170,7 +170,8 @@ character that loaded before the job was registered (a late start).
   always do everything themselves. A boss passes on only what they hold, only
   to roles and members below their rank (level with it only with D3, never
   above), never to or on themselves, never past a staff lock (a grant or deny
-  staff made, on a member or a role, is staff's alone to change); revoking a power
+  staff made, on a member or a role, is staff's alone to change, and a per-member
+  grant or deny a boss made is theirs against anyone at or below their rank); revoking a power
   from a boss makes every grant they made of it inactive at once, and allowing
   it again restores them. The organisation is never left without a member in
   its top boss role, unless staff do it. Every rule is checked on the server
@@ -185,7 +186,12 @@ character that loaded before the job was registered (a late start).
   funds; K1 contract access rules, K2 boss pick, K3 role cooldowns; L1 move the
   office, L2 sign-up spot, L3 meeting spots; N1 notice, N2 applications; S1
   label, S2 boss menu layout, S3 office requirement; D2 per-member grants, D3
-  promote to own rank. Hire, fire, role edits, cuts and withdrawals need the
+  promote to own rank. A role moved to another rank takes its staff limit, cut,
+  access rules, salary, armory limit and hidden tabs with it, and a deleted
+  role leaves none behind for the next role made at that rank; a member who
+  leaves (fired, or the job taken elsewhere) leaves no own cut, codename
+  record, probation, strike suspension or channel mute behind for a re-hire
+  (their discipline and counts stay as the record). Hire, fire, role edits, cuts and withdrawals need the
   **boss office** by default (the server's own position, `OfficeRadius`).
   Every bound is `Config.Organisation.Limits`, and staff may set an
   organisation's own.
@@ -315,7 +321,10 @@ character that loaded before the job was registered (a late start).
   - **Accept approval** (`AcceptApproval`). A member's accept worth more than
     `ApprovalAbove` (0: every accept), or any accept of a member on probation
     (`ApprovalProbation`), waits for a boss holding **K6 Approve accepts**
-    (never one's own; only below the boss's rank). Nothing is taken while it
+    (never one's own; only below the boss's rank). An anonymous accept is
+    never shown to, nor decided by, a boss who placed the contract or is its
+    target, and staff see who it is only with `IdentityAce`; nor is the member
+    who took an organisation contract named to its placer. Nothing is taken while it
     waits. Approved, the accept runs then with every rule checked again, the
     stake and the fee the page showed included; refused, or not answered in
     `ApprovalMinutes`, nothing was ever taken, so the stake stays with the

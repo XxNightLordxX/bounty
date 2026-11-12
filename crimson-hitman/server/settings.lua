@@ -1977,11 +1977,37 @@ end
 --- setting caps it (`ceiling`, a key read from the config in force).
 ---@param entry table
 ---@return number|nil
-function Settings.maxOf(entry)
-    local ceiling = entry.ceiling and tonumber(read(Config, entry.ceiling))
+---@param config table|nil the config to read the ceiling from (the live one by default)
+function Settings.maxOf(entry, config)
+    local ceiling = entry.ceiling and tonumber(read(config or Config, entry.ceiling))
     if ceiling and (not entry.max or ceiling < entry.max) then return ceiling end
     return entry.max
 end
+
+--- The keys some other key's range is capped by (an entry's `ceiling`).
+local CEILINGS = {}
+for i = 1, #CATALOGUE do
+    if CATALOGUE[i].ceiling then CEILINGS[CATALOGUE[i].ceiling] = true end
+end
+
+--- A list of keys in the order a batch checks and applies them: every key
+--- that caps another first, then the rest, each part by name. Checked by
+--- name alone, 'Ledger.Depth' came before 'Ledger.MaxDepthHardCap' and was
+--- refused against the ceiling the same batch was raising.
+---@param keys string[] sorted in place
+---@return string[] keys
+function Settings.order(keys)
+    table.sort(keys, function(a, b)
+        local ca, cb = CEILINGS[a] == true, CEILINGS[b] == true
+        if ca ~= cb then return ca end
+        return tostring(a) < tostring(b)
+    end)
+    return keys
+end
+
+--- Whether two values are the same value (a list, a range, a number).
+---@return boolean
+function Settings.same(a, b) return same(a, b) end
 
 --- Whether a start-up line names a key: in full, or by its last part where
 --- no other key on the list ends in it ('MinMultiplier', not 'Enabled').
@@ -2042,7 +2068,8 @@ end
 --- as a number or as digits, a switch as a boolean, a list as job names.
 ---@return any value
 ---@return string|nil why
-local function normalise(entry, raw)
+---@param config table|nil the config a `ceiling` is read from (the live one by default)
+local function normalise(entry, raw, config)
     if entry.kind == 'switch' then
         if type(raw) ~= 'boolean' then return nil, L('settings.has_to_be_on_or_off') end
         return raw
@@ -2062,7 +2089,7 @@ local function normalise(entry, raw)
             if math.floor(n) ~= n then return nil, L('settings.has_to_be_a_whole_number') end
             n = math.tointeger(n) or n
         end
-        local max = Settings.maxOf(entry)
+        local max = Settings.maxOf(entry, config)
         if (entry.min and n < entry.min) or (max and n > max) then
             return nil, (L('settings.has_to_be_from_to')):format(tostring(entry.min), tostring(max))
         end
@@ -2197,14 +2224,29 @@ end
 ---@return string|nil why a sentence that names the key, without its full stop
 ---@return string[]|nil warnings with a value: the start's warnings that name
 --- the key, which refuse nothing and were said nowhere (W145)
-function Settings.check(key, raw)
+---@param with table|nil [key] = value: other values checked to go in beside
+--- this one (an import, a preset, the setup), so a key is checked against a
+--- ceiling raised in the same batch (Settings.order puts ceilings first)
+function Settings.check(key, raw, with)
     if type(key) == 'string' and DENY[key] then return nil, 'read_only', DENY[key].why end
     local entry = type(key) == 'string' and byKey[key] or nil
     if not entry then return nil, 'not_allowed', L('settings.not_a_setting_the_panel_may') end
     if entry.readonly then return nil, 'read_only', entry.readonly end
-    local value, why = normalise(entry, raw)
+    local changes, config = { [key] = true }, nil
+    if type(with) == 'table' and next(with) ~= nil then
+        config = copyOf(Config)
+        changes = {}
+        for k, v in pairs(with) do
+            if byKey[k] and k ~= key then
+                write(config, k, stored(byKey[k], v))
+                changes[k] = v
+            end
+        end
+    end
+    local value, why = normalise(entry, raw, config)
     if value == nil then return nil, 'invalid_value', refusal(key, why) end
-    local ok, reason, warn, other = fits({ [key] = value })
+    changes[key] = value
+    local ok, reason, warn, other = fits(changes)
     if not ok then return nil, 'invalid_value', refusal(key, reason, other) end
     local said = {}
     for _, line in ipairs(warn or {}) do
@@ -2558,7 +2600,7 @@ function Settings.boot()
     end
     local keys = {}
     for key in pairs(type(rows) == 'table' and rows or {}) do keys[#keys + 1] = key end
-    table.sort(keys)
+    Settings.order(keys)
 
     local function rowOf(key) return type(rows[key]) == 'table' and rows[key] or {} end
     local function notApplied(key, why)
@@ -2569,7 +2611,12 @@ function Settings.boot()
             :format(key, tostring(why)))
     end
 
-    -- Each value first as the panel would take it, on its own.
+    -- Each value first as the panel would take it, on its own: a ceiling
+    -- read from the config with the stored ceilings in it (they come first),
+    -- or a value valid only under a ceiling raised from the panel was
+    -- dropped at every restart. The checks below still refuse a pair that
+    -- does not fit together.
+    local ceilings = copyOf(Config)
     local wanted, order = {}, {}
     for _, key in ipairs(keys) do
         local entry = byKey[key]
@@ -2582,13 +2629,14 @@ function Settings.boot()
         elseif entry.readonly then
             why = entry.readonly
         else
-            value, why = normalise(entry, raw)
+            value, why = normalise(entry, raw, ceilings)
         end
         if value == nil then
             notApplied(key, why or 'invalid_value')
         else
             wanted[key] = value
             order[#order + 1] = key
+            if CEILINGS[key] then write(ceilings, key, stored(entry, value)) end
         end
     end
 
@@ -2646,6 +2694,11 @@ end
 ---@return string
 function Settings.describe(value)
     if type(value) == 'boolean' then return value and 'on' or 'off' end
+    -- A range ({ min, max }): table.concat reads only a list, so every
+    -- range read '[]' and compared equal to every other.
+    if type(value) == 'table' and value.min ~= nil and value.max ~= nil and value[1] == nil then
+        return (L('settings.range_from_to')):format(tostring(value.min), tostring(value.max))
+    end
     if type(value) == 'table' then return '[' .. table.concat(value, ', ') .. ']' end
     return tostring(value)
 end
@@ -2816,6 +2869,10 @@ function Settings.view()
             integer = entry.integer or nil, live = entry.live ~= false, place = entry.place,
             inflight = entry.inflight, readonly = entry.readonly, destroys = entry.destroys,
             stricter = entry.stricter, strict = entry.strict, whole = entry.whole or nil,
+            -- A text key's own length and rule in words, for the page's
+            -- hint and its length check (the server checks the rule).
+            maxLength = entry.kind == 'text' and (entry.maxLength or 64) or nil,
+            says = entry.kind == 'text' and entry.says or nil,
             value = current(entry), default = copyOf(defaults[entry.key]),
             source = override and 'panel' or 'config',
             by = override and override.by or nil, at = override and override.at or nil,

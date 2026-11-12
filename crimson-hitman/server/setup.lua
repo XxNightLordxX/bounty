@@ -138,20 +138,24 @@ function Setup.preview(values)
     for key in pairs(type(values) == 'table' and values or {}) do
         if type(key) == 'string' then keys[#keys + 1] = key end
     end
-    table.sort(keys)
+    -- Ceilings first, each checked with the values before it.
+    Settings.order(keys)
     local out = { changes = {}, refused = {}, same = 0 }
+    local with = {}
     for _, key in ipairs(keys) do
         local entry = allowed[key] and Settings.entry(key) or nil
         local label = entry and entry.label or key
         if not entry or entry.readonly then
             out.refused[#out.refused + 1] = { key = key, label = label, why = L('setup.not_one_the_setup_changes') }
         else
-            local value, _, why = Settings.check(key, Util.copy(values[key]))
+            local value, _, why = Settings.check(key, Util.copy(values[key]), with)
             if value == nil then
                 out.refused[#out.refused + 1] = { key = key, label = label, why = tostring(why or 'refused') }
-            elseif Settings.describe(Settings.valueOf(key)) == Settings.describe(value) then
+            elseif Settings.same(Settings.valueOf(key), value) then
                 out.same = out.same + 1
+                with[key] = value
             else
+                with[key] = value
                 out.changes[#out.changes + 1] = { key = key, label = label,
                     from = Settings.describe(Settings.valueOf(key)), to = Settings.describe(value), value = value }
             end

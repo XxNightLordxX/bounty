@@ -823,6 +823,20 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Reset those settings, paste the text under Import and **Read it**: each change is listed from and to, nothing has changed yet; edit the text to add `"Database.Mode":"memory"` and read it again: it is refused with why
 - [ ] **Apply it** (two clicks): the settings are back, each in Change history with Undo, and your preset is listed (or said to be there already)
 
+## 35. Sweep 9 checks
+
+- [ ] Place a kidnapping contract with a 10% bonus on $10,000, top it up with another $10,000 (Edit), then raise the bonus to 20%: you are charged $3,000 more, and a live delivery pays a $4,000 bonus
+- [ ] Organisation: give an empty role a power in Boss permissions and a cut, move it to another rank (staff Roles), `restart crimson-hitman`: the power and the cut are still on the moved role, and a new role made at the old rank has neither
+- [ ] Organisation: the top boss grants a member a power (per-member grants); a lieutenant holding the same delegation tries to deny, clear or replace it and is told *only below your own rank*
+- [ ] Organisation: give a member an own cut and a codename, fire them and hire them again: no own cut, and they may set their own codename
+- [ ] Organisation, `AcceptApproval` on: a boss holding Approve accepts places a contract worth more than `ApprovalAbove`; a member accepts it anonymously: that boss sees no waiting accept and is not told of one; another boss sees and decides it; staff without `IdentityAce` see *A member*
+- [ ] Organisation, a boss holding View funds: the ledger rows name no contract
+- [ ] Panel: raise `Ledger.MaxDepthHardCap` to 50, set `Ledger.Depth` to 40, `restart crimson-hitman`: Depth is still 40 and nothing is listed as not applied
+- [ ] Panel: set *Wait before "eyes on you"* (a from-to pair) and read the reply: it names the two numbers, never `[]`; a preset saved with it puts it back
+- [ ] Panel, Game rules: set the witness report title to *Shots fired downtown*: saved (the hint shows its own rule and up to 60 characters); text longer than its length is refused before it is sent
+- [ ] Panel (`mysql`): save an own preset *Night*, then one as *night*: the reply says the one before is replaced, and one *Night* is listed
+- [ ] Phone: with a slow link, a kill photo whose claim gets no answer in 60 s, and an organisation deposit or withdrawal with no answer in 15 s, say *No answer yet. It may still go through*, never *Try again*
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

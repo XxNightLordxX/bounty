@@ -625,6 +625,22 @@ function Org.reconcile(src)
     Org.external(actor, grade)
 end
 
+--- A member who leaves takes their per-member settings with them: their
+--- own cut, the record of who gave their codename, their probation, a
+--- suspension a strike made and a channel mute. Left behind, a re-hire
+--- inherited a cut nobody set this time, a codename lock on a name they no
+--- longer had and a probation already passed. Their discipline and counts
+--- stay as the organisation's record.
+local function forgetMember(org, cid)
+    local s = org.settings
+    s.cuts.byMember[cid] = nil
+    s.codenames[cid] = nil
+    s.probation[cid] = nil
+    s.strikeSuspended[cid] = nil
+    s.channelMutes[cid] = nil
+    saveOrgRow(org)
+end
+
 --- A change qbx_core made that this resource did not: adopted into the
 --- table, or put back as the table has it.
 ---@param actor table
@@ -649,6 +665,7 @@ function Org.external(actor, grade)
                     if g.subject == 'member' and g.subject_id == actor.cid then deps.storage.deleteOrgRow('grants', g.id) end
                 end
             end)
+            pcall(forgetMember, org, actor.cid)
         else
             member = member or { id = memberId(actor.cid), org_id = org.id, cid = actor.cid, name = actor.name,
                 grants = {}, denies = {}, limits = {}, locked = false, joined_at = now() }
@@ -1003,6 +1020,7 @@ function Org.fire(who, cid, reason)
     for _, g in ipairs(deps.storage.readOrgRows('grants', org.id) or {}) do
         if g.subject == 'member' and g.subject_id == cid then deps.storage.deleteOrgRow('grants', g.id) end
     end
+    forgetMember(org, cid)
     if not who.staff then LastFire[who.cid] = now() end
     record('org_member_fired', who, { member = cid, grade = member.grade, reason = reason })
     local actor = deps.identity.byCitizenId(cid)
@@ -1119,6 +1137,16 @@ function Org.memberGrant(who, cid, code, state)
         -- overwrites it (a deny written over it would be the boss's to clear).
         local denied, granted = member.denies[code], member.grants[code]
         if (denied and denied.by == 'staff') or (granted and granted.by == 'staff') then return fail(ERR.LOCKED) end
+        -- And one set by a boss at or above them is that boss's, as with a
+        -- role's power (Org.rolePower): a lieutenant neither clears, denies
+        -- nor replaces the top boss's delegation.
+        local mine = org.members[who.cid].grade
+        for _, entry in pairs({ deny = denied, grant = granted }) do
+            if entry.by ~= who.cid then
+                local setter = org.members[entry.by]
+                if setter and setter.grade >= mine then return fail(ERR.RANK) end
+            end
+        end
     end
     local by = who.staff and 'staff' or who.cid
     local before = { grant = member.grants[code] and member.grants[code].by, deny = member.denies[code] and member.denies[code].by }
@@ -1430,6 +1458,51 @@ function Org.roleCreate(who, spec)
     return true, nil, { grade = grade }
 end
 
+--- Move a role's per-grade settings from one grade to another, or clear
+--- them (to == nil): its cut, access rules, salary, salary ceiling and a
+--- salary waiting, armory limit, the tabs hidden from it, and the staff
+--- ceiling stored as grants rows. Left behind, they stayed on the old grade
+--- and attached to the next role made there, while the moved role lost
+--- them (and its ceiling came back to the old grade at the next restart).
+local function moveGradeSettings(org, from, to)
+    local s = org.settings
+    local a, b = tostring(from), to ~= nil and tostring(to) or nil
+    local function move(t)
+        if type(t) ~= 'table' then return end
+        local v = t[a]
+        t[a] = nil
+        if b then t[b] = v end
+    end
+    move(s.cuts.byRole)
+    move(s.access)
+    move(s.payroll.salary)
+    move(s.payroll.max)
+    move(s.payroll.pending)
+    move(s.armory.limits)
+    if type(s.layout) == 'table' and type(s.layout.hidden) == 'table' then
+        for _, grades in pairs(s.layout.hidden) do
+            if type(grades) == 'table' then
+                for i = #grades, 1, -1 do
+                    if tonumber(grades[i]) == from then
+                        if to ~= nil then grades[i] = to else table.remove(grades, i) end
+                    end
+                end
+            end
+        end
+    end
+    for _, g in ipairs(deps.storage.readOrgRows('grants', org.id) or {}) do
+        if g.subject == 'role' and tonumber(g.subject_id) == from then
+            deps.storage.deleteOrgRow('grants', g.id)
+            if to ~= nil then
+                g.id = ('%s:%s:%s:%s'):format(org.id, 'role', tostring(to), g.power)
+                g.subject_id = tostring(to)
+                deps.storage.writeOrgRow('grants', g)
+            end
+        end
+    end
+    saveOrgRow(org)
+end
+
 --- Rename, relabel, move or (staff) re-flag a role. A boss (R2): a role
 --- below them, moved to a free grade still below them.
 function Org.roleEdit(who, grade, spec)
@@ -1471,6 +1544,7 @@ function Org.roleEdit(who, grade, spec)
         role.grade, role.id = newGrade, roleId(newGrade)
         org.roles[newGrade] = role
         org.ceiling.role[newGrade], org.ceiling.role[grade] = org.ceiling.role[grade], nil
+        moveGradeSettings(org, grade, newGrade)
         Jobs.upsertGrade(org, grade)
     end
     saveRole(role)
@@ -1499,9 +1573,7 @@ function Org.roleDelete(who, grade)
     org.roles[grade] = nil
     org.ceiling.role[grade] = nil
     deps.storage.deleteOrgRow('roles', role.id)
-    for _, g in ipairs(deps.storage.readOrgRows('grants', org.id) or {}) do
-        if g.subject == 'role' and tonumber(g.subject_id) == grade then deps.storage.deleteOrgRow('grants', g.id) end
-    end
+    moveGradeSettings(org, grade, nil)
     Jobs.upsertGrade(org, grade)
     record('org_role_deleted', who, { grade = grade, name = role.name })
     return true
@@ -2062,8 +2134,11 @@ function Org.fundsView(who, limit)
     if err then return fail(err) end
     limit = math.max(1, math.min(100, math.floor(tonumber(limit) or 50)))
     local rows = Funds.ledger(org, limit)
+    -- A boss sees neither who moved a row nor the contract it came from: a
+    -- cut row on a contract they placed would tell them their anonymous
+    -- hitman is one of their own (as Extras2/Extras3.observe avoid).
     if not who.staff then
-        for _, r in ipairs(rows) do r.actor = nil end
+        for _, r in ipairs(rows) do r.actor, r.contract = nil, nil end
     end
     return true, nil, { balance = Funds.balance(org), bank = Funds.usesBank(org), backend = Funds.backend(org),
         ready = Funds.ready(org), rows = rows }
@@ -3434,7 +3509,7 @@ function Org.staffView(viewer, canIdentify)
         end
     end
     -- Organisation extras (server/org/extras.lua), each only while on.
-    Extras.staffView(org, viewer, view)
+    Extras.staffView(org, viewer, view, canIdentify == true)
     Extras2.staffView(org, viewer, view)
     Extras3.staffView(org, viewer, view, canIdentify == true)
     return view

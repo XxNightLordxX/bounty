@@ -6,6 +6,24 @@ say how things work now.
 
 ## 1.2.0
 
+**Fixes (sweep 9)**
+- A kidnapping bonus raised after a reward top-up is escrowed as the full
+  new percentage of every payout still held.
+- Organisation: a role moved to another rank keeps its staff limit (across a
+  restart), cut, access rules, salary, armory limit and hidden tabs; a
+  deleted role, or a member who leaves, leaves no settings behind for the
+  next one; a lower boss cannot change a higher boss's per-member grant; an
+  anonymous accept waiting for approval is never shown to the boss who
+  placed the contract (staff see who only with `IdentityAce`); the funds
+  ledger names no contract to a boss.
+- Panel: a setting under a cap raised from the panel survives a restart, and
+  an import, preset or setup raises the cap first; a from-to setting is
+  named, imported and restored by presets; text settings take their own rule
+  (spaces in a title, a colon in an event name); own preset names are one
+  name whatever their case.
+- Phone: a kill-photo claim, a protection post or an organisation deposit,
+  withdrawal or bonus with no answer in time says it may still go through.
+
 **Escrowed builds start**
 - Every Lua file the server runs is listed in `fxmanifest.lua` and loaded by
   FiveM's script loader, the only one that decrypts an escrowed file; the

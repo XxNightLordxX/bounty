@@ -2381,10 +2381,9 @@ end
 --- the creator named their own bonus is theirs, and recomputing it from a
 --- percentage would overwrite a figure they chose.
 ---@param contractId string
----@param fromPercent integer
 ---@param toPercent integer
 ---@return table[] lines  empty when there is nothing to top up
-function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
+function Escrow.bonusTopUp(contractId, toPercent, nextSlot)
     local held = Storage.readEscrow(contractId)
     nextSlot = nextSlot or 1
 
@@ -2406,7 +2405,22 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
         end
     end
 
-    local extra = {}
+    -- What each slot and source should hold at the new percentage, against
+    -- the derived bonus it actually holds. Working the old bonus out from
+    -- the old percentage assumed every baseline had one, and a baseline
+    -- added later (Amendments.addEscrow) never did: a raise then escrowed
+    -- less than the percentage it advertised.
+    local groups, order = {}, {}
+    local function group(line)
+        local key = tostring(line.slot or 1) .. '\0' .. tostring(line.source) .. '\0' .. tostring(line.item or '')
+        local g = groups[key]
+        if not g then
+            g = { slot = line.slot, source = line.source, item = line.item, target = 0, held = 0 }
+            groups[key] = g
+            order[#order + 1] = key
+        end
+        return g
+    end
     for i = 1, #held do
         local line = held[i]
         -- Only a collection still to be paid. One the payout has reached is
@@ -2416,29 +2430,37 @@ function Escrow.bonusTopUp(contractId, fromPercent, toPercent, nextSlot)
         -- the contract's to pay either. Topping up either locked the new
         -- money away until the contract ended and counted it against the
         -- value ceiling meanwhile.
-        if line.portion == CH.PORTION.BASELINE
-            and CH.MONEY_SOURCES[line.source]
+        if CH.MONEY_SOURCES[line.source]
             and line.state ~= CH.ESCROW_STATE.SETTLED
             and not line.owed_to
             and (line.slot or 1) >= nextSlot
             and not explicit[line.slot]
             and not settled[line.slot] then
-
-            -- The same arithmetic as creation, and the same order of
-            -- operations: multiply before dividing, because a binary
-            -- fraction of a percentage is not the percentage.
-            local was = math.floor(line.amount * fromPercent / 100)
-            local now = math.floor(line.amount * toPercent / 100)
-            if now > was then
-                extra[#extra + 1] = {
-                    slot = line.slot, portion = CH.PORTION.BONUS,
-                    source = line.source, amount = now - was, derived = true,
-                    -- Denominated in whatever the baseline it derives from
-                    -- is, so a rename cannot make the top-up and the line it
-                    -- was computed from into two different currencies.
-                    item = line.item,
-                }
+            if line.portion == CH.PORTION.BASELINE then
+                -- The same arithmetic as creation, and the same order of
+                -- operations: multiply before dividing, because a binary
+                -- fraction of a percentage is not the percentage.
+                local g = group(line)
+                g.target = g.target + math.floor(line.amount * toPercent / 100)
+            elseif line.portion == CH.PORTION.BONUS and line.derived then
+                local g = group(line)
+                g.held = g.held + (line.amount or 0)
             end
+        end
+    end
+
+    local extra = {}
+    for i = 1, #order do
+        local g = groups[order[i]]
+        if g.target > g.held then
+            extra[#extra + 1] = {
+                slot = g.slot, portion = CH.PORTION.BONUS,
+                source = g.source, amount = g.target - g.held, derived = true,
+                -- Denominated in whatever the baseline it derives from is,
+                -- so a rename cannot make the top-up and the line it was
+                -- computed from into two different currencies.
+                item = g.item,
+            }
         end
     end
 

@@ -2241,7 +2241,7 @@ end
 --- whether it applies, and the most it may be, are sent every time.
 local SCHEMA_FIELDS = { 'group', 'label', 'about', 'category', 'money', 'area', 'shipped', 'hasShipped',
     'kind', 'choices', 'min', 'integer', 'live', 'inflight', 'readonly', 'destroys', 'stricter',
-    'strict', 'whole', 'default' }
+    'strict', 'whole', 'default', 'maxLength', 'says' }
 
 --- [developer or not] = { owner, version, hash }
 local schemaHashes = {}
