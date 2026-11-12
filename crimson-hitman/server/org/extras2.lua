@@ -223,11 +223,24 @@ end
 --- A move whose put-in raised with part of it, or no telling, there: the
 --- stash and the member's inventory are left as they are, for staff, on
 --- the record (never put back blind: that copied the items).
-local function moveUnknown(org, cid, name, n, dir)
+--- A Review item for staff (the queue under /stuck and the panel's Review),
+--- as every money path opens one where a give-back failed: the member, the
+--- items as they were, and which way they were moving. `unsure`: the move
+--- raised, so they may have arrived (staff check before giving anything).
+local function leaveForStaff(org, cid, name, n, metadata, dir, unsure)
+    local d = deps()
+    if not (d.review and d.review.open) then return end
+    pcall(d.review.open, { kind = unsure and 'org_armory_move_unknown' or 'org_armory_refund_failed', cids = { member = cid },
+        items = { { source = CH.SOURCE.ITEM, item = name, quantity = n, metadata = metadata } },
+        known = { org = org.id, item = name, count = n, dir = dir, unsure = unsure or nil } })
+end
+
+local function moveUnknown(org, cid, name, n, dir, metadata)
     deps().audit.financial('org_armory_move_unknown', cid, nil, { org = org.id, item = name, count = n, dir = dir })
     Log.always(('organisation %s armory: putting %d %s %s raised and what arrived could not be told; '
         .. 'left as it is, check the stash and the member (/%s)'):format(tostring(org.id), n, tostring(name),
         dir == 'in' and 'into the stash' or 'into the member\'s inventory', tostring(Config.Admin.Commands.stuck)))
+    leaveForStaff(org, cid, name, n, metadata, dir, true)
 end
 
 --- A role's limit a day (A2 sets it): items each member of it takes out.
@@ -361,20 +374,25 @@ function Org.armoryDeposit(actor, slot, n)
     local into = placeInto(stash, s.name, n, s.metadata)
     if into == 'unknown' then
         Busy = false
-        moveUnknown(org, actor.cid, s.name, n, 'in')
+        moveUnknown(org, actor.cid, s.name, n, 'in', s.metadata)
         return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_raised_taking_it_it') })
     end
     if into == 'refused' then
-        -- Back to whoever put it in: nothing lost.
+        -- Back to whoever put it in: nothing lost. Refused that way too (or
+        -- raised), it is with neither: left for staff, and said so.
         local back = placeInto(actor.source, s.name, n, s.metadata)
         Busy = false
+        if back == 'placed' then
+            return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_would_not_take_it') })
+        end
         if back == 'unknown' then
-            moveUnknown(org, actor.cid, s.name, n, 'back')
-        elseif back ~= 'placed' then
+            moveUnknown(org, actor.cid, s.name, n, 'back', s.metadata)
+        else
             deps().audit.financial('org_armory_refund_failed', actor.cid, nil, { org = org.id, item = s.name,
                 count = n, dir = 'in' })
+            leaveForStaff(org, actor.cid, s.name, n, s.metadata, 'in')
         end
-        return fail(ERR.REFUSED, { message = L('org_extras2.the_armory_would_not_take_it') })
+        return fail(ERR.LEFT_FOR_STAFF, { message = L('org_extras2.the_armory_would_not_take_it_left') })
     end
     Busy = false
     logMove(org, { at = now(), dir = 'in', item = s.name, count = n, cid = actor.cid })
@@ -428,7 +446,7 @@ function Org.armoryWithdraw(who, slot, n)
     local into = placeInto(who.source, s.name, n, s.metadata)
     if into == 'unknown' then
         Busy = false
-        moveUnknown(org, who.cid, s.name, n, 'out')
+        moveUnknown(org, who.cid, s.name, n, 'out', s.metadata)
         -- It may be theirs now: counted against today's limit.
         local t = now()
         kit.capAdd(org, 'armory', who.cid, n - beyond, t)
@@ -439,13 +457,19 @@ function Org.armoryWithdraw(who, slot, n)
     if into == 'refused' then
         local back = placeInto(stash, s.name, n, s.metadata)
         Busy = false
+        if back == 'placed' then
+            return fail(ERR.REFUSED, { message = L('org_extras2.you_could_not_take_it_it') })
+        end
+        -- Back in the armory refused too (or raised): with neither, left
+        -- for staff, and said so.
         if back == 'unknown' then
-            moveUnknown(org, who.cid, s.name, n, 'back')
-        elseif back ~= 'placed' then
+            moveUnknown(org, who.cid, s.name, n, 'back', s.metadata)
+        else
             deps().audit.financial('org_armory_refund_failed', who.cid, nil, { org = org.id, item = s.name,
                 count = n, dir = 'out' })
+            leaveForStaff(org, who.cid, s.name, n, s.metadata, 'out')
         end
-        return fail(ERR.REFUSED, { message = L('org_extras2.you_could_not_take_it_it') })
+        return fail(ERR.LEFT_FOR_STAFF, { message = L('org_extras2.you_could_not_take_it_left') })
     end
     Busy = false
     local t = now()

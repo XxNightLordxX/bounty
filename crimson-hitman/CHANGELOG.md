@@ -6,6 +6,27 @@ say how things work now.
 
 ## 1.2.0
 
+**Review 84 fixes (2)**
+- Organisation dead drops: each collection is its own drop. On a contract
+  with more than one payout slot, a later collection waits its own
+  `Config.Organisation.DeadDropMinutes`, its receipt says it waits at the
+  drop, and `DeadDropUnclaimed = 'refund'` gives back only the collection
+  whose time ran out. Drops saved before this update still pay or refund
+  what they held.
+- Staff without `crimson.identity` no longer see the member or the contract
+  on the organisation's funds ledger rows.
+- A member sent off duty, muted, whose accept was approved or refused, or
+  given a dossier by staff is told *by staff*, not *a boss*; mutes say
+  *1 hour* / *N hours*.
+- Clearer refusals: moving a role that still has members, deleting the last
+  role, a refusal of Renewed-Banking's society account, and an approved
+  accept the contract then refused (now in words, never its code).
+- The armory: a put-in or take-out that could not be given back either way
+  says it is left for staff, and opens a Review item with the items; one
+  whose move raised opens one too.
+- The handler's *Briefing:* and *Notice:* lines, and the panel's boss
+  permission cell refusals, come from the language file.
+
 **Player review fixes (1)**
 - A target who quits mid-handover, or while being shot, no longer comes back
   with ten minutes' immunity for the operative at work on them; a crash with

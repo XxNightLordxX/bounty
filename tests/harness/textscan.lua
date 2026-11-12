@@ -145,6 +145,32 @@ function TextScan.hardCoded(src, allow)
     return found
 end
 
+--- Whether a literal is a title word used as a label joined on to more
+--- ('Briefing: ' .. notes, 'Cell ' .. i): a capital, small letters, then a
+--- colon, a space or both. TextScan.reads misses these, being one word.
+---@param text string
+---@return boolean
+function TextScan.label(text)
+    return text:match('^%u%l+:? +$') ~= nil or text:match('^%u%l+:$') ~= nil
+end
+
+--- The literals in a Lua file that are such a label joined with `..`
+--- (either side), outside console calls, minus those `allow` names.
+---@param src string
+---@param allow table|nil
+---@return table[]
+function TextScan.joinedLabels(src, allow)
+    local found = {}
+    for _, lit in ipairs(TextScan.literals(src)) do
+        if not lit.console and TextScan.label(lit.text) and not (allow and allow[lit.text]) then
+            local after = src:sub(lit.to + 1, lit.to + 8)
+            local before = src:sub(math.max(1, lit.from - 8), lit.from - 1)
+            if after:match('^%s*%.%.') or before:match('%.%.%s*$') then found[#found + 1] = lit end
+        end
+    end
+    return found
+end
+
 --- Every L('key') (and Locale.t('key')) a source asks for.
 ---@param src string
 ---@return table<string, integer> key -> line

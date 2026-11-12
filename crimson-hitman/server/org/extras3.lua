@@ -72,9 +72,11 @@ Extras3.API = Org
 --                              STATE
 -- ============================================================================
 
---- Dead drops waiting, every organisation's: [contractId:cid] = orgId. The
---- drops themselves are in each organisation's settings.drops, so a restart
---- keeps them. Empty: the escrow's gate pays one next().
+--- Dead drops waiting, every organisation's: [contractId:cid:slot] = orgId,
+--- one per collection (a drop saved before drops were kept per collection
+--- has no slot in its key: [contractId:cid]). The drops themselves are in
+--- each organisation's settings.drops, so a restart keeps them. Empty: the
+--- escrow's gate pays one next().
 local Drops = {}
 
 --- Vehicles out of the garage: [cid] = { entity, org, model, plate, at }.
@@ -344,7 +346,72 @@ end
 --                              R15: DEAD DROPS
 -- ============================================================================
 
-local function dropKey(contractId, cid) return tostring(contractId) .. ':' .. tostring(cid) end
+--- One drop per collection: the contract, the member and the slot paid, as
+--- body disposal keys its step ('disposal:<contract>:<slot>'). Without a
+--- slot: the key a drop saved before that was kept under.
+local function dropKey(contractId, cid, slot)
+    local key = tostring(contractId) .. ':' .. tostring(cid)
+    if slot ~= nil then key = key .. ':' .. tostring(slot) end
+    return key
+end
+
+--- The collection (slot) a payout line is part of: its own slot; for the
+--- part of a payout split off it (Escrow.reduceStake, slot 0), the slot of
+--- the line it was split from. nil where that cannot be read.
+---@param line table
+---@return integer|nil
+local function lineSlot(line)
+    if line.portion == CH.PORTION.OWED then
+        local meta = type(line.metadata) == 'table' and line.metadata or nil
+        local from = meta and meta.splitFrom
+        if from == nil then return nil end
+        local ok, stake = pcall(deps().storage.readEscrowLine, from)
+        return ok and type(stake) == 'table' and tonumber(stake.slot) or nil
+    end
+    return tonumber(line.slot)
+end
+
+--- Whether a drop covers a line of the member's payout on its contract
+--- (its owner and contract already matched): a drop of one collection,
+--- only that collection's lines; one saved before drops were kept per
+--- collection (no slot), every collection it held then, and none from the
+--- one that made the next drop on (`before`).
+---@param drop table
+---@param slot integer|nil the line's (lineSlot)
+---@return boolean
+local function covers(drop, slot)
+    if type(drop) ~= 'table' then return false end
+    if drop.slot ~= nil then return slot ~= nil and tonumber(drop.slot) == slot end
+    if drop.before ~= nil then return slot ~= nil and slot < (tonumber(drop.before) or 0) end
+    return true
+end
+
+--- The drop holding this line to this member, if any: its key and its
+--- organisation's id. A line whose collection cannot be read waits while
+--- any drop of the member's on that contract does (never paid early).
+---@return string|nil key
+---@return string|nil orgId
+local function dropOf(recipientCid, line)
+    local slot = lineSlot(line)
+    if slot ~= nil then
+        local key = dropKey(line.contract_id, recipientCid, slot)
+        if Drops[key] ~= nil then return key, Drops[key] end
+    end
+    local legacy = dropKey(line.contract_id, recipientCid)
+    local id = Drops[legacy]
+    if id ~= nil then
+        local org = O.byId(id)
+        local drop = org and org.settings.drops[legacy]
+        if slot == nil or not drop or covers(drop, slot) then return legacy, id end
+    end
+    if slot == nil then
+        local prefix = legacy .. ':'
+        for key, orgId in pairs(Drops) do
+            if key:sub(1, #prefix) == prefix then return key, orgId end
+        end
+    end
+    return nil
+end
 
 --- Choose how members' payouts are handed over (P4): 'bank' as always, or
 --- 'deaddrop' (at the organisation's dead drop, set by staff).
@@ -374,23 +441,37 @@ local function onClaim(contract, hitmanCid)
     if not org or org.settings.payoutMethod ~= 'deaddrop' then return nil end
     local spot = spotOf(org, 'deaddrop')
     if not spot then return nil end
-    local key = dropKey(contract.id, hitmanCid)
-    if org.settings.drops[key] then return nil end
+    -- One drop per collection (the slot this claim pays): a later
+    -- collection on the same contract gets its own drop and its own
+    -- DeadDropMinutes, never the first one's timer nor its refund.
+    local slot = math.max(1, math.floor(tonumber(contract.next_slot) or 1))
+    local key = dropKey(contract.id, hitmanCid, slot)
+    local label = spot.label or L('org_extras3.dead_drop')
+    local existing = org.settings.drops[key]
+    if existing then
+        -- This collection asked again (a claim refused after it asked, then
+        -- tried again): the drop it already has, and the time left on it.
+        local left = (tonumber(existing.expires) or now()) - now()
+        return { spot = label, minutes = math.max(1, math.ceil(left / 60)) }
+    end
+    -- A drop saved before drops were kept per collection keeps what it
+    -- held then, and nothing from this collection on.
+    local legacy = org.settings.drops[dropKey(contract.id, hitmanCid)]
+    if legacy and legacy.slot == nil and legacy.before == nil then legacy.before = slot end
     local wait = whole('DeadDropMinutes', 60, 1, 10080)
     -- Whether they hold it anonymously: staff without IdentityAce are then
     -- not told whose drop it is.
     local okH, row = pcall(deps().storage.readHitman, contract.id, hitmanCid)
-    org.settings.drops[key] = { contract = contract.id, cid = hitmanCid, creator = contract.creator_cid,
-        spot = spot.id, at = now(), expires = now() + wait * 60, handle = Util.randomId('dd'),
-        anon = (okH and type(row) == 'table' and row.anon == true) or nil }
+    org.settings.drops[key] = { contract = contract.id, cid = hitmanCid, slot = slot,
+        creator = contract.creator_cid, spot = spot.id, at = now(), expires = now() + wait * 60,
+        handle = Util.randomId('dd'), anon = (okH and type(row) == 'table' and row.anon == true) or nil }
     Drops[key] = org.id
     O.within(org, kit.save)
-    deps().audit.financial('org_drop_left', hitmanCid, contract.id, { org = org.id, minutes = wait })
-    O.within(org, tell, hitmanCid, (L('org_extras3.your_payout_is_left_at_the'))
-        :format(spot.label or L('org_extras3.dead_drop'), wait))
+    deps().audit.financial('org_drop_left', hitmanCid, contract.id, { org = org.id, minutes = wait, slot = slot })
+    O.within(org, tell, hitmanCid, (L('org_extras3.your_payout_is_left_at_the')):format(label, wait))
     -- The claim's receipt says where it waits, not "released to you"
     -- (Payout.onClaim files it as the claim's dropHold).
-    return { spot = spot.label or L('org_extras3.dead_drop'), minutes = wait }
+    return { spot = label, minutes = wait }
 end
 
 --- The escrow's gate (Escrow.holdBack): the payout of a drop not yet
@@ -401,25 +482,28 @@ end
 local function holds(recipientCid, line)
     if next(Drops) == nil or type(line) ~= 'table' then return false end
     if not Util.payoutPortion(line) then return false end
-    local id = Drops[dropKey(line.contract_id, recipientCid)]
+    local _, id = dropOf(recipientCid, line)
     return id ~= nil and on('DeadDrops') and O.byId(id) ~= nil
 end
 
 local function releasesAt(recipientCid, line)
-    local id = type(line) == 'table' and Drops[dropKey(line.contract_id, recipientCid)]
+    if next(Drops) == nil or type(line) ~= 'table' then return nil end
+    local key, id = dropOf(recipientCid, line)
     local org = id and O.byId(id)
-    local drop = org and org.settings.drops[dropKey(line.contract_id, recipientCid)]
+    local drop = org and org.settings.drops[key]
     return drop and drop.expires or nil
 end
 
 --- Every line of a drop's payout back to the placer (the 'refund' rule),
---- as body disposal's refund does: the escrow's own release.
+--- as body disposal's refund does: the escrow's own release. Only the
+--- lines of the collection the drop was left for (covers), never another
+--- collection's, which has its own drop and its own time.
 local function refund(drop)
     local d = deps()
     local back = 0
     local ok, lines = pcall(d.storage.readEscrow, drop.contract)
     for _, line in ipairs(ok and lines or {}) do
-        if Util.payoutPortion(line) and line.owed_to == drop.cid
+        if Util.payoutPortion(line) and line.owed_to == drop.cid and covers(drop, lineSlot(line))
             and line.state == CH.ESCROW_STATE.HELD and not (d.escrow.parked and d.escrow.parked(line)) then
             local okR, _, result = pcall(d.escrow.release, drop.contract, drop.creator, { line = line.id },
                 'deaddrop_refund', function(claimed) return claimed.owed_to == drop.cid end)
@@ -889,13 +973,13 @@ local function handler(org, actor)
         local entry = org.settings.orgContracts[mineId]
         lines[#lines + 1] = L('org_extras3.you_have_a_contract_assigned_take')
         if entry.dossier and type(entry.dossier.notes) == 'string' then
-            lines[#lines + 1] = 'Briefing: ' .. entry.dossier.notes:sub(1, 300)
+            lines[#lines + 1] = L('org_extras3.briefing_x'):format(entry.dossier.notes:sub(1, 300))
         end
     else
         lines[#lines + 1] = L('org_extras3.nothing_for_you_right_now')
     end
     if org.settings.notice and org.settings.notice.text then
-        lines[#lines + 1] = 'Notice: ' .. tostring(org.settings.notice.text):sub(1, 200)
+        lines[#lines + 1] = L('org_extras3.notice_x'):format(tostring(org.settings.notice.text):sub(1, 200))
     end
     tell(actor.cid, table.concat(lines, ' '))
     return true

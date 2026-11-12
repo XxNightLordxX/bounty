@@ -225,6 +225,33 @@ describe('Translations: the language files', function()
         eq(table.concat(left, ', '), '', 'words still written into the code')
     end)
 
+    it('no file joins a label word on to a value with .. (Review 84 VAR-6)', function()
+        -- Known and not moved here: qbx_core's grade name (data, as
+        -- 'Member' above), and the contract export's field labels in
+        -- server/panel.lua (a staff text file, still English).
+        local KNOWN = {
+            ['server/org/jobs.lua'] = { ['Grade '] = true },
+            ['server/panel.lua'] = { ['Exported: '] = true, ['Reason: '] = true, ['Client: '] = true,
+                ['Target: '] = true, ['Ended: '] = true },
+        }
+        local left = {}
+        for _, path in ipairs(SCANNED) do
+            for _, lit in ipairs(TextScan.joinedLabels(src(path), KNOWN[path])) do
+                left[#left + 1] = ('%s:%d %q'):format(path, lit.line, lit.text)
+            end
+        end
+        eq(table.concat(left, ', '), '', 'label words joined on in the code')
+    end)
+
+    it('the label scan finds a label joined on, and not a key or a whole sentence', function()
+        local found = TextScan.joinedLabels("local a = 'Briefing: ' .. notes\nlocal b = 'Cell ' .. i .. L('x.y')\n"
+            .. "local c = L('org.notice_x') .. ' '\nlocal d = 'Notice: '\nlocal e = x .. 'Staff:'\n"
+            .. "Log.always('Note: ' .. x)\n")
+        eq(#found, 3, 'Briefing, Cell and Staff; not the lone literal, the key or the console line')
+        eq(found[1].text, 'Briefing: ')
+        eq(found[2].text, 'Cell ')
+    end)
+
     it('the scan finds a sentence written back into a file', function()
         local found = TextScan.hardCoded("Notify.toCitizen(cid, 'Contract closed', ('Staff closed it.'))\n"
             .. "Log.always('a console line is not counted')\nlocal k = L('notify.contract_closed')\n")

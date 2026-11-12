@@ -458,7 +458,10 @@ character that loaded before the job was registered (a late start).
     items included) waits in escrow, owed to them and queued, until they use
     the drop (its ox_target option) within `DeadDropMinutes`; unclaimed, it is
     handed over the usual way (`'pay'`) or given back to the placer
-    (`'refund'`). It is a payout check (server/payout.lua) on the escrow's own
+    (`'refund'`). Each collection is its own drop: on a contract with more
+    than one payout slot (`Config.Limits.MaxPayoutSlots`), a later collection
+    waits its own `DeadDropMinutes`, and a refund gives back only the
+    collection whose time ran out. It is a payout check (server/payout.lua) on the escrow's own
     give, so only the escrow's paths move money: what was escrowed is what the
     member (and the funds' cut) or the placer receive. A restart keeps every
     drop. Staff hand one over or refund it at once. A member who stops being

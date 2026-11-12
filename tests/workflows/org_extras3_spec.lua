@@ -111,11 +111,11 @@ describe('organisation extras 3 from the phone and the panel', function()
         truthy(accepted and accepted.ok, 'accepted: ' .. tostring(accepted and accepted.err))
         local before = W.wealth and W.wealth(RECRUIT) or nil
         truthy(W.s.contracts.claimSlot(c.id, C.hitman2.cid, CH.FULFILMENT.KIDNAPPING))
-        truthy(o.settings.drops[c.id .. ':' .. C.hitman2.cid], 'left at the drop')
+        truthy(o.settings.drops[c.id .. ':' .. C.hitman2.cid .. ':1'], 'left at the drop')
         local drop
         for _, l in pairs(o.locations) do if l.kind == 'deaddrop' then drop = l.id end end
         truthy(W.net(RECRUIT, 'crimson-hitman:orgUse', drop), 'collected at the drop')
-        eq(o.settings.drops[c.id .. ':' .. C.hitman2.cid], nil, 'collected')
+        eq(o.settings.drops[c.id .. ':' .. C.hitman2.cid .. ':1'], nil, 'collected')
         W.opOk(staff, 'orgPayoutMethod', { method = 'bank' }, 'staff set it back')
         -- A drop staff settle.
         W.opOk(staff, 'orgPayoutMethod', { method = 'deaddrop' }, 'staff choose the drop')

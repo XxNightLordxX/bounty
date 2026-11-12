@@ -1622,7 +1622,11 @@ function Org.roleEdit(who, grade, spec)
     if newGrade ~= grade then
         if org.roles[newGrade] then return fail(ERR.ALREADY) end
         if not who.staff and newGrade >= org.members[who.cid].grade then return fail(ERR.RANK) end
-        if Engine.countAt(org, grade) > 0 then return fail(ERR.LIMIT, nil) end
+        if Engine.countAt(org, grade) > 0 then
+            -- No limit staff set: say what is wrong (as roleDelete does).
+            local says = L('org.only_an_empty_role_can_be_moved')
+            return false, ERR.RULE, { message = says }, says
+        end
     end
     if who.staff then
         if spec.isBoss ~= nil then role.is_boss = spec.isBoss == true end
@@ -1669,7 +1673,10 @@ function Org.roleDelete(who, grade)
         local why = Engine.mayEditRole(org, who.cid, grade)
         if why then return fail(why == 'locked' and ERR.LOCKED or ERR.RANK) end
     end
-    if roleCount(org) <= 1 then return fail(ERR.LIMIT) end
+    if roleCount(org) <= 1 then
+        local says = L('org.the_organisation_needs_at_least_one_role')
+        return false, ERR.RULE, { message = says }, says
+    end
     org.roles[grade] = nil
     org.ceiling.role[grade] = nil
     deps.storage.deleteOrgRow('roles', role.id)
@@ -2211,12 +2218,16 @@ end
 --                              FUNDS
 -- ============================================================================
 
---- A refusal from Funds, as the organisation words it.
-local function fundsErr(ferr)
+--- A refusal from Funds, as the organisation words it. `org`: whose funds,
+--- so a refusal of Renewed-Banking's society account is worded as its own,
+--- never as qbx_core's.
+local function fundsErr(ferr, org)
     if ferr == 'short' then return ERR.SHORT end
     if ferr == 'busy' then return ERR.BUSY end
     if ferr == 'limit' then return ERR.LIMIT end
     if ferr == 'bank_down' then return ERR.BANK_DOWN end
+    if ferr == 'no_account' then return ERR.NO_ACCOUNT end
+    if ferr == 'refused' and org and Funds.usesBank(org) then return ERR.BANK_REFUSED end
     return ERR.REFUSED
 end
 
@@ -2226,8 +2237,9 @@ local function nonceRef(prefix, who, nonce)
     return prefix .. ':' .. tostring(who.cid or 'staff') .. ':' .. nonce
 end
 
---- The balance and the ledger (C8; staff always).
-function Org.fundsView(who, limit)
+--- The balance and the ledger (C8; staff always). `canIdentify`: staff
+--- holding IdentityAce (crimson.identity).
+function Org.fundsView(who, limit, canIdentify)
     local org = Org.current()
     if not org then return fail(ERR.OFF) end
     local err = Org.authorize(org, who, 'C8')
@@ -2236,8 +2248,11 @@ function Org.fundsView(who, limit)
     local rows = Funds.ledger(org, limit)
     -- A boss sees neither who moved a row nor the contract it came from: a
     -- cut row on a contract they placed would tell them their anonymous
-    -- hitman is one of their own (as Extras2/Extras3.observe avoid).
-    if not who.staff then
+    -- hitman is one of their own (as Extras2/Extras3.observe avoid). Nor
+    -- does staff without IdentityAce: a cut row names the member paid and
+    -- the contract, an anonymous accept's hitman among them (as the
+    -- organisation's log and its dead drops hide them).
+    if not who.staff or canIdentify ~= true then
         for _, r in ipairs(rows) do r.actor, r.contract = nil, nil end
     end
     return true, nil, { balance = Funds.balance(org), bank = Funds.usesBank(org), backend = Funds.backend(org),
@@ -2532,7 +2547,7 @@ function Org.withdraw(who, amount, reason, nonce)
         title = L('org.organisation_withdrawal'), cap = cap })
     if not ok then
         Paying[ref] = nil
-        return fail(fundsErr(ferr))
+        return fail(fundsErr(ferr, org))
     end
     if actor then
         local ran, how = pcall(handOver, org, g)
@@ -2556,7 +2571,7 @@ function Org.staffDeposit(who, amount, reason, nonce)
     if not amount or not reason or not ref then return fail(ERR.INVALID) end
     local ok, ferr, repeated = Funds.credit(org, amount, { ref = ref, kind = 'staff', actor = who.cid,
         reason = reason, title = L('org.staff_deposit') })
-    if not ok then return fail(fundsErr(ferr)) end
+    if not ok then return fail(fundsErr(ferr, org)) end
     if not repeated then record('org_funds_staff_deposit', who, { amount = amount, reason = reason }) end
     return true, nil, { amount = amount, repeated = repeated }
 end
@@ -2590,7 +2605,7 @@ function Org.bonus(who, cid, amount, reason, nonce)
         title = L('org.bonus'), cap = cap })
     if not ok then
         Paying[ref] = nil
-        return fail(fundsErr(ferr))
+        return fail(fundsErr(ferr, org))
     end
     local ran, how = pcall(handOver, org, g)
     Paying[ref] = nil

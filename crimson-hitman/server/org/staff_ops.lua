@@ -105,7 +105,9 @@ OPS.bossPermsGet = { 'read', function(src)
 end }
 
 OPS.orgFunds = { 'read', function(src, data)
-    return said(Org.fundsView(staff(src), tonumber(data.limit)))
+    -- Without IdentityAce no row names who moved it, nor a cut's contract
+    -- (as orgLog and the dead drops hide them).
+    return said(Org.fundsView(staff(src), tonumber(data.limit), identifies(src)))
 end }
 
 --- Records › Logs, area 'org' (Panel.logArea): every boss and staff
@@ -257,27 +259,27 @@ OPS.bossPermsSet = { 'write', function(src, data)
     if #cells == 0 or #cells > 200 then return false, Org.ERR.INVALID, L('org_staff_ops.between_1_and_200_cells_at') end
     local plan = {}
     for i, cell in ipairs(cells) do
-        if type(cell) ~= 'table' then return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.is_not_a_cell') end
+        if type(cell) ~= 'table' then return false, Org.ERR.INVALID, L('org_staff_ops.is_not_a_cell'):format(i) end
         local subject = cell.subject
         local id
         if subject == 'role' then
             id = tonumber(cell.id)
-            if not id or not org.roles[id] then return false, Org.ERR.NOT_FOUND, 'Cell ' .. i .. L('org_staff_ops.no_such_role') end
+            if not id or not org.roles[id] then return false, Org.ERR.NOT_FOUND, L('org_staff_ops.no_such_role'):format(i) end
             if cell.state ~= 'allow' and cell.state ~= 'off' then
-                return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.a_role_cell_is_allow_or')
+                return false, Org.ERR.INVALID, L('org_staff_ops.a_role_cell_is_allow_or'):format(i)
             end
         elseif subject == 'member' then
             id = Org.fromRef(who.cid, cell.id)
             if not id or not org.members[id] then
-                return false, Org.ERR.NOT_FOUND, 'Cell ' .. i .. L('org_staff_ops.that_member_handle_is_out_of')
+                return false, Org.ERR.NOT_FOUND, L('org_staff_ops.that_member_handle_is_out_of'):format(i)
             end
             if cell.state ~= 'allow' and cell.state ~= 'deny' and cell.state ~= 'inherit' then
-                return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.a_member_cell_is_allow_deny')
+                return false, Org.ERR.INVALID, L('org_staff_ops.a_member_cell_is_allow_deny'):format(i)
             end
         else
-            return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.a_role_or_a_member')
+            return false, Org.ERR.INVALID, L('org_staff_ops.a_role_or_a_member'):format(i)
         end
-        if not Org.Powers.resolve(cell.power) then return false, Org.ERR.INVALID, 'Cell ' .. i .. L('org_staff_ops.no_such_power') end
+        if not Org.Powers.resolve(cell.power) then return false, Org.ERR.INVALID, L('org_staff_ops.no_such_power'):format(i) end
         plan[#plan + 1] = { subject, id, cell.power, cell.state }
     end
     for _, p in ipairs(plan) do Org.setCeiling(who, p[1], p[2], p[3], p[4]) end

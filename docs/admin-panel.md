@@ -75,7 +75,9 @@ can do what* (every ACE, and how to grant it).
 Without `crimson.identity`, an anonymous party is *Anonymous* everywhere,
 citizen ids read as the party's place (*the placer*, *the target*,
 *operative <alias>*) and searches never find a contract through an anonymous
-party. Every unmasking is its own audit row.
+party. The organisation's **Funds & cuts** ledger then names no member
+and no contract on any row (who was paid a cut, and from which contract).
+Every unmasking is its own audit row.
 
 
 ## Target limits

@@ -479,8 +479,39 @@ local function pendingById(id)
     return nil
 end
 
+--- Why the contract would not take an approved accept, in words the approver
+--- reads: never the code itself.
+local WHY = {
+    [CH.ERR.SUSPENDED] = 'org_extras.why_suspended',
+    [CH.ERR.CONTRACT_FULL] = 'org_extras.why_contract_full',
+    [CH.ERR.LIMIT_REACHED] = 'org_extras.why_limit_reached',
+    [CH.ERR.INSUFFICIENT] = 'org_extras.why_insufficient_funds',
+    [CH.ERR.ALREADY_HOLDING] = 'org_extras.why_already_holding',
+    [CH.ERR.BAD_STATE] = 'org_extras.why_moved_on',
+    [CH.ERR.NOT_FOUND] = 'org_extras.why_moved_on',
+    [CH.ERR.ALREADY_SETTLED] = 'org_extras.why_moved_on',
+    [CH.ERR.CONTRACT_TAKEN] = 'org_extras.why_moved_on',
+    [CH.ERR.CONTRACT_FROZEN] = 'org_extras.why_on_hold',
+    [CH.ERR.RESTART_HOLD] = 'org_extras.why_paused',
+    [CH.ERR.APP_PAUSED] = 'org_extras.why_paused',
+    [CH.ERR.LOCKED] = 'org_extras.why_busy',
+    [CH.ERR.BUSY] = 'org_extras.why_busy',
+    [CH.ERR.SERVER_ERROR] = 'org_extras.why_server_error',
+    [CH.ERR.DB_TIMEOUT] = 'org_extras.why_server_error',
+}
+
+---@param code any the accept's refusal
+---@return string
+local function whyRefused(code)
+    if WHY[code] then return L(WHY[code]) end
+    -- The organisation's own refusals have their own sentence.
+    if type(code) == 'string' and code:sub(1, 4) == 'org_' then return O.message(code) end
+    return L('org_extras.why_other')
+end
+
 --- Approve (the accept runs now, every rule checked again) or refuse one
---- (K6). Never one's own. The member is told either way.
+--- (K6). Never one's own. The member is told either way, and by whom only
+--- as "a boss" or "staff".
 function Org.decideAccept(who, id, approve)
     local org = O.current()
     local ERR = O.ERR
@@ -501,7 +532,8 @@ function Org.decideAccept(who, id, approve)
     Pending[k] = nil
     if not approve then
         kit.record('org_accept_refused', who, { member = p.cid }, p.contractId)
-        tell(p.cid, L('org_extras.a_boss_refused_your_accept_nothing'))
+        tell(p.cid, who.staff and L('org_extras.staff_refused_your_accept_nothing')
+            or L('org_extras.a_boss_refused_your_accept_nothing'))
         return true, nil, { approved = false }
     end
     local d = deps()
@@ -516,11 +548,11 @@ function Org.decideAccept(who, id, approve)
         local code = ran and refusal or 'server_error'
         kit.record('org_accept_approved', who, { member = p.cid, refused = tostring(code) }, p.contractId)
         tell(p.cid, L('org_extras.your_accept_was_approved_but_the'))
-        return fail(ERR.RULE, { message = L('org_extras.approved_but_the_contract_would_not') .. tostring(code)
-            .. L('org_extras.nothing_was_taken') })
+        return fail(ERR.RULE, { message = L('org_extras.approved_but_the_contract_would_not'):format(whyRefused(code)) })
     end
     kit.record('org_accept_approved', who, { member = p.cid }, p.contractId)
-    tell(p.cid, L('org_extras.a_boss_approved_your_accept_the'))
+    tell(p.cid, who.staff and L('org_extras.staff_approved_your_accept_the')
+        or L('org_extras.a_boss_approved_your_accept_the'))
     return true, nil, { approved = true }
 end
 
@@ -587,7 +619,7 @@ function Org.forceOffDuty(who, cid)
     if actor then tellFramework(actor.source, false) end
     rebuild()
     kit.record('org_duty_forced', who, { member = cid })
-    tell(cid, L('org_extras.a_boss_sent_you_off_duty'))
+    tell(cid, who.staff and L('org_extras.staff_sent_you_off_duty') or L('org_extras.a_boss_sent_you_off_duty'))
     return true
 end
 
@@ -761,8 +793,14 @@ function Org.channelMute(who, cid, hours)
     org.settings.channelMutes[cid] = hours > 0 and (now() + hours * 3600) or nil
     kit.save()
     kit.record('org_channel_mute', who, { member = cid, hours = hours })
-    tell(cid, hours > 0 and (L('org_extras.a_boss_muted_you_in_the_2')):format(hours)
-        or L('org_extras.you_may_write_in_the_organisation'))
+    local muted
+    if hours == 1 then
+        muted = who.staff and L('org_extras.staff_muted_you_for_one_hour') or L('org_extras.a_boss_muted_you_for_one_hour')
+    elseif hours > 1 then
+        muted = (who.staff and L('org_extras.staff_muted_you_for_hours') or L('org_extras.a_boss_muted_you_in_the_2'))
+            :format(hours)
+    end
+    tell(cid, muted or L('org_extras.you_may_write_in_the_organisation'))
     return true
 end
 
@@ -829,7 +867,10 @@ function Org.writeDossier(who, contractId, spec)
     kit.save()
     kit.record('org_dossier', who, { notes = dossier.notes and #dossier.notes or nil, spot = dossier.spot,
         rules = dossier.rules, member = entry.cid }, contractId)
-    if entry.cid then tell(entry.cid, L('org_extras.a_boss_attached_a_dossier_to')) end
+    if entry.cid then
+        tell(entry.cid, who.staff and L('org_extras.staff_attached_a_dossier_to')
+            or L('org_extras.a_boss_attached_a_dossier_to'))
+    end
     return true
 end
 

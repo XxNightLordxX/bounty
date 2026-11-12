@@ -246,13 +246,18 @@ wrapped `Extras2.observe` calls `Extras3.observe` after the stats, on the
 member's own organisation), its standing read at use (`Extras3.standing`, the
 heat from `server/record/heat.lua`'s `Heat.of`), and asked by the accept gate
 (`Extras3.tierGate`, after probation and before approval). Dead drops are a
-payout check, `'deaddrop'`, last in `Payout.ORDER`: `onClaim` writes the drop
-to `settings.drops[contract:cid]` (and the in-memory index `Drops`, rebuilt by
-`Extras3.loaded` at every boot), `holds` keeps the member's baseline and bonus
-lines owed and queued (one `next()` while none waits), the drop's ox_target use
-(`Org.useSpot`) or the tick ends it, and `escrow.retryPending` hands it over;
-`'refund'` gives every held line back with `escrow.release`, as body disposal
-does. `onClaim` answers `{ spot, minutes }`, filed by `Payout.onClaim` under the
+payout check, `'deaddrop'`, last in `Payout.ORDER`: `onClaim` writes one drop
+per collection to `settings.drops[contract:cid:slot]` (the claim's
+`next_slot`, as body disposal keys `disposal:<contract>:<slot>`; and the
+in-memory index `Drops`, rebuilt by `Extras3.loaded` at every boot), `holds`
+keeps the member's baseline and bonus lines of that slot owed and queued (an
+owed split of one by the slot of the line it was split from; one `next()`
+while none waits), the drop's ox_target use (`Org.useSpot`) or the tick ends
+it, and `escrow.retryPending` hands it over; `'refund'` gives that slot's held
+lines back with `escrow.release`, as body disposal does. A drop saved by an
+older build (`settings.drops[contract:cid]`, no `slot`) still holds and
+refunds every slot it held; the next collection's own drop sets its `before`,
+so it holds nothing from that slot on. `onClaim` answers `{ spot, minutes }`, filed by `Payout.onClaim` under the
 check's `answer = 'dropHold'` as the claim's `dropHold` (the receipt's words).
 `Org.memberLeft` (`Org.fire`, and `Org.external` taking a member out) ends every
 drop of theirs as released (`Extras3.memberLeft`, audited `why = 'left'`).

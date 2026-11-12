@@ -1256,7 +1256,7 @@ for _, bucket in ipairs(BUCKETS) do
         kind = 'number', integer = true, min = 1, max = 200, label = bucket .. L('settings.requests_held'),
         about = gates and (gates .. L('settings.how_many_it_allows_at_once')) or nil,
         stricter = not panel and 'down' or nil,
-        strict = not panel and ('Holding ' .. BUCKET_STRICTER) or nil,
+        strict = not panel and (L('settings.holding_x'):format(BUCKET_STRICTER)) or nil,
         inflight = not panel and AT_USE or nil, readonly = panel and PANEL_BUCKET_READONLY or nil,
     }
 end
@@ -2916,7 +2916,7 @@ function Settings.view()
         out.readonly[#out.readonly + 1] = {
             key = key, group = 'Edit in config.lua', groupLabel = Settings.groupLabel('Edit in config.lua'),
             area = 'engine',
-            label = rule.secret and ('Secret: ' .. rule.convar) or rule.label or key,
+            label = rule.secret and (L('settings.secret_x'):format(tostring(rule.convar))) or rule.label or key,
             kind = 'text', category = 'developer', readonly = rule.why, denied = true,
             secret = rule.secret or nil, value = value, source = 'config',
         }

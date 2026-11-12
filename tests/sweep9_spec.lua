@@ -244,8 +244,8 @@ describe('sweep 9 ORG-5: the funds ledger names no contract to a boss', function
         eq(#boss.rows, 1)
         eq(boss.rows[1].contract, nil, 'no contract for a boss')
         eq(boss.rows[1].actor, nil, 'nor who')
-        local _, _, staff = s.org.fundsView(W.STAFF)
-        eq(staff.rows[1].contract, 'CONTRACTX', 'staff still see it')
+        local _, _, staff = s.org.fundsView(W.STAFF, nil, true)
+        eq(staff.rows[1].contract, 'CONTRACTX', 'staff with IdentityAce still see it')
     end)
 end)
 
