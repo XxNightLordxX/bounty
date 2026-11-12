@@ -23,16 +23,17 @@ local Integrations = {}
 --- The kinds, in the order Config.Integrations lists them.
 ---   key      the Config.Integrations key
 ---   side     where its adapters live: 'server', 'client' or 'both'
----   without  what happens with no adapter, as the console line says it
+---   without  what happens with no adapter, as the console line and the
+---            panel say it: read from the language file when it is read
+---            (`withoutKey`, integrations.without_<kind> in locales/en.lua)
 ---   needed   whether a feature that uses it is switched on (an adapter
 ---            missing for a feature that is off is only a Debug line)
 ---   required the resource cannot run without one (the framework)
 Integrations.KINDS = {
     { kind = 'framework', key = 'Framework', side = 'server', required = true,
-      without = 'players, jobs and money cannot be read: the resource waits for it and does nothing' },
+      withoutKey = 'integrations.without_framework' },
     { kind = 'inventory', key = 'Inventory', side = 'server',
-      without = 'item, weapon and dirty-money rewards, burner phones, proof items and the organisation\'s '
-          .. 'armory are off; cash and bank rewards work',
+      withoutKey = 'integrations.without_inventory',
       needed = function(c)
           local s = c.Sources or {}
           local on = function(t) return type(t) == 'table' and t.enabled == true end
@@ -40,50 +41,70 @@ Integrations.KINDS = {
           return on(s.item) or on(s.weapon) or on(s.dirty) or (org.Enabled == true and org.Armory == true)
       end },
     { kind = 'target', key = 'Target', side = 'client',
-      without = 'step markers and organisation spots have no third-eye option; the map markers still show',
+      withoutKey = 'integrations.without_target',
       needed = function(c)
           return (type(c.StepMarkers) == 'table' and c.StepMarkers.Enabled == true)
               or (type(c.Organisation) == 'table' and c.Organisation.Enabled == true)
       end },
     { kind = 'dispatch', key = 'Dispatch', side = 'server',
-      without = 'nothing is filed in the police MDT; officers\' phones are still told',
+      withoutKey = 'integrations.without_dispatch',
       needed = function(c)
           return type(c.Advisory) == 'table' and c.Advisory.Enabled == true and c.Advisory.UseDispatch ~= false
       end },
     { kind = 'ambulance', key = 'Ambulance', side = 'both',
-      without = 'death and last stand are read from the framework\'s player metadata and the game',
+      withoutKey = 'integrations.without_ambulance',
       needed = function() return true end },
     { kind = 'banking', key = 'Banking', side = 'server',
-      without = 'the organisation\'s funds are kept in this resource\'s own ledger',
+      withoutKey = 'integrations.without_banking',
       needed = function(c) return type(c.Organisation) == 'table' and c.Organisation.Enabled == true end },
     { kind = 'phone', key = 'Phone', side = 'both',
-      without = 'there is no phone app; notices fall back to on-screen notifications',
+      withoutKey = 'integrations.without_phone',
       needed = function() return true end },
     { kind = 'keys', key = 'Keys', side = 'server',
-      without = 'the disposal vehicle is left unlocked, with no keys given',
+      withoutKey = 'integrations.without_keys',
       needed = function(c) return type(c.Disposal) == 'table' and c.Disposal.Enabled == true end },
     { kind = 'garage', key = 'Garage', side = 'server',
-      without = 'the organisation\'s garage is off',
+      withoutKey = 'integrations.without_garage',
       needed = function(c)
           local org = type(c.Organisation) == 'table' and c.Organisation or {}
           return org.Enabled == true and org.Garage == true
       end },
     { kind = 'mugshot', key = 'Mugshot', side = 'client',
-      without = 'target headshots are off',
+      withoutKey = 'integrations.without_mugshot',
       needed = function(c) return type(c.Mugshot) == 'table' and c.Mugshot.Enabled == true end },
     { kind = 'clothing', key = 'Clothing', side = 'client',
-      without = 'a change of clothes does not refresh the target\'s headshot until the next one is due',
+      withoutKey = 'integrations.without_clothing',
       needed = function(c) return type(c.Mugshot) == 'table' and c.Mugshot.Enabled == true end },
     { kind = 'progression', key = 'Progression', side = 'server',
-      without = 'completions earn no trust in a wider criminal progression',
+      withoutKey = 'integrations.without_progression',
       needed = function(c)
           local r = type(c.Record) == 'table' and c.Record.Progression
           return type(r) == 'table' and r.Enabled == true
       end },
 }
 
+--- The words, looked up as they are read: shared/locale.lua is loaded on
+--- both sides before this file (fxmanifest.lua). The game has none of the
+--- server's words, and never reads these.
+local function L(key)
+    local Locale = rawget(_G, 'CrimsonLocale')
+    if not Locale then
+        local boot = rawget(_G, 'CrimsonBoot')
+        Locale = boot and boot.requireShared and boot.requireShared('locale') or nil
+    end
+    return Locale and Locale.t(key) or key
+end
+
+--- A kind's `without`, in the language in force.
+local SPEC = { __index = function(spec, field)
+    if field == 'without' then return L(rawget(spec, 'withoutKey')) end
+end }
+
 local BY_KIND = {}
-for i = 1, #Integrations.KINDS do BY_KIND[Integrations.KINDS[i].kind] = Integrations.KINDS[i] end
+for i = 1, #Integrations.KINDS do
+    setmetatable(Integrations.KINDS[i], SPEC)
+    BY_KIND[Integrations.KINDS[i].kind] = Integrations.KINDS[i]
+end
 Integrations.BY_KIND = BY_KIND
 
 --- [kind] = { order = string[], by = { [name] = adapter } }
@@ -271,16 +292,17 @@ function Integrations.offLine(st)
     if st.active then return nil end
     local why
     if not st.valid then
-        why = ('Config.Integrations.%s = \'%s\' names no adapter this build has (%s)')
+        why = (L('integrations.names_no_adapter'))
             :format(st.key, tostring(st.choice), table.concat(st.names, ', '))
     elseif st.choice == 'none' then
-        why = ('Config.Integrations.%s is \'none\''):format(st.key)
+        why = (L('integrations.is_none')):format(st.key)
     else
         local names = {}
         for i = 1, #st.detected do names[i] = st.detected[i].resource end
-        why = (#names > 0 and (table.concat(names, ' / ') .. ' not started') or 'no adapter registered')
+        why = #names > 0 and (L('integrations.not_started')):format(table.concat(names, ' / '))
+            or L('integrations.no_adapter_registered')
     end
-    return ('integration %s off (%s): %s'):format(st.kind, why, st.without)
+    return (L('integrations.off_line')):format(st.kind, why, st.without)
 end
 
 CrimsonIntegrations = Integrations

@@ -552,8 +552,13 @@
   var ORG_MONEY_EVENTS = { orgDeposit: true, orgWithdraw: true, orgBonus: true };
 
   /* What each reward source is called when a refusal names it. */
-  var SOURCE_WORDS = { cash: 'cash', bank: t('app.bank_money'), dirty: t('app.dirty_money'),
-                       item: 'items', weapon: 'weapons' };
+  var SOURCE_WORDS = { cash: t('app.source_inline_cash'), bank: t('app.bank_money'), dirty: t('app.dirty_money'),
+                       item: t('app.word_items'), weapon: t('app.word_weapons') };
+
+  /* An account (cash or bank) inside a sentence: "paid from your bank". */
+  function accountWord(account) {
+    return account === 'cash' ? t('app.source_inline_cash') : t('app.source_inline_bank');
+  }
 
   /* A reason refused for what it says, by the rule it broke (the server's
      reason_refused). The Place form and Edit say the same. */
@@ -1658,13 +1663,17 @@
      money", less any switched off (the wallet's caps). The minimum named
      dirty money on a server that had turned it off. All three until the
      wallet has said. */
-  function moneyTaken() {
+  function moneyNames() {
     var caps = (state.wallet && state.wallet.caps) || {};
     var names = [];
-    if (caps.cashEnabled !== false) { names.push('cash'); }
-    if (caps.bankEnabled !== false) { names.push('bank'); }
+    if (caps.cashEnabled !== false) { names.push(t('app.source_inline_cash')); }
+    if (caps.bankEnabled !== false) { names.push(t('app.source_inline_bank')); }
     if (caps.dirtyEnabled !== false) { names.push(t('app.dirty_money')); }
-    if (!names.length) { return 'money'; }
+    return names;
+  }
+  function moneyTaken() {
+    var names = moneyNames();
+    if (!names.length) { return t('app.word_money'); }
     return names.length === 1 ? names[0]
       : t('app.list_and', names.slice(0, -1).join(', '), names[names.length - 1]);
   }
@@ -2538,7 +2547,7 @@
       return box;
     }
     var cost = Number(terms.cost) || 0;
-    var account = terms.account === 'cash' ? 'cash' : 'bank';
+    var account = accountWord(terms.account);
     var key = 'dark:' + contract.id;
     var armed = darkArmed === contract.id;
     var label = cost > 0 ? t('app.go_dark') + money(cost) : t('app.go_dark_free');
@@ -2580,8 +2589,8 @@
     var actions = el('div', 'row tip-actions');
     actions.appendChild(buy);
     box.appendChild(actions);
-    box.appendChild(el('div', 'hint', t('app.lie_low_for') + (Number(terms.minutes) || 0)
-      + t('app.minutes_any_informant_asked_about_you') + account + '.'));
+    box.appendChild(el('div', 'hint', tn('app.lie_low_paid_from_your', Number(terms.minutes) || 0,
+      Number(terms.minutes) || 0, account)));
     return box;
   }
 
@@ -3049,7 +3058,7 @@
       }
       var armed = inviteArmed === which;
       var b = el('button', (accept ? 'primary' : 'ghost') + (armed ? ' is-armed' : ''),
-        armed ? t('app.tap_again_to') + which : label);
+        armed ? (accept ? t('app.tap_again_to_accept_invite') : t('app.tap_again_to_decline_invite')) : label);
       b.onclick = function () {
         if (inviteArmed !== which) {
           inviteArmed = which;
@@ -3899,7 +3908,7 @@
       var log = orgCard(t('app.log'), 'i-layers');
       if (!a.log.length) { log.appendChild(el('div', 'hint', t('app.nothing_moved_yet'))); }
       a.log.slice(0, 30).forEach(function (e) {
-        log.appendChild(el('div', 'hint', (e.dir === 'in' ? 'In: ' : 'Out: ') + String(e.item) + ' × '
+        log.appendChild(el('div', 'hint', (e.dir === 'in' ? t('app.armory_in') : t('app.armory_out')) + String(e.item) + ' × '
           + (Number(e.count) || 0) + ' · ' + String(e.who || t('app.a_member_2')) + (e.at ? ' · ' + agoText(e.at) : '')));
       });
       view.appendChild(log);
@@ -4021,7 +4030,7 @@
     var w = state.org.data.work;
     var members = asList(w.members).map(function (x) {
       return { value: x.ref, label: String(x.name || t('app.a_member')) + (x.onDuty === false ? t('app.off_duty_2') : '')
-        + (x.probation ? ' (probation)' : '') };
+        + (x.probation ? t('app.probation_suffix') : '') };
     });
     if (Array.isArray(w.approvals) && orgHolds('K6')) {
       var ap = orgCard(t('app.accepts_waiting'), 'i-usercheck');
@@ -4183,7 +4192,7 @@
         + (radius ? t('app.within_metres', radius) : '') + t('app.by_the_id_over_their_head')));
       var office = orgOfficeNote('M2');
       if (office) { hire.appendChild(office); }
-      hire.appendChild(orgField('hire.target', t('app.their_id'), 'number', 'e.g. 42'));
+      hire.appendChild(orgField('hire.target', t('app.their_id'), 'number', t('app.eg_42')));
       var maxGrade = orgBound('HireMaxGrade');
       var options = orgRoleOptions(true, maxGrade);
       if (options.length) {
@@ -4337,7 +4346,7 @@
       box.appendChild(orgField(key + 'atonce', t('app.contracts_at_once') + (orgBound('MemberMaxAtOnce') !== null
         ? t('app.up_to_2') + orgBound('MemberMaxAtOnce') + ')' : ''), 'number', t('app.no_limit')));
       box.appendChild(orgField(key + 'cooldown', t('app.minutes_between_accepts') + (orgBound('MemberCooldownMaxMinutes')
-        !== null ? t('app.up_to_2') + orgBound('MemberCooldownMaxMinutes') + ')' : ''), 'number', 'none'));
+        !== null ? t('app.up_to_2') + orgBound('MemberCooldownMaxMinutes') + ')' : ''), 'number', t('app.word_none')));
       var r6 = orgRow();
       r6.appendChild(orgTwoTap('ghost', t('app.set_limits'), key + 'limits', t('app.tap_again_to_set_the_limits'), function () {
         var data = { member: m.ref };
@@ -4353,7 +4362,7 @@
     if (orgHolds('M3')) {
       box.appendChild(orgField(key + 'freason', t('app.reason_for_firing'), 'text', t('app.why'), 160));
       var r3 = orgRow();
-      r3.appendChild(orgTwoTap('danger', t('app.fire'), key + 'fire', t('app.tap_again_to_fire') + String(m.name || 'them'),
+      r3.appendChild(orgTwoTap('danger', t('app.fire'), key + 'fire', t('app.tap_again_to_fire') + String(m.name || t('app.word_them')),
         function () {
           var reason = orgText(key + 'freason');
           if (!reason) { return say(t('app.give_a_reason_for_firing_them')); }
@@ -4396,7 +4405,7 @@
       }
       var row = orgRow();
       [['grant', t('app.grant')], ['deny', t('app.deny')], ['clear', t('app.clear')]].forEach(function (pair) {
-        row.appendChild(orgTwoTap('ghost', pair[1], key + 'g:' + p.code + ':' + pair[0], t('app.tap_again') + pair[0],
+        row.appendChild(orgTwoTap('ghost', pair[1], key + 'g:' + p.code + ':' + pair[0], t('app.tap_again') + pair[1].toLowerCase(),
           function () {
             orgWrite(key + 'g:' + p.code + ':' + pair[0], function () {
               return post('orgMemberGrant', { member: m.ref, power: p.code, state: pair[0] });
@@ -4539,6 +4548,12 @@
 
   /* ---- Money: the funds, deposits, withdrawals, bonuses and cuts ---- */
 
+  /* What moved the funds (Funds.ledger's kind), in words. */
+  var FUNDS_KIND = { deposit: t('app.funds_kind_deposit'), withdraw: t('app.funds_kind_withdraw'),
+    bonus: t('app.funds_kind_bonus'), salary: t('app.funds_kind_salary'), cut: t('app.funds_kind_cut'),
+    cut_back: t('app.funds_kind_cut_back'), refund: t('app.funds_kind_refund'), staff: t('app.funds_kind_staff'),
+    'switch': t('app.funds_kind_switch') };
+
   function orgMoneyScreen(view) {
     if (orgHolds('C8')) {
       var funds = orgCard(t('app.funds'), 'i-coin');
@@ -4550,9 +4565,13 @@
         if (!rows.length) { funds.appendChild(el('div', 'hint', t('app.nothing_moved_yet'))); }
         rows.slice(0, 20).forEach(function (row) {
           var amount = Number(row.amount) || 0;
+          // The server sends when it moved as `at` (Funds.ledger), and its
+          // kind as a code, said here in words.
+          var at = row.at || row.created_at;
+          var kind = Object.prototype.hasOwnProperty.call(FUNDS_KIND, row.kind) ? FUNDS_KIND[row.kind] : t('app.funds_kind_other');
           funds.appendChild(el('div', 'hint org-ledger', (amount < 0 ? '−' : '+') + money(Math.abs(amount))
-            + ' · ' + String(row.kind || '') + (row.reason ? ' · ' + String(row.reason) : '')
-            + (row.created_at ? ' · ' + (agoText(row.created_at) || '') : '')));
+            + ' · ' + kind + (row.reason ? ' · ' + String(row.reason) : '')
+            + (at ? ' · ' + (agoText(at) || '') : '')));
         });
       }
       view.appendChild(funds);
@@ -4890,7 +4909,7 @@
   function orgSettingsScreen(view) {
     var m = state.org.mine;
     if (orgHolds('S1')) {
-      var box = orgCard('Organisation name', 'i-briefcase');
+      var box = orgCard(t('app.organisation_name_title'), 'i-briefcase');
       box.appendChild(orgField('rename', t('app.name'), 'text', m.label || '', 64));
       var row = orgRow();
       row.appendChild(orgTwoTap('primary', t('app.rename'), 'rename', t('app.tap_again_to_rename'), function () {
@@ -5222,9 +5241,9 @@
     var any = Number(waits.anyMinutes) || 0;
     var same = Number(waits.sameTargetMinutes) || 0;
     var everyone = Number(waits.everyoneMinutes) || 0;
-    var name = contract.targetName || 'them';
+    var name = contract.targetName || t('app.word_them');
     var mine = [];
-    if (any > 0) { mine.push(t('app.any_new_contract_for') + durationText(any)); }
+    if (any > 0) { mine.push(t('app.any_new_contract_for_x', durationText(any))); }
     if (same > 0) { mine.push(t('app.one_on_for', name, durationText(same))); }
     /* The creator's own, and on a contract somebody took up, the wait on the
        target for every client: withdrawing one nobody took up starts none
@@ -5234,7 +5253,8 @@
       ? t('app.nobody_else_on_for_either', name, durationText(everyone))
       : '';
     if (!mine.length) { return others || null; }
-    return t('app.after_this_you_cannot_place') + mine.join(', or ') + '.'
+    return (mine.length === 1 ? t('app.after_this_you_cannot_place_one', mine[0])
+      : t('app.after_this_you_cannot_place_either', mine[0], mine[1]))
       + (others ? ' ' + others : '');
   }
 
@@ -5274,8 +5294,7 @@
               + t('app.waiting_for_you_it_arrives_when') + checking
             : checking ? t('app.contract_withdrawn') + checking
               : collected
-                ? t('app.contract_withdrawn_2') + collected + t('app.the_rest_of_what_you_put')
-                  + 'returned.'
+                ? t('app.contract_withdrawn_rest_returned', collected)
                 : t('app.contract_withdrawn_everything_you_put_up'), 'ok');
           refresh();
         });
@@ -5411,8 +5430,8 @@
       var keep = Number(settings().deadlineMinLeftMinutes) || 5;
       var left = minutesLeft(contract);
       if (left === null || -hours * 60 > left - keep) {
-        return { error: t('app.there_is_not_that_much_deadline')
-          + (bandOf(contract) ? bandOf(contract).text.toLowerCase() : t('app.no_deadline')) + '.' };
+        return { error: bandOf(contract) ? t('app.not_that_much_deadline_band', bandOf(contract).inline)
+          : t('app.not_that_much_deadline_none') };
       }
       changes.push({ what: 'deadline', text: t('app.deadline_h_less', -hours),
         send: function () {
@@ -5451,7 +5470,7 @@
       var anon = v.anon === 'anon';
       var fee = anonymityFee('creator');
       changes.push({ what: 'anonymity', text: anon
-        ? t('app.placed_anonymously') + (fee > 0 ? ' (' + money(fee) + t('app.from_your') + anonymityAccount() + ')' : '')
+        ? t('app.placed_anonymously') + (fee > 0 ? ' (' + money(fee) + t('app.from_your') + accountWord(anonymityAccount()) + ')' : '')
         : t('app.under_your_name_2'),
         send: function () {
           return post('revise', { id: contract.id, anonymous: anon,
@@ -5470,7 +5489,7 @@
     if (isNaN(add) || add < 0) { return { error: t('app.add_a_whole_number_of_dollars') }; }
     if (add > 0) {
       var source = v.source === 'bank' ? 'bank' : 'cash';
-      changes.push({ what: 'reward', text: t('app.reward_more_from_your', money(add), source),
+      changes.push({ what: 'reward', text: t('app.reward_more_from_your', money(add), accountWord(source)),
         send: function () {
           var reward = { baseline: {} };
           reward.baseline[source] = add;
@@ -5478,6 +5497,15 @@
         } });
     }
     return { changes: changes };
+  }
+
+  /* What a change on the Edit sheet is called in the Saved / Not saved
+     lines: its code (`what`) is the page's own. */
+  var CHANGE_LABEL = { reason: t('app.sheet_change_reason'), mode: t('app.sheet_change_mode'), stake: t('app.sheet_change_stake'),
+    deadline: t('app.sheet_change_deadline'), buyout: t('app.sheet_change_buyout'), completion: t('app.sheet_change_completion'),
+    anonymity: t('app.sheet_change_anonymity'), reward: t('app.sheet_change_reward') };
+  function changeLabel(what) {
+    return Object.prototype.hasOwnProperty.call(CHANGE_LABEL, what) ? CHANGE_LABEL[what] : String(what);
   }
 
   /* Make the changes one after another, stopping at the first refused, and
@@ -5497,10 +5525,10 @@
           var why = !r.ok ? ((change.explain && change.explain(r)) || failText(r) || t('app.not_right_now'))
             : (ERRORS[r.data.err] || t('app.that_change_no_longer_fits_this'));
           say((done.length ? t('app.saved_list', done.join(', ')) + ' ' : '')
-            + t('app.not_saved') + change.what + ': ' + why);
+            + t('app.not_saved_what', changeLabel(change.what), why));
           return refresh();
         }
-        done.push(change.what);
+        done.push(changeLabel(change.what));
         return next();
       });
     }
@@ -5586,7 +5614,7 @@
     var contract = d.contract;
     var sheet = el('div', 'card dialog edit-sheet');
     sheet.appendChild(el('div', 'target', t('app.edit_this_contract')));
-    sheet.appendChild(el('div', 'reason', t('app.nobody_has_taken_it_changes_apply') + ' ' + (bandOf(contract) ? t('app.it_has') + bandOf(contract).text.toLowerCase() + '.' : '')));
+    sheet.appendChild(el('div', 'reason', t('app.nobody_has_taken_it_changes_apply') + (bandOf(contract) ? ' ' + t('app.it_has_band', bandOf(contract).inline) : '')));
     // The fields scroll on a short screen; Save and Cancel stay put under
     // them, as the reward editor's lines do.
     var panel = el('div', 'sheet-body');
@@ -5788,13 +5816,12 @@
   function idleText(contract) {
     var idle = Number(settings().exclusiveIdleMinutes) || 0;
     var attempt = Number(settings().exclusiveAttemptMinutes) || 0;
-    var ways = [];
-    if (idle > 0) { ways.push(t('app.going_without_going_near', durationText(idle))); }
-    if (attempt > 0) {
-      ways.push(ways.length ? t('app.without_an_attempt_x', durationText(attempt))
-        : t('app.going_without_an_attempt', durationText(attempt)));
+    if (idle > 0 && attempt > 0) {
+      return t('app.idle_or_no_attempt_in_the_city', durationText(idle), durationText(attempt));
     }
-    return ways.length ? ways.join(', or ') + t('app.while_they_are_in_the_city') : '';
+    if (idle > 0) { return t('app.idle_in_the_city', durationText(idle)); }
+    if (attempt > 0) { return t('app.no_attempt_in_the_city', durationText(attempt)); }
+    return '';
   }
 
   /* Where the stake goes, said where the hitman agrees to it. Going idle
@@ -5859,12 +5886,12 @@
     }
     if (r.err === 'terms_changed' && typeof d.creatorAnonymous === 'boolean') {
       return t('app.the_person_who_placed_it_changed_2')
-        + (d.creatorAnonymous ? 'anonymous' : t('app.under_their_name'))
+        + (d.creatorAnonymous ? t('app.word_anonymous') : t('app.under_their_name'))
         + t('app.nothing_was_taken_check_the_card_2');
     }
     if (r.err === 'terms_changed' && typeof d.bailoutAmount === 'number') {
       return t('app.the_person_who_placed_it_changed_3')
-        + (d.bailoutAmount > 0 ? money(d.bailoutAmount) : 'none')
+        + (d.bailoutAmount > 0 ? money(d.bailoutAmount) : t('app.word_none'))
         + t('app.nothing_was_taken_check_the_card_2');
     }
     return null;
@@ -5954,8 +5981,8 @@
             return say(stake > 0 && short.part !== 'fee'
               ? t('app.you_need') + money(stake) + t('app.in_your_bank_or_in_your')
                 + t('app.stake_it_is_not_split_between')
-                + (fee > 0 ? t('app.plus_fee_for_anonymity', money(fee), from) : '') + '.'
-              : t('app.anonymity_costs') + money(fee) + t('app.from_your') + from
+                + (fee > 0 ? t('app.plus_fee_for_anonymity', money(fee), accountWord(from)) : '') + '.'
+              : t('app.anonymity_costs') + money(fee) + t('app.from_your') + accountWord(from)
                 + t('app.and_it_does_not_hold_that'));
           }
           // Holding as many as the server allows. The shared wording said
@@ -5978,7 +6005,7 @@
         var charged = (r.data && r.data.charged) || {};
         var cost = Number(charged.fee) > 0
           ? t('app.anonymity_cost') + money(Number(charged.fee)) + t('app.from_your')
-            + (charged.account === 'cash' ? 'cash' : 'bank') + '.' : '';
+            + accountWord(charged.account) + '.' : '';
         say(recorded ? t('app.contract_accepted_anonymously') + cost
           : anonymous ? t('app.contract_accepted_under_your_name_the')
             + t('app.already_knows_you_on_this_one')
@@ -6051,7 +6078,7 @@
             : '')
           // How much time that is. The stake is forfeit to the deadline, and
           // nothing on the dialog said when it was.
-          + (bandOf(contract) ? t('app.it_has_2') + bandOf(contract).text.toLowerCase() + '.' : '')
+          + (bandOf(contract) ? ' ' + t('app.it_has_band', bandOf(contract).inline) : '')
           + exclusiveRule(contract),
         options: offered ? [
           { label: t('app.anonymously'), primary: true, run: function () { take(true); } },
@@ -6493,8 +6520,7 @@
           kill_too_soon: rule === 'target_just_on'
             ? t('app.they_had_only_just_come_into_2')
             : t('app.they_had_only_just_got_back_2'),
-          target_protected: t('app.they_are_protected_right_now_so')
-            + 'count.',
+          target_protected: t('app.they_are_protected_right_now_so'),
           rate_limited: t('app.too_many_attempts_just_now_wait')
             + (noKill ? t('app.try_again_2')
               : noPhoto ? t('app.tap_verify_kill_again_the_kill')
@@ -6511,8 +6537,7 @@
             + t('app.verify_kill_again');
           here.photo_revived = t('app.they_were_brought_back_before_you')
             + t('app.this_is_not_an_elimination_any');
-          here.photo_still_down = t('app.they_are_down_not_dead_finish')
-            + 'kill.';
+          here.photo_still_down = t('app.they_are_down_not_dead_finish');
           here.token_invalid = t('app.that_kill_is_no_longer_the')
             + t('app.body_and_tap_verify_kill_again');
         }
@@ -6582,8 +6607,7 @@
           // only far away: an anonymous one absent is told as this too
           // (Kidnap.conditionsMet), so neither may be guessed from it.
           creator_too_far: t('app.the_person_who_placed_this_contract_2')
-            + nearPlacer() + t('app.take_the_target_to_them_then')
-            + 'again.' + findThem,
+            + nearPlacer() + t('app.take_the_target_to_them_then') + findThem,
           target_too_far: t('app.keep_the_target_close'),
           // Another instance (an interior, an apartment) is somewhere
           // else, whatever the coordinates say.
@@ -6943,7 +6967,7 @@
 
   /* The price of a look-up, as the button and the dialog say it. */
   function lookUpPrice(rules) {
-    return Number(rules.cost) > 0 ? money(rules.cost) : 'free';
+    return Number(rules.cost) > 0 ? money(rules.cost) : t('app.word_free');
   }
 
   function chanceOf(value) {
@@ -6994,7 +7018,7 @@
     var detail = t('app.your_informant_asks_around_about_the')
       + chanceOf(rules.chance) + t('app.they_find_out_who_it_is')
       + (shown.cost > 0
-        ? t('app.the_cost_from_your_is_paid_either_way', money(shown.cost), shown.account)
+        ? t('app.the_cost_from_your_is_paid_either_way', money(shown.cost), accountWord(shown.account))
         : t('app.it_is_free_on_this_server'))
       + t('app.nobody_is_told_you_asked')
       + lookUpsLeftText(contract.informantLeft, rules.maxPerContract);
@@ -7108,7 +7132,7 @@
     var detail = t('app.your_informant_asks_around_about_the_2')
       + chanceOf(rules.chance) + t('app.they_find_out_who_it_is')
       + (shown.cost > 0
-        ? t('app.the_cost_from_your_is_paid_either_way', money(shown.cost), shown.account)
+        ? t('app.the_cost_from_your_is_paid_either_way', money(shown.cost), accountWord(shown.account))
         : t('app.it_is_free_on_this_server'))
       + t('app.if_they_do_find_out_there') + chanceOf(rules.alertChance)
       + t('app.that_operative_notices_someone_was_asking')
@@ -7169,7 +7193,7 @@
       var band = contract ? bandOf(contract) : null;
       return t('app.shorten_the_deadline')
         + (by ? t('app.by_duration', durationText(by)) : '')
-        + (by && band ? t('app.now_band', band.text.toLowerCase()) : '');
+        + (by && band ? t('app.now_band', band.inline) : '');
     },
     raise_penalty: function (p) {
       return t('app.raise_the_stake') + (p && p.amount ? t('app.to_amount', money(p.amount)) : '');
@@ -7473,19 +7497,22 @@
   }
 
   /* The bands a contract's time left is said in, longest first, with the
-     least time each one can mean, in minutes (server: Util.TIME_BANDS). */
+     least time each one can mean, in minutes (server: Util.TIME_BANDS).
+     The server sends the band's code (`id`), the same in every language;
+     the words are this page's. Matched by code, never by the words: a
+     translated page matching the server's text found no band at all. */
   var TIME_BANDS = [
-    { text: t('app.more_than_2_hours_left'), least: 121 },
-    { text: t('app.1_2_hours_left'), least: 61 },
-    { text: t('app.under_1_hour_left'), least: 16 },
-    { text: t('app.under_15_minutes_left'), least: 0 }
+    { id: 'over_2h', text: t('app.more_than_2_hours_left'), inline: t('app.band_inline_over_2h'), least: 121 },
+    { id: '1_to_2h', text: t('app.1_2_hours_left'), inline: t('app.band_inline_1_to_2h'), least: 61 },
+    { id: 'under_1h', text: t('app.under_1_hour_left'), inline: t('app.band_inline_under_1h'), least: 16 },
+    { id: 'under_15m', text: t('app.under_15_minutes_left'), inline: t('app.band_inline_under_15m'), least: 0 }
   ];
 
   /* The band a contract is in, or null when it has no deadline. */
   function bandOf(contract) {
-    var text = contract && contract.timeLeft;
+    var id = contract && contract.timeLeft;
     for (var i = 0; i < TIME_BANDS.length; i++) {
-      if (TIME_BANDS[i].text === text) { return TIME_BANDS[i]; }
+      if (TIME_BANDS[i].id === id) { return TIME_BANDS[i]; }
     }
     return null;
   }
@@ -7546,7 +7573,7 @@
   function runsOut(contract) {
     var band = bandOf(contract);
     if (!band) { return t('app.has_no_deadline'); }
-    return t('app.has_band', band.text.toLowerCase());
+    return t('app.has_band', band.inline);
   }
 
   /* "3 days ago", from a server time in seconds; null without one. */
@@ -7833,8 +7860,7 @@
            told they were holding too many contracts. */
         var reasons = {
           limit_reached: t('app.there_is_already_a_change_waiting')
-            + t('app.it_has_to_be_answered_or')
-            + 'another.',
+            + t('app.it_has_to_be_answered_or'),
           invalid_input: t('app.that_change_no_longer_fits_this_2')
             + t('app.has_moved_on_since_you_opened'),
           bad_state: t('app.this_contract_cannot_be_changed_right'),
@@ -7888,7 +7914,7 @@
     var band = bandOf(contract);
     var standing = band === null
       ? t('app.this_contract_has_no_deadline_set')
-      : t('app.it_currently_has') + band.text.toLowerCase() + '.';
+      : t('app.it_currently_has_band', band.inline);
 
     /* It opened on an empty box, with no ceiling and no hint — so Confirm,
        the obvious first tap, did nothing and said nothing. It now opens on
@@ -8243,7 +8269,7 @@
 
     var caps = wallet.caps || {};
     var usable = ['cash', 'bank', 'dirty'].filter(function (source) {
-      return caps[source + t('app.enabled')] !== false && (Number(wallet[source]) || 0) > 0;
+      return caps[source + 'Enabled'] !== false && (Number(wallet[source]) || 0) > 0;
     });
 
     /* Goods, and the kidnapping bonus, beside money. The server has taken
@@ -8363,7 +8389,7 @@
       if (ceiling < 1) {
         return say(t('app.this_contract_is_already_worth_as'));
       }
-      askNumber(t('app.add_source_to_the_reward', (SOURCE_LABELS[source] || source).toLowerCase()),
+      askNumber(t('app.add_source_to_the_reward', SOURCE_INLINE[source] || source),
         t('app.it_is_taken_from_you_now'),
         function (value) {
           var reward = { baseline: {} };
@@ -9045,7 +9071,8 @@
     // On a line of its own: a band is two figures, too wide for the stamp.
     node.appendChild(el('div', 'rumour-band', t('app.pays_about') + rumourBand(r)));
     // The band already says "left" ("Under 1 hour left").
-    if (contract.timeLeft) { node.appendChild(el('div', 'hint', contract.timeLeft)); }
+    // In this page's words: the server sends the band's code.
+    if (bandOf(contract)) { node.appendChild(el('div', 'hint', bandOf(contract).text)); }
     var row = el('div', 'row');
     // A broker briefs; they do not go looking for one.
     if (rules.npc && !rules.broker) {
@@ -10032,7 +10059,7 @@
       toggle.htmlFor = 'anon';
       toggle.appendChild(anon);
       toggle.appendChild(el('span', null, t('app.place_anonymously')
-        + (anonymityFee('creator') > 0 ? t('app.costs_from_your_paren', money(anonymityFee('creator')), anonymityAccount()) : '')));
+        + (anonymityFee('creator') > 0 ? t('app.costs_from_your_paren', money(anonymityFee('creator')), accountWord(anonymityAccount())) : '')));
       anonSlot.appendChild(toggle);
     }
     drawAnonOption();
@@ -10212,7 +10239,7 @@
         // and the whole contract was then refused with "That reward does not
         // add up" — a message about the numbers, when the numbers were fine
         // and the source was simply not accepted.
-        if (caps[source + t('app.enabled')] === false) { return; }
+        if (caps[source + 'Enabled'] === false) { return; }
         offered++;
 
         var id = 'slot-' + source + '-' + i;
@@ -10245,11 +10272,14 @@
         // A source switched off on its own said so nowhere: its field and
         // its balance just went. Said once, under the first payout.
         var off = ['cash', 'bank', 'dirty'].filter(function (source) {
-          return caps[source + t('app.enabled')] === false;
-        }).map(function (source) { return SOURCE_LABELS[source].toLowerCase(); });
+          return caps[source + 'Enabled'] === false;
+        }).map(function (source) { return SOURCE_INLINE[source]; });
+        // One sentence for one source and one for two (three is no money
+        // at all, below): never joined in English.
         if (off.length && i === 1) {
-          slot.appendChild(el('div', 'hint', t('app.this_server_does_not_take')
-            + off.join(' or ') + t('app.as_a_reward')));
+          slot.appendChild(el('div', 'hint', off.length === 1
+            ? t('app.server_takes_no_source', off[0])
+            : t('app.server_takes_no_sources', off[0], off[1])));
         }
       } else {
         slot.appendChild(el('div', 'hint',
@@ -10412,16 +10442,20 @@
         + t('app.carrying_anything_else_that_can_be');
     }
     // Only the money this server takes, and none where it takes none.
-    var taken = moneyTaken();
-    if (taken === 'money') {
+    // Counted from the list, never read back out of its words.
+    var names = moneyNames();
+    if (!names.length) {
       return t('app.you_are_not_carrying_anything_that');
     }
-    return t('app.you_are_not_carrying_anything_that_2')
-      + taken.charAt(0).toUpperCase() + taken.slice(1) + t('app.above_still')
-      + (taken.indexOf(' and ') === -1 ? 'works.' : 'work.');
+    var taken = moneyTaken();
+    return tn('app.not_carrying_money_above_still_works', names.length,
+      taken.charAt(0).toUpperCase() + taken.slice(1));
   }
 
   var SOURCE_LABELS = { cash: t('app.cash'), bank: t('app.bank'), dirty: t('app.dirty_money_3') };
+  /* The same inside a sentence ("does not take dirty money"). */
+  var SOURCE_INLINE = { cash: t('app.source_inline_cash'), bank: t('app.source_inline_bank'),
+    dirty: t('app.source_inline_dirty') };
 
   /* A readable name for something that is no longer in the player's pockets.
 
@@ -10707,7 +10741,7 @@
      what is staged, across every payout. */
   function takenText(composed) {
     var parts = [];
-    var words = { cash: 'cash', bank: 'bank', dirty: t('app.dirty_money') };
+    var words = { cash: t('app.source_inline_cash'), bank: t('app.source_inline_bank'), dirty: t('app.dirty_money') };
     ['cash', 'bank', 'dirty'].forEach(function (src) {
       var all = composed.totals[src];
       if (!all) { return; }
@@ -10763,7 +10797,7 @@
     var fee = state.draft.anon === true ? anonymityFee('creator') : 0;
     if (fee > 0) {
       text += t('app.plus_from_your_for_anonymity', money(fee),
-        (settings().anonymityFees || {}).account === 'cash' ? 'cash' : 'bank');
+        accountWord((settings().anonymityFees || {}).account));
     }
     var bonus = composed.bonus.cash + composed.bonus.bank + composed.bonus.dirty;
     if (bonus > 0 || taken.indexOf(t('app.alive_only_3')) !== -1) {
@@ -10784,13 +10818,13 @@
     var moved = [];
     if (typeof placed.bailoutAmount === 'number' && placed.bailoutAmount > 0) {
       terms.push(t('app.buyout_amount', money(placed.bailoutAmount)));
-      if (asked.bailout > 0 && asked.bailout !== placed.bailoutAmount) { moved.push('buyout'); }
+      if (asked.bailout > 0 && asked.bailout !== placed.bailoutAmount) { moved.push(t('app.word_buyout')); }
     }
     if (typeof placed.penaltyAmount === 'number' && placed.penaltyAmount > 0) {
       // Whose it is, said: "stake $1,000" beside the buyout read as a
       // second sum taken from the client.
       terms.push(t('app.hitmans_stake') + money(placed.penaltyAmount) + t('app.they_put_it_up_not_you'));
-      if (asked.penalty > 0 && asked.penalty !== placed.penaltyAmount) { moved.push('stake'); }
+      if (asked.penalty > 0 && asked.penalty !== placed.penaltyAmount) { moved.push(t('app.word_stake')); }
     }
     if (terms.length) { text += ' ' + terms.join('; ') + '.'; }
     if (moved.length) {
@@ -10805,7 +10839,7 @@
     var charged = placed.charged || {};
     if (Number(charged.fee) > 0) {
       text += t('app.placing_it_anonymously_cost') + money(Number(charged.fee)) + t('app.from_your')
-        + (charged.account === 'cash' ? 'cash' : 'bank') + '.';
+        + accountWord(charged.account) + '.';
     }
 
     // How it is completed, where that is not what the form said.
@@ -10819,9 +10853,7 @@
     var band = bandOf(placed);
     var minutes = Number(settings().defaultDeadlineMinutes) || 0;
     if (band || minutes > 0) {
-      text += t('app.it_has_2') + (band ? band.text.toLowerCase() : t('app.duration_left', durationText(minutes)))
-        + t('app.unless_you_extend_it_its_clock')
-        + t('app.operative_on_it_are_all_in');
+      text += ' ' + t('app.it_has_left_unless_you_extend', band ? band.inline : t('app.duration_left', durationText(minutes)));
     }
     // Contract decay (Config.Improvements.ContractDecay): told as it is placed.
     var decay = settings().contractDecay;
@@ -10829,7 +10861,7 @@
       text += decay.mode === 'shorten'
         ? t('app.decay_shorten_h', decay.percent, decay.hours)
         : t('app.decay_rise_h', decay.percent, decay.hours, decay.maxPercent,
-          decay.account === 'cash' ? 'cash' : 'bank');
+          accountWord(decay.account));
       if (decay.mode !== 'shorten' && asked.anonymous === true) {
         text += t('app.not_this_one_a_contract_placed');
       } else {
@@ -12724,14 +12756,18 @@
 
   function readProtection() {
     state.protection = state.protection || {};
-    state.protection.pending = true;
+    var mine = state.protection;
+    mine.pending = true;
     return post('protectionBoard', {}).then(function (r) {
-      state.protection.pending = false;
+      // Forgotten while it was asked (a job change: forgetMode): this reply
+      // is for a board that is not there any more.
+      if (state.protection !== mine) { return; }
+      mine.pending = false;
       if (!r.ok) {
-        state.protection.failed = failText(r) || t('app.could_not_read_the_protection_jobs');
+        mine.failed = failText(r) || t('app.could_not_read_the_protection_jobs');
       } else {
-        state.protection.failed = null;
-        state.protection.data = r.data;
+        mine.failed = null;
+        mine.data = r.data;
       }
       if (state.tab === 'board') { redraw(); }
     });
@@ -12795,8 +12831,10 @@
           return post('protectionAccept', { job: job.job, reward: job.reward,
             anonymous: anonymous === true }).then(function (r) {
             if (!r.ok) { fail(r); return readProtection(); }
-            state.protection.data = r.data;
+            // Taken on the server, whatever the page forgot since (a job
+            // change clears the board): said first.
             say(t('app.you_took_the_job_their_name'), 'ok');
+            if (state.protection) { state.protection.data = r.data; }
             redraw();
           });
         });
@@ -12864,13 +12902,13 @@
       var hire = el('button', 'ghost ico i-shield', t('app.hire_protection'));
       hire.onclick = function () {
         askFields(t('app.hire_a_bodyguard'), t('app.post_an_anonymous_protection_job_the')
-          + t('app.your_account_now_and_held', offer.account)
+          + t('app.your_account_now_and_held', accountWord(offer.account))
           + t('app.ends_without_being_carried_out_and')
           + t('app.they_get_your_name_and_a'),
           [{ id: 'amount', label: t('app.reward_range', money(offer.min), money(offer.max)),
              type: 'number', value: offer.min, min: offer.min, max: offer.max }],
           function (values) {
-            ask(t('app.pay_from_your', money(values.amount), offer.account),
+            ask(t('app.pay_from_your', money(values.amount), accountWord(offer.account)),
               t('app.held_until_the_contract_on_you'), function () {
                 return once('protection:post:' + contract.id, function () {
                   return post('protectionPost', { id: contract.id, amount: values.amount,
@@ -12929,7 +12967,7 @@
       what = tn('app.runs_out_sooner_hours', d.hours, d.percent, d.hours);
     } else {
       what = tn('app.decay_rise_hours', d.hours, d.percent, d.hours, d.maxPercent,
-        d.account === 'cash' ? 'cash' : 'bank');
+        accountWord(d.account));
       if (Number(d.added) > 0) { what += t('app.added_so_far') + money(d.added) + '.'; }
     }
     if (d.off) { what = t('app.you_turned_off_the_change_for'); }

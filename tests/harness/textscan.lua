@@ -5,8 +5,8 @@
 --- quoted literal is reported with where it is and which call it sits in.
 --- A literal is counted as words someone reads (TextScan.reads) when it has
 --- a word in it and is shaped like a sentence or a title: two words or
---- more, a capital and small letters ('Unsettling'), or a full stop at the
---- end. Never counted: anything inside a console call (Log.*, print, error,
+--- more, a figure and its word ('1 day'), a capital and small letters
+--- ('Unsettling'), or a full stop at the end. Never counted: anything inside a console call (Log.*, print, error,
 --- assert, Db.quiet), which stays English for the people who read the
 --- console and the bug reports; SQL; paths, event names, patterns and
 --- other one-word identifiers.
@@ -121,6 +121,10 @@ function TextScan.reads(text)
     if first and SQL[first] then return false end
     -- Two words or more.
     if text:find('%a%a+[%s]+[%a%%(]') or text:find('%a%s+%a%a') then return true end
+    -- A count and its word ('1 day', '%d minutes'): one word after a
+    -- figure or a placeholder is still words someone reads (Review 85
+    -- G4R2-2), where the rule above wanted two.
+    if text:find('^[%d%%][%w.]*%s+%a%a') then return true end
     -- A title word: a capital, then small letters.
     if text:match('^%u%l+$') then return true end
     -- A sentence ending.

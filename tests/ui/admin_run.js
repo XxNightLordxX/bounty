@@ -4006,7 +4006,7 @@ async function main() {
       playerView: function (data) {
         return { ok: true, data: { role: data.role, shown: true, alias: data.hitman ? 'Ghost' : undefined,
           view: { id: 'ct00000001', role: data.role === 'placer' ? 'creator' : data.role, targetName: 'Dana Reyes',
-            reason: XSS, staffEdited: true, timeLeft: '1–2 hours left', penaltyAmount: 2500,
+            reason: XSS, staffEdited: true, timeLeft: '1_to_2h', penaltyAmount: 2500,
             reward: { baseline: 5000, bonus: 0 }, creatorAnonymous: true, myAlias: data.hitman ? 'Ghost' : undefined } } };
       }
     });
@@ -8478,6 +8478,375 @@ async function main() {
     await settled();
     it('PR2 and it goes as named', function () { eq(app.last('reassignHitman').data.identity, 'named'); });
     clean(app, 'reassign anonymity');
+  })();
+
+  /* ---------- Review 85 (pages) ---------- */
+
+  /* C13a F1: whois answers (who is behind an anonymous party) are for the
+     opening they were asked in. A close and a reopen without the identity
+     permission draws none of them, and the person filter's lookup handle
+     does not outlive the close. */
+  await (async function r85WhoisAcrossAClose() {
+    const app = boot(standardServer({ contracts: function () {
+      return contracts({ rows: [contractRow(2, { client: 'Anonymous', anonymous: true, role: 'target' })] }); } }));
+    app.open(FULL); await settled();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    app.type(app.byId('ct-who'), 'CID123'); app.key(app.byId('ct-who'), 'Enter'); await settled();
+    const w = app.$$('[data-act="whois"]')[0];
+    it('R85 C13a F1: with the identity permission, whois is offered and drawn', function () {
+      truthy(w, 'a whois button');
+    });
+    if (w) { app.click(w); await settled(); }
+    const shownWith = app.main();
+    it('R85 C13a F1: the answer is drawn for staff who may see it', function () { has(shownWith, 'CREATOR1'); });
+    app.message({ type: 'close' }); await settled();
+    app.open(ADMIN); await settled();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    const reopened = app.main();
+    it('R85 C13a F1: reopened without the identity permission, no whois answer is drawn', function () {
+      lacks(reopened, 'CREATOR1');
+      lacks(reopened, 'Vic Marlowe');
+    });
+    it('R85 C13a F1: and the person filter (a lookup handle) went with the close', function () {
+      lacks(reopened, 'CID123');
+      falsy(app.$('[data-act="ct-person-clear"]'), 'no person chip');
+    });
+    clean(app, 'r85 whois');
+  })();
+
+  /* C13a F1: the same answer kept while the panel stays open is not drawn
+     once the identity permission goes (the access pushed again). */
+  await (async function r85WhoisAfterTheAceGoes() {
+    const app = boot(standardServer({ contracts: function () {
+      return contracts({ rows: [contractRow(2, { client: 'Anonymous', anonymous: true, role: 'target' })] }); } }));
+    app.open(FULL); await settled();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    app.type(app.byId('ct-who'), 'CID123'); app.key(app.byId('ct-who'), 'Enter'); await settled();
+    const w = app.$$('[data-act="whois"]')[0];
+    if (w) { app.click(w); await settled(); }
+    app.open(ADMIN); await settled();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    it('R85 C13a F1: an open again with the permission gone draws no kept whois', function () {
+      lacks(app.main(), 'CREATOR1');
+    });
+    clean(app, 'r85 whois ace');
+  })();
+
+  /* C13b F1: Organisation › Funds. A movement whose answer was lost keeps
+     its nonce, so a retry is the same movement on the server (deduped),
+     and says it may still go through; a refusal, or a movement that is not
+     the same, is a new one. */
+  await (async function r85FundsNonce() {
+    async function run(answers, between) {
+      const srv = standardServer({ orgGet: orgOn(),
+        orgFunds: { ok: true, data: { balance: 12500, bank: false, rows: [] } },
+        orgFundsMove: function () { return answers.shift() || { ok: true, message: 'Deposited.' }; } });
+      const app = boot(srv);
+      app.open(FULL); await settled();
+      app.window.CH_ADMIN_SHOW('orgfunds'); await settled();
+      const bind = function (b) { return app.$('[data-bind="' + b + '"]'); };
+      app.type(bind('org.funds.amount'), '2500');
+      app.type(bind('org.funds.reason'), 'Float');
+      let move = app.$$('[data-act="org-funds"]')[0];
+      app.click(move); app.click(move); await settled();
+      const after = app.main();
+      if (between) between(app, bind);
+      move = app.$$('[data-act="org-funds"]')[0];
+      app.click(move); app.click(move); await settled();
+      return { app: app, after: after, sent: app.requests('orgFundsMove').map(function (r) { return r.data; }) };
+    }
+    const lost = await run([{ ok: false, err: 'timeout' }, { ok: true, message: 'Deposited.' }]);
+    it('R85 C13b F1: a retry after no answer is sent with the same nonce', function () {
+      eq(lost.sent.length, 2);
+      eq(lost.sent[1].nonce, lost.sent[0].nonce, 'deduped by the server, never moved twice');
+    });
+    it('R85 C13b F1: and the page says it may still have gone through, not "Try again"', function () {
+      has(lost.after, 'No answer yet. It may still go through: look before you try again.');
+    });
+    const none = await run([{ ok: false, err: 'no_answer' }, { ok: true }]);
+    it('R85 C13b F1: so is one after the game itself did not answer', function () {
+      eq(none.sent[1].nonce, none.sent[0].nonce);
+    });
+    const refused = await run([{ ok: false, err: 'invalid_input' }, { ok: true }]);
+    it('R85 C13b F1: a refusal is a new movement next time', function () {
+      eq(refused.sent.length, 2);
+      truthy(refused.sent[1].nonce !== refused.sent[0].nonce, JSON.stringify(refused.sent));
+    });
+    const changed = await run([{ ok: false, err: 'timeout' }, { ok: true }], function (app, bind) {
+      app.type(bind('org.funds.amount'), '3000');
+    });
+    it('R85 C13b F1: a different amount after no answer is a different movement, with its own nonce', function () {
+      eq(changed.sent[1].amount, 3000);
+      truthy(changed.sent[1].nonce !== changed.sent[0].nonce, JSON.stringify(changed.sent));
+    });
+    const done = await run([{ ok: true, message: 'Deposited.' }], function (app, bind) {
+      app.type(bind('org.funds.amount'), '2500');
+      app.type(bind('org.funds.reason'), 'Float');
+    });
+    it('R85 C13b F1: one that went through is never the nonce of the next, the same as it or not', function () {
+      eq(done.sent.length, 2);
+      truthy(done.sent[1].nonce !== done.sent[0].nonce, JSON.stringify(done.sent));
+    });
+    [lost, none, refused, changed, done].forEach(function (r, i) { clean(r.app, 'r85 funds ' + i); });
+  })();
+
+  /* C13b F2: a write from the player card answered after another player
+     was looked up is told in a toast, and never drawn on the new card. */
+  await (async function r85PlayerCardRace() {
+    function twoPlayers(extra) {
+      return standardServer(Object.assign({
+        player: function (d) {
+          const p = player();
+          if (d.subject === 'B' || d.ref === 'p_B') {
+            p.data.player = { cid: 'CIDB', name: 'Bob Bee', online: true, server: 13, ref: 'p_B' };
+            p.data.playtime = { hours: 2, floor: 5, counted: true, counting: true, from: 'tracker' };
+          }
+          return p;
+        }
+      }, extra));
+    }
+    let release;
+    const app = boot(twoPlayers({ setPlaytime: function (data) {
+      return new Promise(function (res) { release = function () { res({ ok: true,
+        message: 'Dana Reyes\'s counted playtime is now ' + data.hours + ' h.',
+        data: { playtime: { hours: data.hours, floor: 5, counted: true, counting: true, from: 'tracker' } } }); }; });
+    } }));
+    app.open(FULL); await settled();
+    app.window.CH_ADMIN_SHOW('players'); await settled();
+    app.type(app.byId('pl-q'), 'A'); app.click(app.$('[data-act="pl-lookup"]')); await settled();
+    app.window.CH_ADMIN_SHOW('pplaytime'); await settled();
+    app.type(app.$('[data-bind="pl.hours"]'), '777');
+    const setb = app.$('[data-act="pl-playtime-set"]');
+    app.click(setb); app.click(setb); await settled();
+    app.window.CH_ADMIN_SHOW('players'); await settled();
+    app.type(app.byId('pl-q'), 'B'); app.click(app.$('[data-act="pl-lookup"]')); await settled();
+    app.window.CH_ADMIN_SHOW('pplaytime'); await settled();
+    release(); await settled();
+    const m = app.main();
+    it('R85 C13b F2: player A\'s playtime answer is not drawn on player B\'s card', function () {
+      has(m, 'Bob Bee');
+      lacks(m, 'Dana Reyes\'s counted playtime');
+      lacks(m, '777');
+    });
+    it('R85 C13b F2: it is still told, in a toast', function () { has(app.toasts(), 'counted playtime is now 777'); });
+    clean(app, 'r85 playtime race');
+
+    let releaseS;
+    const sus = boot(twoPlayers({ suspend: function () {
+      return new Promise(function (res) { releaseS = function () { res({ ok: true, message: 'Dana Reyes is suspended for 3 day(s).' }); }; });
+    } }));
+    sus.open(FULL); await settled();
+    sus.window.CH_ADMIN_SHOW('players'); await settled();
+    sus.type(sus.byId('pl-q'), 'A'); sus.click(sus.$('[data-act="pl-lookup"]')); await settled();
+    sus.window.CH_ADMIN_SHOW('pmeasures'); await settled();
+    const d3 = sus.$$('[data-act="ps-days"]').filter(function (b) { return b.getAttribute('data-value') === '3'; })[0];
+    sus.click(d3); await settled();
+    sus.type(sus.byId('ps-reason'), 'griefing');
+    const s = sus.$('[data-act="ps-suspend"]'); sus.click(s); sus.click(s); await settled();
+    it('R85 C13b F2: the suspension was sent for A', function () { eq(sus.requests('suspend').length, 1); });
+    sus.window.CH_ADMIN_SHOW('players'); await settled();
+    sus.type(sus.byId('pl-q'), 'B'); sus.click(sus.$('[data-act="pl-lookup"]')); await settled();
+    sus.window.CH_ADMIN_SHOW('pmeasures'); await settled();
+    // Answered after B's lookup was sent but before it came back.
+    releaseS(); await settled(); await settled();
+    const ms = sus.main();
+    it('R85 C13b F2: player A\'s suspension answer is not drawn on player B\'s card', function () {
+      has(ms, 'Bob Bee');
+      lacks(ms, 'Dana Reyes is suspended');
+    });
+    clean(sus, 'r85 suspend race');
+  })();
+
+  /* G4-1: Target limits › Per player. A write's answer for player A,
+     coming back after B was looked up, is not drawn on B's card, and B is
+     not read again for it. */
+  await (async function r85TargetLimitsRace() {
+    function tlServer(extra) {
+      return standardServer(Object.assign({
+        targetLimits: { ok: true, data: { keys: [{ key: 'TargetCooldownAfterResolveSeconds', label: 'After one ends', unit: 's', min: 0, max: 604800 }],
+          jobs: [], extendMax: 43200, overrideMaxHours: 8760 } },
+        targetStatus: function (d) {
+          const isB = d.subject === 'B' || d.ref === 'tpB';
+          return { ok: true, data: { player: { name: isB ? 'Bob Bee' : 'Dana Reyes', ref: isB ? 'tpB' : 'tpA', online: true },
+            status: { live: 0, day: 1, week: 1, cooldownLeft: 900, limits: { TargetCooldownAfterResolveSeconds: 1800 },
+              source: { TargetCooldownAfterResolveSeconds: 'global' } } } };
+        }
+      }, extra || {}));
+    }
+    let release;
+    const app = boot(tlServer({ targetReset: function () {
+      return new Promise(function (res) { release = function () {
+        res({ ok: true, message: 'Their cooldown is cleared: the same person may be targeted again at once.' }); }; });
+    } }));
+    app.open(FULL); await settled();
+    app.window.CH_ADMIN_SHOW('tlplayer'); await settled();
+    app.type(app.byId('tp-q'), 'A'); app.click(app.$('[data-act="tp-lookup"]')); await settled();
+    app.type(app.$('[data-bind="tp.reason"]'), 'appeal');
+    const b = app.$('[data-act="tp-reset"]'); app.click(b); app.click(b); await settled();
+    it('R85 G4-1: the reset was sent for A', function () { eq(app.last('targetReset').data.ref, 'tpA'); });
+    app.type(app.byId('tp-q'), 'B'); app.click(app.$('[data-act="tp-lookup"]')); await settled();
+    const lookups = app.requests('targetStatus').length;
+    release(); await settled(); await settled();
+    const m = app.byId('tl-player').textContent;
+    it('R85 G4-1: A\'s answer is not drawn on B\'s card', function () {
+      has(m, 'Bob Bee');
+      lacks(m, 'Their cooldown is cleared');
+    });
+    it('R85 G4-1: and B is not read again for A\'s write', function () {
+      eq(app.requests('targetStatus').length, lookups);
+    });
+    it('R85 G4-1: it is still told, in a toast', function () { has(app.toasts(), 'Their cooldown is cleared'); });
+    clean(app, 'r85 tl race');
+  })();
+
+  /* C13b F3: Escape with one of the page's dropdowns open closes the
+     dropdown, not the panel. */
+  await (async function r85EscapeClosesTheDropdown() {
+    const app = boot(standardServer());
+    app.open(FULL); await settled();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    const dd = app.$('.dd-btn');
+    const name = dd.getAttribute('data-dd');
+    app.click(dd); await settled();
+    const openNow = app.byId('dd-' + name).querySelector('.dd-btn').getAttribute('aria-expanded');
+    const closesBefore = app.requests('adminClose').length;
+    app.keyUp(app.body, 'Escape'); await settled();
+    it('R85 C13b F3: the dropdown was open', function () { eq(openNow, 'true'); });
+    it('R85 C13b F3: Escape closes it, and the panel stays open', function () {
+      eq(app.byId('dd-' + name).querySelector('.dd-btn').getAttribute('aria-expanded'), 'false');
+      falsy(app.byId('panel').hidden === true, 'the panel closed');
+      eq(app.requests('adminClose').length, closesBefore, 'nothing told the game to close');
+    });
+    clean(app, 'r85 escape dropdown');
+  })();
+
+  /* C13b F5: a list setting emptied (an empty Lua table crosses as {}) reads
+     as none in Setting changes, not '{}'. */
+  await (async function r85EmptyListInHistory() {
+    const app = boot(standardServer({ 'logs.settings': { ok: true, data: { rows: [
+      { ts: NOW - 240, key: 'Notes.Words', label: 'Words', old: ['a'], new: [], by: 'a staff member' }] } } }));
+    app.open(ADMIN); await settled();
+    app.group('rules'); await settled();
+    app.click(app.byId('nav-logs-settings')); await settled();
+    const row = app.$$('tr[data-key]')[0];
+    it('R85 C13b F5: an emptied list reads (none), never {}', function () {
+      truthy(row, 'the row');
+      has(app.text(row), '(none)');
+      lacks(app.text(row), '{}');
+    });
+    clean(app, 'r85 empty list');
+  })();
+
+  /* C13a F3: a button drawn off for a reason of its own (nothing to apply)
+     stays off when recovery finishes and the write gates open. */
+  await (async function r85OwnReasonSurvivesTheGate() {
+    const srv = standardServer({ overview: overview({ recovery: 'recovering' }),
+      presets: { ok: true, data: { presets: [{ name: 'Strict', builtIn: true, changes: [], refused: [], same: 5 }] } },
+      presetApply: { ok: true, message: 'applied' } });
+    const app = boot(srv);
+    app.open(access({ recovery: 'recovering' })); await settled();
+    app.window.CH_ADMIN_SHOW('presets'); await settled();
+    srv.overview = overview({ recovery: 'ready' });
+    app.fire(30000); await settled();
+    const b = app.$('[data-act="ps-apply"]');
+    it('R85 C13a F3: Apply on a preset with nothing to change stays off once recovery is done', function () {
+      truthy(b, 'the button');
+      eq(b.disabled, true);
+    });
+    app.click(b); app.click(b); await settled();
+    it('R85 C13a F3: and clicking it sends nothing', function () { eq(app.requests('presetApply').length, 0); });
+    clean(app, 'r85 own reason');
+  })();
+
+  /* C13a F2: how a contract ended is said in words, never the stored code. */
+  await (async function r85ResolutionInWords() {
+    const base = contractDetail(null, false).data;
+    base.contract.state = 'cancelled'; base.contract.resolved_at = NOW - 600;
+    base.contract.resolution = 'cancelled_by_agreement';
+    const app = boot(standardServer({ contracts: contracts({ rows: [contractRow(1, { state: 'cancelled',
+      resolved_at: NOW - 600, resolution: 'cancelled_by_creator' }), contractRow(2, { state: 'expired',
+      resolved_at: NOW - 900, resolution: 'something_the_server_added' })] }), contract: { ok: true, data: base } }));
+    app.open(ADMIN); await settled();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    const rows = app.$$('tr.row').map(function (r) { return r.textContent; });
+    app.click(app.$('tr.row')); await settled();
+    const drawer = app.text(app.drawer());
+    it('R85 C13a F2: the list says how each ended in words', function () {
+      has(rows[0], 'Withdrawn by the placer');
+      lacks(rows[0], 'cancelled_by_creator');
+      has(rows[1], 'Expired', 'a code with no words reads as its state');
+      lacks(rows[1], 'something_the_server_added');
+    });
+    it('R85 C13a F2: and so does the drawer', function () {
+      has(drawer, 'Cancelled by agreement');
+      lacks(drawer, 'cancelled_by_agreement');
+    });
+    clean(app, 'r85 resolution');
+  })();
+
+  /* C13a F4, C13b F4, G4R2-3: English the panel drew past its language,
+     by the snippet each finding named. One table; the ranges and the
+     overview below are the same, seen drawn in another language. */
+  (function r85PanelEnglishTable() {
+    const src = PAGE_JS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const GONE = [
+      "cash: 'cash'", "item: 'item'", "label: 'Last 24 hours'", "h('span.range-sep', 'to')", "' (offline)'",
+      "? 'finished'", ": 'FAILED'", "'span.chip.is-anon', 'anonymous'", "? 'claimed'", "h('h2', 'Contract '", "'Extend: '", "'Shorten: '",
+      "label: 'cash'", "'Earlier, a'", "lost.join(', and ')", "+ ' h.'", "h('span.chip', 'offline')", "+ ' h' :",
+      "line.queued ? 'yes'", "r.blip ? 'yes' : 'no'", "'Recent:'", ": '(none)'", "'letters, digits, - and _'", "label: 'Intel'", "h('span', 'burst')",
+      "|| 'them')", "': exempt'", "go: 'Home, Announce'", "? 'shipped'", "client: 'placed'", "hitman: 'took'",
+      "'barred')", "|| 'operative')", "' (left)'", "placeholder: '$ amount'", "'As ',", "title: 'Roleplay: Bodyguards'",
+      "+ 'cooldowns.'", "'Per 24 h'", "return 'off';", "placeholder: 'default'", "tile('Placed, 24 hours'",
+      "st.exempt ? 'exempt' : tlValue", "h('th', 'Organisation')", "'locked')", "'boss')", "h('span.sub', 'as')", "'suspended')",
+      ": 'nothing')", "placeholder: '$ pay'", "h('span', 'Pay $')", "'+/- points'", "? 'In: ' : 'Out: '", "' office')",
+      "|| 'off'))", "'x, y, z, heading'", "placeholder: 'heading'", "r.enabled === false ? 'off' : 'on'", "global: 'global'",
+      "? 'player' :", "label: 'financial'", "String(row.kind || ''))", "(row.resolution || STATE_LABEL",
+      "String(c.resolution || '')", "t('admin.remove_the') + num(n)", "'(hidden)'", "? 'on' : 'off'"
+    ];
+    it('R85 panel: no English drawn past the panel\'s language where the review found it', function () {
+      const left = GONE.filter(function (snippet) { return src.indexOf(snippet) !== -1; });
+      eq(left.join(' | '), '', 'still in ui/admin.js');
+    });
+  })();
+
+  await (async function r85PanelTranslated() {
+    const fsx = require('fs');
+    const en = JSON.parse(fsx.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'locales', 'en.json'), 'utf8'));
+    function shout(v) {
+      if (typeof v === 'string') return v.split(/(%(?:\d+\$)?[sd])/).map(function (p, i) { return i % 2 ? p : p.toUpperCase(); }).join('');
+      if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach(function (k) { o[k] = shout(v[k]); }); return o; }
+      return v;
+    }
+    localeXhr.extra['xx.json'] = shout(en);
+    const app = boot(standardServer({ overview: overview({ recovery: 'ready', overrides: 0 }) }));
+    app.message({ type: 'open', access: FULL, locale: 'xx' });
+    await settled();
+    const overviewText = app.main();
+    app.window.CH_ADMIN_SHOW('contracts'); await settled();
+    const ranges = app.byId('dd-ct-range').textContent;
+    const sep = app.byId('ct-range').textContent;
+    delete localeXhr.extra['xx.json'];
+    it('R85 panel: the date ranges and their "to" are in the panel\'s language', function () {
+      has(ranges, 'LAST 24 HOURS');
+      lacks(ranges, 'Last 24 hours');
+      eq(sep.trim(), 'TO');
+    });
+    it('R85 panel: the overview\'s recovery and changed-here words are in the panel\'s language', function () {
+      has(overviewText, 'FINISHED');
+      lacks(overviewText, 'finished');
+    });
+    clean(app, 'r85 panel translated');
+  })();
+
+  /* G4R2-3: the kept kill photos, each sentence whole with its count. */
+  (function r85KeptPhotosWhole() {
+    const en = JSON.parse(require('fs').readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'locales', 'en.json'), 'utf8')).admin;
+    it('R85 G4R2-3: the kept photos note and its button are whole sentences with their count in place', function () {
+      ['kept_photos_note', 'remove_kept_photos', 'click_again_remove_kept_photos'].forEach(function (k) {
+        has(en[k + '_one'], '%s'); has(en[k + '_other'], '%s');
+      });
+      has(PAGE_JS, "tn('admin.kept_photos_note', n, num(n))");
+    });
   })();
 
   console.log('');

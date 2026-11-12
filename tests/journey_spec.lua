@@ -819,12 +819,12 @@ describe('a stake on a contract about to run out', function()
     it('refuses when the deadline was brought forward while the page showed it', function()
         local s, f, c = staked(2000)
         local shown = bandOf(s, c)
-        eq(shown, 'More than 2 hours left')
+        eq(shown, 'over_2h')
 
         truthy(s.contracts.revise(f.creator, c.id,
             { deadlineSeconds = Config.Limits.DefaultDeadlineSeconds // 2 }))
         local now = bandOf(s, c)
-        eq(now, '1–2 hours left', 'the fixture must move it into a shorter band')
+        eq(now, '1_to_2h', 'the fixture must move it into a shorter band')
 
         local reply = call('accept', 3, { id = c.id, anonymous = false,
             penaltyAmount = 2000, timeLeft = shown })
@@ -860,7 +860,7 @@ describe('a stake on a contract about to run out', function()
     it('does not check the time left of a contract with no stake', function()
         local s, _, c = staked(0)
         s.storage.setDeadline(c.id, nil, os.time() + 600)
-        ok('accept', 3, { id = c.id, anonymous = false, timeLeft = 'More than 2 hours left' },
+        ok('accept', 3, { id = c.id, anonymous = false, timeLeft = 'over_2h' },
             'there is nothing for it to be forfeit to')
     end)
 

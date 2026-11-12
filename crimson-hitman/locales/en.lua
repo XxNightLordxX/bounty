@@ -19,6 +19,37 @@ CrimsonLocales = CrimsonLocales or {}
 
 CrimsonLocales.en = {
     -- =========================================================================
+    --        WORDS FROM shared/words.lua AND shared/integrations.lua
+    -- =========================================================================
+    ['words.seconds_one'] = '%d second',
+    ['words.seconds_other'] = '%d seconds',
+    ['words.minutes_one'] = '%d minute',
+    ['words.minutes_other'] = '%d minutes',
+    ['words.in_a_moment'] = 'in a moment',
+    ['words.in_seconds_one'] = 'in %d second',
+    ['words.in_seconds_other'] = 'in %d seconds',
+    ['words.in_about_minutes_one'] = 'in about %d minute',
+    ['words.in_about_minutes_other'] = 'in about %d minutes',
+    -- What this resource does without a script of each kind (Config.Integrations).
+    ['integrations.without_framework'] = 'players, jobs and money cannot be read: the resource waits for it and does nothing',
+    ['integrations.without_inventory'] = 'item, weapon and dirty-money rewards, burner phones, proof items and the organisation\'s armory are off; cash and bank rewards work',
+    ['integrations.without_target'] = 'step markers and organisation spots have no third-eye option; the map markers still show',
+    ['integrations.without_dispatch'] = 'nothing is filed in the police MDT; officers\' phones are still told',
+    ['integrations.without_ambulance'] = 'death and last stand are read from the framework\'s player metadata and the game',
+    ['integrations.without_banking'] = 'the organisation\'s funds are kept in this resource\'s own ledger',
+    ['integrations.without_phone'] = 'there is no phone app; notices fall back to on-screen notifications',
+    ['integrations.without_keys'] = 'the disposal vehicle is left unlocked, with no keys given',
+    ['integrations.without_garage'] = 'the organisation\'s garage is off',
+    ['integrations.without_mugshot'] = 'target headshots are off',
+    ['integrations.without_clothing'] = 'a change of clothes does not refresh the target\'s headshot until the next one is due',
+    ['integrations.without_progression'] = 'completions earn no trust in a wider criminal progression',
+    ['integrations.names_no_adapter'] = 'Config.Integrations.%s = \'%s\' names no adapter this build has (%s)',
+    ['integrations.is_none'] = 'Config.Integrations.%s is \'none\'',
+    ['integrations.not_started'] = '%s not started',
+    ['integrations.no_adapter_registered'] = 'no adapter registered',
+    ['integrations.off_line'] = 'integration %s off (%s): %s',
+
+    -- =========================================================================
     --                 NOTICES TO PLAYERS (server/notify.lua)
     -- =========================================================================
     ['notify.contract_on_you'] = 'Contract on you',

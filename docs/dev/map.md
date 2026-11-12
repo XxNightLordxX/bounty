@@ -488,7 +488,8 @@ what gets deleted, risk.
     `server/imp_weekly.lua:71-87`, `server/storage/json.lua:166`.
     **MERGE** into the windowed counter of item 9 (`RateLimit.window(key,
     seconds)`) and one `Clock.dayKey/weekStart`; risk low.
-11. **Time bands and clock rounding**: `Util.timeBand`, `Util.bandLeft`,
+11. **Time bands and clock rounding** (a band is a code, `over_2h` …
+    `under_15m`, that the pages put into words): `Util.timeBand`, `Util.bandLeft`,
     `Util.runLeft`, `Util.bandRank`, `Util.roundClock` (`shared/util.lua`),
     used in `server/contracts.lua:1372-1547`, `server/amendments.lua:724`,
     `server/freeze.lua:365`; display copies `hoursText` `server/admin.lua:2180`

@@ -125,7 +125,7 @@ function serverStub() {
     // and its dialog gets measured too.
     copy.slots = 3;
     copy.currentSlot = 1;
-    copy.timeLeft = 'More than 2 hours left';
+    copy.timeLeft = 'over_2h';
     return copy;
   });
   const taken = contracts.slice(3, 5).map(function (c) {
@@ -166,9 +166,9 @@ function serverStub() {
   delete held.locationTip;
   // A band, with the on-hold words in front of it (the longest band is
   // measured on the placer's own cards).
-  held.timeLeft = 'Under 15 minutes left';
+  held.timeLeft = 'under_15m';
   taken.push(held);
-  taken[0].timeLeft = 'Under 15 minutes left';
+  taken[0].timeLeft = 'under_15m';
   // Workflow round 3: the proof-of-intent rule on a hitman's card while it
   // can still be met, and the placer's half of a running handover.
   taken[1].intentRule = { messages: 3 };
@@ -235,7 +235,7 @@ function serverStub() {
       hitmenActive: 2, hitmenMax: 5,
       targetName: 'You', role: 'target',
       bailoutAvailable: true, bailoutAmount: 90000,
-      timeLeft: 'More than 2 hours left',
+      timeLeft: 'over_2h',
       // Somebody bought an informant tip on them five minutes ago.
       tippedAt: Math.floor(Date.now() / 1000) - 300,
       // The target's informant: every operative on it, and the placer.
@@ -1793,7 +1793,7 @@ async function main() {
   function rumourStub() {
     const rumour = { id: 'ct00000301', mode: 'competitive', state: 'active', role: 'public',
       slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
-      timeLeft: 'More than 2 hours', rumour: { area: 'Vinewood Hills', low: 130000, high: 220000, goods: true } };
+      timeLeft: 'over_2h', rumour: { area: 'Vinewood Hills', low: 130000, high: 220000, goods: true } };
     const answers = {
       list: { ok: true, data: { page: 1, pages: 1, contracts: [rumour, Object.assign({}, rumour, { id: 'ct00000302' })],
         rumours: { npc: true, broker: true, minutes: 30 }, settings: {} } },

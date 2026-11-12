@@ -137,9 +137,9 @@ describe('projection', function()
         local now = os.time()
         s.storage.setDeadline(c.id, nil, now + 2400)
         local function seen(cid) return s.projection.contract(s.storage.readContract(c.id), cid) end
-        eq(seen('HITMAN01').timeLeft, 'Under 1 hour left', 'running, forty minutes')
+        eq(seen('HITMAN01').timeLeft, 'under_1h', 'running, forty minutes')
         for _, cid in ipairs({ 'CREATOR1', 'TARGET01', 'PUBLIC01' }) do
-            eq(seen(cid).timeLeft, 'Under 1 hour left', cid .. ' is shown the same band')
+            eq(seen(cid).timeLeft, 'under_1h', cid .. ' is shown the same band')
         end
         for _, key in ipairs({ 'deadline', 'secondsLeft', 'clockStopped', 'paused', 'pausedSince' }) do
             eq(seen('HITMAN01')[key], nil, key .. ' reached a player')
@@ -149,20 +149,20 @@ describe('projection', function()
         -- Stopped ten minutes ago with fifty left: the band is the one it
         -- stopped in, to every role, the target included.
         truthy(s.storage.startPause(c.id, now - 600))
-        eq(seen('HITMAN01').timeLeft, 'Under 1 hour left', 'stopped where it stood')
-        eq(seen('TARGET01').timeLeft, 'Under 1 hour left', 'the target reads it the same')
+        eq(seen('HITMAN01').timeLeft, 'under_1h', 'stopped where it stood')
+        eq(seen('TARGET01').timeLeft, 'under_1h', 'the target reads it the same')
         Env.advance(7200)
-        eq(seen('HITMAN01').timeLeft, 'Under 1 hour left', 'a stopped clock does not move the band')
+        eq(seen('HITMAN01').timeLeft, 'under_1h', 'a stopped clock does not move the band')
 
         -- Each band at its edges.
         local Util = require('crimson-hitman.shared.util')
-        eq(Util.timeBand(7201), 'More than 2 hours left')
-        eq(Util.timeBand(7200), '1–2 hours left')
-        eq(Util.timeBand(3601), '1–2 hours left')
-        eq(Util.timeBand(3600), 'Under 1 hour left')
-        eq(Util.timeBand(901), 'Under 1 hour left')
-        eq(Util.timeBand(900), 'Under 15 minutes left')
-        eq(Util.timeBand(0), 'Under 15 minutes left')
+        eq(Util.timeBand(7201), 'over_2h')
+        eq(Util.timeBand(7200), '1_to_2h')
+        eq(Util.timeBand(3601), '1_to_2h')
+        eq(Util.timeBand(3600), 'under_1h')
+        eq(Util.timeBand(901), 'under_1h')
+        eq(Util.timeBand(900), 'under_15m')
+        eq(Util.timeBand(0), 'under_15m')
     end)
 
     it('does not list a contract to its own target', function()

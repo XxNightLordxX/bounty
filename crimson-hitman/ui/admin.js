@@ -348,7 +348,8 @@
   });
   var SOURCE_LABEL;
   Text.later(function () {
-    SOURCE_LABEL = { cash: 'cash', bank: 'bank', dirty: t('admin.dirty_money'), item: 'item', weapon: 'weapon' };
+    SOURCE_LABEL = { cash: t('admin.w_cash'), bank: t('admin.w_bank'), dirty: t('admin.dirty_money'), item: t('admin.w_item'),
+      weapon: t('admin.w_weapon') };
   });
   var MONEY = { cash: true, bank: true, dirty: true };
 
@@ -395,6 +396,26 @@
   function proposalKind(kind) {
     var said = Text.section('admin')['proposal_' + String(kind || '')];
     return typeof said === 'string' ? said : String(kind || t('admin.proposal'));
+  }
+
+  /** An audit row's kind, in words (the code stays its class). */
+  var LOG_KIND;
+  Text.later(function () {
+    LOG_KIND = { financial: t('admin.log_kind_financial'), conduct: t('admin.log_kind_conduct'),
+      rejected: t('admin.log_kind_rejected'), system: t('admin.log_kind_system') };
+  });
+  function logKind(kind) {
+    return Object.prototype.hasOwnProperty.call(LOG_KIND, kind) ? LOG_KIND[kind] : String(kind || '');
+  }
+
+  /** How a contract ended, in words: the server stores a code
+      (contract.resolution: 'cancelled_by_creator', 'expired' ...). One
+      with no words of its own reads as its state, never as the code. */
+  function resolutionText(code, state) {
+    var words = Text.section('admin');
+    var key = 'resolution_' + String(code || '');
+    if (code && Object.prototype.hasOwnProperty.call(words, key) && typeof words[key] === 'string') return words[key];
+    return STATE_LABEL[state] || t('admin.ended_word');
   }
 
   /** How long a number of seconds is: '1 h 30 min'. */
@@ -866,6 +887,12 @@
     // What decides it, so a change of recovery or of the ACE toggles the
     // button where it is (refreshGates) rather than redrawing the section.
     a['data-gate'] = a['data-gate'] || (open !== undefined ? 'custom' : always ? 'always' : 'write');
+    // Drawn off for a reason of its own (nothing to apply yet, a role with
+    // members): a gate opening never turns it on (refreshGates).
+    if (a.disabled) {
+      a['data-own-off'] = 'yes';
+      if (a.title) a['data-own-title'] = a.title;
+    }
     if (!allowed) { a.disabled = true; a.title = a.title || whyNoWrite(); }
     if (confirmLabel) a['data-confirm'] = 'yes';
     return h('button.btn' + (cls || ''), a, iconName ? icon(iconName) : null, h('span.lbl', label),
@@ -963,9 +990,9 @@
   Text.later(function () {
     RANGES = [
     { value: '', label: t('admin.any_time') },
-    { value: '1d', label: 'Last 24 hours' },
-    { value: '7d', label: 'Last 7 days' },
-    { value: '30d', label: 'Last 30 days' },
+    { value: '1d', label: t('admin.last_24_hours') },
+    { value: '7d', label: t('admin.last_7_days') },
+    { value: '30d', label: t('admin.last_30_days') },
     { value: 'custom', label: t('admin.between_dates') }
   ];
   });
@@ -1015,7 +1042,7 @@
     return h('span.range', { id: prefix + '-range', hidden: range !== 'custom' },
       field(prefix + '.from', { id: prefix + '-from', class: 'is-date', placeholder: t('admin.from_yyyy_mm_dd'),
         'data-live': live, 'aria-label': t('admin.from_date') }),
-      h('span.range-sep', 'to'),
+      h('span.range-sep', t('admin.w_to')),
       field(prefix + '.to', { id: prefix + '-to', class: 'is-date', placeholder: t('admin.to_yyyy_mm_dd'),
         'data-live': live, 'aria-label': t('admin.to_date') }));
   }
@@ -1131,7 +1158,7 @@
   function playerChipText() {
     var p = (S.players.data && S.players.data.player) || {};
     return String(p.name || t('admin.no_name_on_record'))
-      + (p.online ? t('admin.in_city') + String(p.server) + ')' : ' (offline)');
+      + (p.online ? t('admin.in_city') + String(p.server) + ')' : t('admin.offline_paren'));
   }
 
   /** The header's chips: the selected player (with the minutes left of the
@@ -1221,9 +1248,11 @@
       var gate = node.getAttribute('data-gate');
       if (gate === 'custom') { custom = true; return; }
       var open = gate === 'mod' ? modOpen() : gate === 'always' ? canWrite() : writesOpen();
-      node.disabled = !open;
-      if (open) node.removeAttribute('title');
-      else node.setAttribute('title', gate === 'mod' ? whyNoMod() : whyNoWrite());
+      var ownOff = node.getAttribute('data-own-off') === 'yes';
+      node.disabled = ownOff || !open;
+      if (!open) node.setAttribute('title', gate === 'mod' ? whyNoMod() : whyNoWrite());
+      else if (ownOff && node.getAttribute('data-own-title')) node.setAttribute('title', node.getAttribute('data-own-title'));
+      else node.removeAttribute('title');
     });
     if (custom) redraw();
   }
@@ -1553,13 +1582,13 @@
             o.recovery === 'recovering' ? t('admin.recovering') : o.recovery !== 'ready' ? t('admin.recovery_failed')
               : problems ? tn('admin.problems_count', problems, num(problems)) : t('admin.all_well')),
           h('dl.facts',
-            h('dt', t('admin.recovery')), h('dd', o.recovery === 'ready' ? 'finished'
-              : o.recovery === 'recovering' ? t('admin.still_running') : 'FAILED'),
+            h('dt', t('admin.recovery')), h('dd', o.recovery === 'ready' ? t('admin.w_finished')
+              : o.recovery === 'recovering' ? t('admin.still_running') : t('admin.w_failed_caps')),
             h('dt', t('admin.storage')), h('dd', String(o.storage || '—')),
             h('dt', t('admin.setup_problems')), h('dd', canWrite() ? num(warnings.length) : '—'),
             h('dt', t('admin.changed_here')), h('dd', Number(o.overrides) > 0 ? h('button.link', { type: 'button',
               'data-act': 'section', 'data-section': 'changed' }, tn('admin.settings_count', Number(o.overrides),
-              num(o.overrides))) : 'none')),
+              num(o.overrides))) : t('admin.none_word'))),
           o.storage === 'memory' ? h('span.chip.is-warn', { title: t('admin.contracts_escrow_review_items_and_settings')
             + t('admin.gone_at_the_next_start') }, t('admin.memory_mode_nothing_is_kept_across')) : null,
           canDevelop() ? h('div.btn-row', btn('.is-small.ghost', 'section', { 'data-section': 'health' },
@@ -1629,7 +1658,7 @@
           h('dt', t('admin.kill_photos')), h('dd', o.killPhotos === false ? t('admin.off')
             : t('admin.on_kept_on') + String(o.photoStorage || '—')),
           h('dt', t('admin.recovery')), h('dd', o.recovery === 'ready' ? t('admin.finished')
-            : o.recovery === 'recovering' ? t('admin.still_running_2') : 'FAILED'),
+            : o.recovery === 'recovering' ? t('admin.still_running_2') : t('admin.w_failed_caps')),
           h('dt', t('admin.settings_changed_here')), h('dd', h('button.link', { type: 'button', 'data-act': 'section',
             'data-section': 'changed' }, (Number(o.overrides) > 0 ? t('admin.n_changed', num(o.overrides))
               : t('admin.none_changed')) + t('admin.open_game_rules')),
@@ -1802,14 +1831,14 @@
       // Relative, to scan down a page of them; the date itself on hover.
       var endAt = row.resolved_at || row.deadline_at;
       var ended = row.resolved_at
-        ? String(row.resolution || STATE_LABEL[row.state] || 'ended') + ' · ' + ago(row.resolved_at)
+        ? resolutionText(row.resolution, row.state) + ' · ' + ago(row.resolved_at)
         : (row.deadline_at ? t('admin.due_x', ago(row.deadline_at)) : '—');
       out.push(h('tr.row', { 'data-act': 'contract', 'data-id': id, tabindex: '0',
         title: t('admin.open_contract') + row.id },
         h('td.mono.nowrap', id), h('td', stateChip(row.state),
           row.frozen ? h('span.chip.is-warn.is-frozen', c.byTarget ? t('admin.on_hold') : t('admin.frozen')) : null),
         person ? h('td', PART_LABEL[row.role] || String(row.role || '—'),
-          row.roleAnonymous ? h('span.chip.is-anon', 'anonymous') : null) : null,
+          row.roleAnonymous ? h('span.chip.is-anon', t('admin.w_anonymous')) : null) : null,
         person ? null : h('td.nowrap', RULE_LABEL[row.rule] || String(row.rule || '—')),
         h('td.name', String(row.target || '—')),
         h('td.name', row.anonymous ? h('span.anon', icon('mask'), ' ', String(row.client || t('admin.anonymous')))
@@ -1818,7 +1847,9 @@
         h('td.nowrap', when(row.created_at)), h('td', { title: endAt ? when(endAt) : null }, ended),
         whoisCol ? h('td', btn('.is-small.ghost', 'whois', { 'data-id': id, 'data-where': 'contracts' },
           t('admin.whois'), 'user-secret')) : null));
-      var who = c.whois[id];
+      // Drawn only for staff who may see who is behind it now: an answer
+      // kept from before the identity permission went is not theirs.
+      var who = canIdentify() && c.whois[id];
       if (who) out.push(h('tr.more', h('td', { colspan: String(cols) }, whoisBody(who))));
     });
     return h('div.table-wrap', h('table.grid.is-rows',
@@ -2085,7 +2116,7 @@
         }
       });
       var title = key === 'other' ? t('admin.stakes_and_owed_lines') : t('admin.payout_n', key);
-      var status = key === 'other' ? '' : (Number(key) <= claimed ? 'claimed' : t('admin.to_claim'));
+      var status = key === 'other' ? '' : (Number(key) <= claimed ? t('admin.w_claimed') : t('admin.to_claim'));
       return h('div.slot', h('p.slot-title', title, status ? h('span.chip', status) : null),
         h('p.slot-body', Object.keys(totals).sort().map(function (portion) {
           return h('span.slot-part', portion + ' ' + money(totals[portion]));
@@ -2108,7 +2139,7 @@
     var c0 = d && d.contract ? d.contract : null;
     var canVoid = !!(d && d.canVoid && !(c0 && c0.neverStored));
     var head = h('header.drawer-head',
-      h('div.drawer-title', h('h2', 'Contract ', h('span.mono', id)),
+      h('div.drawer-title', h('h2', t('admin.contract_title'), h('span.mono', id)),
         c0 ? stateChip(c0.state) : null,
         c0 ? h('span.chip', RULE_LABEL[c0.rule] || String(c0.rule || '')) : null,
         d && d.frozen ? h('span.chip.is-warn.is-frozen', { title: t('admin.on_hold_frozen_by_staff')
@@ -2143,7 +2174,7 @@
       })), '.is-warn');
     }
 
-    var whois = S.drawer.whois ? card(t('admin.who_is_behind_it'), whoisBody(S.drawer.whois), '.is-identity') : null;
+    var whois = S.drawer.whois && canIdentify() ? card(t('admin.who_is_behind_it'), whoisBody(S.drawer.whois), '.is-identity') : null;
     var deadlinePart = stub ? null : card(t('admin.deadline'), deadlineBody(d.deadline));
 
     /* Look up / Freeze beside each party it names: the Players view on
@@ -2159,7 +2190,7 @@
       h('dt', t('admin.mode')), h('dd', MODE_LABEL[c.mode] || String(c.mode || '—')),
       h('dt', t('admin.completes_by')), h('dd', RULE_LABEL[c.rule] || String(c.rule || '—')),
       h('dt', t('admin.reason')), h('dd.text', String(c.reason || '—')),
-      h('dt', t('admin.client')), h('dd', personCell(c.client), c.anonymous ? h('span.chip.is-anon', 'anonymous') : null,
+      h('dt', t('admin.client')), h('dd', personCell(c.client), c.anonymous ? h('span.chip.is-anon', t('admin.w_anonymous')) : null,
         clientHidden ? null : partyButton('client')),
       h('dt', t('admin.target')), h('dd', personCell(c.target), c.target_protected ? h('span.chip.is-warn', t('admin.law_enforcement')) : null,
         partyButton('target')),
@@ -2167,7 +2198,7 @@
       h('dt', t('admin.deadline')), h('dd', c.deadline_at ? when(c.deadline_at) + ' (' + ago(c.deadline_at) + ')' : '—'),
       h('dt', t('admin.expires')), h('dd', when(c.expires_at)),
       c.paused_since ? h('dt', t('admin.paused_since')) : null, c.paused_since ? h('dd', when(c.paused_since)) : null,
-      h('dt', t('admin.ended')), h('dd', c.resolved_at ? String(c.resolution || '') + ' ' + when(c.resolved_at) : t('admin.not_yet')),
+      h('dt', t('admin.ended')), h('dd', c.resolved_at ? resolutionText(c.resolution, c.state) + ' ' + when(c.resolved_at) : t('admin.not_yet')),
       h('dt', t('admin.payouts')), h('dd', t('admin.claimed_of', num(c.claimed), num(c.slots))
         + (c.next_slot ? t('admin.next_2') + c.next_slot : '')),
       h('dt', t('admin.bonus')), h('dd', num(c.bonus_percent) + '%'),
@@ -2257,7 +2288,7 @@
       body = frag(
         staff && !stub ? card(t('admin.export_the_record'), exportBody(), '.ct-export') : null,
         card(t('admin.timeline'), timeline.length ? h('ol.timeline', timeline.map(function (row) {
-          return h('li', h('span.time', when(row.ts)), h('span.chip.kind-' + String(row.kind || 'system'), String(row.kind || '')),
+          return h('li', h('span.time', when(row.ts)), h('span.chip.kind-' + String(row.kind || 'system'), logKind(row.kind)),
             h('b', String(row.action || '')), row.actor ? h('span.sub', ' ' + row.actor) : null,
             h('span.detail', detailText(row.detail)));
         })) : empty(t('admin.the_log_keeps_nothing_for_it'))));
@@ -2315,11 +2346,11 @@
     var max = Number(info.maxAdjust) || 0;
     if (max && by > max) return h('span.is-warn', t('admin.at_most') + exactSpan(max) + t('admin.either_way'));
     var most = Math.max(0, left - (Number(info.minLeft) || 0));
-    return frag(h('span', 'Extend: ', h('b', exactSpan(left + by)), t('admin.left_after')), ' ',
+    return frag(h('span', t('admin.extend_colon'), h('b', exactSpan(left + by)), t('admin.left_after')), ' ',
       by > most
         ? h('span', t('admin.shorten_not_by_this_much_at') + exactSpan(info.minLeft) + t('admin.must_remain_so_the_most_is')
           + exactSpan(most) + '.')
-        : h('span', 'Shorten: ', h('b', exactSpan(left - by)), t('admin.left_after')));
+        : h('span', t('admin.shorten_colon'), h('b', exactSpan(left - by)), t('admin.left_after')));
   }
 
   function deadlineBody(info) {
@@ -2357,7 +2388,7 @@
       asList(who.hitmen).length ? h('ul.plain', asList(who.hitmen).map(function (m) {
         return h('li', h('b', String(m.alias || '—')), ' ' + String(m.name || '—') + ' ',
           m.cid ? h('span.cid', String(m.cid)) : null, ' · ' + String(m.state || ''),
-          m.anonymous ? h('span.chip.is-anon', 'anonymous') : null);
+          m.anonymous ? h('span.chip.is-anon', t('admin.w_anonymous')) : null);
       })) : h('p.note', t('admin.no_operatives')));
   }
 
@@ -2485,7 +2516,8 @@
     DD['rv-account'] = {
     prefix: t('admin.from'),
     options: function () {
-      return [{ value: 'cash', label: 'cash' }, { value: 'bank', label: 'bank' }, { value: 'dirty', label: t('admin.dirty_money') }];
+      return [{ value: 'cash', label: t('admin.w_cash') }, { value: 'bank', label: t('admin.w_bank') },
+        { value: 'dirty', label: t('admin.dirty_money') }];
     },
     disabled: function (id) { return unwrittenItem(id); },
     value: function (id) {
@@ -2706,9 +2738,11 @@
         lost.push(tn('admin.alerts_not_posted', Number(fail.alerts), num(fail.alerts)));
       }
       if (fail.test) lost.push(t('admin.the_test_alert_not_posted'));
-      failNote = h('p.note' + (since ? '' : '.is-warn'), (since ? 'Earlier, a' : 'A') + t('admin.post_was_given_up_after')
-        + num(fail.tries) + t('admin.tries') + why + ') ' + ago(fail.at) + ': ' + lost.join(', and ') + '.'
-        + (since ? t('admin.posts_have_gone_through_since') : ''));
+      // One sentence with its values: a translator orders it.
+      var lostText = lost.length > 1 ? t('admin.list_and', lost.slice(0, -1).join(', '), lost[lost.length - 1]) : (lost[0] || '');
+      failNote = h('p.note' + (since ? '' : '.is-warn'), (since
+        ? t('admin.discord_post_given_up_earlier', num(fail.tries), why, ago(fail.at), lostText)
+        : t('admin.discord_post_given_up', num(fail.tries), why, ago(fail.at), lostText)));
     }
     return frag(status,
       h('dl.facts',
@@ -2954,9 +2988,9 @@
     DD['lg-kind'] = {
     prefix: t('admin.kind'),
     options: function () {
-      return [{ value: '', label: t('admin.any') }, { value: 'financial', label: 'financial' },
-        { value: 'conduct', label: 'conduct' }, { value: 'rejected', label: 'rejected' },
-        { value: 'system', label: 'system' }];
+      return [{ value: '', label: t('admin.any') }, { value: 'financial', label: LOG_KIND.financial },
+        { value: 'conduct', label: LOG_KIND.conduct }, { value: 'rejected', label: LOG_KIND.rejected },
+        { value: 'system', label: LOG_KIND.system }];
     },
     value: function () { return S.logs.kind; },
     pick: function (v) { S.logs.kind = v; firstLogPage(); }
@@ -3062,7 +3096,7 @@
         return frag(
           h('tr.row' + (open ? '.is-open' : ''), { 'data-act': 'lg-expand', 'data-index': String(i), tabindex: '0',
             title: open ? t('admin.hide_the_detail') : t('admin.show_the_whole_detail') },
-            h('td.nowrap', when(row.ts)), h('td', h('span.chip.kind-' + String(row.kind || 'system'), String(row.kind || ''))),
+            h('td.nowrap', when(row.ts)), h('td', h('span.chip.kind-' + String(row.kind || 'system'), logKind(row.kind))),
             h('td.mono.wrap', String(row.action || '')),
             h('td', row.contract ? h('button.link.mono', { type: 'button', 'data-act': 'contract',
               'data-id': String(row.contract) }, String(row.contract)) : '—'),
@@ -3194,6 +3228,9 @@
     var subject = trim(S.forms['pl.q']);
     var byRef = again === true && S.players.ref ? S.players.ref : null;
     if (!subject && !byRef) { toast(t('admin.give_a_player_id_a_citizen'), 'error'); return Promise.resolve(); }
+    // A lookup of somebody (not the card read again): a write still on its
+    // way answers for the card before (playerCard).
+    if (!byRef) S.players.lookups = (S.players.lookups || 0) + 1;
     // Nothing armed on the card before carries over to who is read now.
     disarm();
     S.players.playtime = null;
@@ -3242,7 +3279,7 @@
     else if (pt.grandfathered === true) about = t('admin.they_were_on_the_server_before')
       + t('admin.having_played_enough_whatever_the_hours');
     else if (pt.grandfathered === false) about = hours < floor
-      ? t('admin.too_new_to_be_named_as') + num(floor) + ' h.'
+      ? t('admin.too_new_until_hours', num(floor))
       : t('admin.enough_to_be_named_as_a');
     else if (!pt.counted) about = t('admin.nothing_counted_yet_counting_starts_the');
     else about = t('admin.whether_they_were_on_the_server')
@@ -3302,7 +3339,7 @@
     return h('div.person',
       h('h2', String(p.name || t('admin.no_name_on_record'))),
       p.cid ? h('span.cid', String(p.cid)) : h('span.chip', t('admin.citizen_id_hidden')),
-      p.online ? h('span.chip.is-live', t('admin.in_the_city_player') + String(p.server)) : h('span.chip', 'offline'),
+      p.online ? h('span.chip.is-live', t('admin.in_the_city_player') + String(p.server)) : h('span.chip', t('admin.w_offline')),
       d.frozen ? h('span.chip.is-warn.is-frozen', t('admin.frozen')) : null,
       d.suspended ? h('span.chip.is-warn.is-suspended', t('admin.suspended')) : null,
       d.protected ? h('span.chip.is-protected', t('admin.protected')) : null);
@@ -3337,7 +3374,7 @@
       h('div.tiles.is-compact',
         tile(t('admin.contracts'), h('p.big', num(asList(d.contracts).length))),
         tile(t('admin.owed_to_them'), h('p.big', num(asList(d.owed).length))),
-        tile(t('admin.playtime'), h('p.big', d.playtime && !d.playtime.unread ? num(d.playtime.hours) + ' h' : '—'))));
+        tile(t('admin.playtime'), h('p.big', d.playtime && !d.playtime.unread ? t('admin.n_h', num(d.playtime.hours)) : '—'))));
   }
 
   function moneyBody(d) {
@@ -3356,7 +3393,7 @@
               h('td', holds(line)), h('td', String(line.state || '—'),
                 line.parked ? h('span.chip.is-warn', t('admin.left_for_staff')) : null),
               h('td.num', MONEY[line.source] ? money(line.owes) : num(line.owes)),
-              h('td', line.queued ? 'yes' : 'no'));
+              h('td', line.queued ? t('admin.w_yes') : t('admin.w_no')));
           })))) : empty(t('admin.nothing_is_owed_to_them') + (canIdentify() ? '.' : t('admin.that_you_may_see'))),
           '', h('span.sub', tn('admin.deliveries_pending', Number(d.pending), num(d.pending)))),
         card(t('admin.notices_for_their_next_login'), Number(notices.count) > 0
@@ -3401,7 +3438,7 @@
           field('pl.q', { id: 'pl-q', placeholder: t('admin.player_id_citizen_id_or_name'), 'data-enter': 'pl-lookup',
             'aria-label': t('admin.player_id_citizen_id_or_name') })),
         btn('.primary', 'pl-lookup', {}, t('admin.look_up'), 'arrow-right')),
-      recent.length ? h('div.chips.recent', h('span.sub', 'Recent:'), recent.map(function (r) {
+      recent.length ? h('div.chips.recent', h('span.sub', t('admin.recent_colon')), recent.map(function (r) {
         return h('button.chip.is-link', { type: 'button', 'data-act': 'pl-recent', 'data-value': r.subject },
           r.name);
       })) : null,
@@ -3480,7 +3517,7 @@
     if (entry.kind === 'switch' || typeof value === 'boolean') return value === true ? t('admin.on') : t('admin.off');
     if (entry.kind === 'list') {
       var list = asList(value);
-      return list.length ? list.join(', ') : '(none)';
+      return list.length ? list.join(', ') : t('admin.none_value');
     }
     if (entry.kind === 'range') {
       return value && typeof value === 'object' ? t('admin.range_to', num(value.min), num(value.max)) : t('admin.not_set');
@@ -3681,7 +3718,7 @@
             h('button.st-chip-x', { type: 'button', 'data-act': 'st-list-del', 'data-key': key, 'data-value': name,
               disabled: !open, title: t('admin.remove_x', name), 'aria-label': t('admin.remove_x', name) }, icon('xmark'),
               h('span.lbl', t('admin.remove'))));
-        }) : h('li.st-none', '(none)')),
+        }) : h('li.st-none', t('admin.none_value'))),
         h('div.st-edit',
           field('stl.' + key, { class: 'is-grow', placeholder: entry.whole ? t('admin.add_a_line') : t('admin.add_a_name'),
             'data-enter': 'st-list-add',
@@ -3695,7 +3732,7 @@
       return h('div.st-edit',
         field('st.' + key + '.min', { value: String(typedOr('st.' + key + '.min', pair.min)), class: 'is-short',
           inputmode: 'decimal', disabled: !open, 'aria-label': t('admin.label_from', entry.label) }),
-        h('span.range-sep', 'to'),
+        h('span.range-sep', t('admin.w_to')),
         field('st.' + key + '.max', { value: String(typedOr('st.' + key + '.max', pair.max)), class: 'is-short',
           inputmode: 'decimal', disabled: !open, 'aria-label': t('admin.label_to', entry.label) }),
         writeBtn('.is-small', 'st-range-save', { 'data-key': key, id: 'st-save-' + key }, t('admin.save'),
@@ -3706,7 +3743,7 @@
     var shownValue = String(entry.value == null ? '' : entry.value);
     var range = entry.kind === 'number'
       ? t('admin.range_to', entry.min != null ? entry.min : '…', entry.max != null ? entry.max : '…') + (entry.integer ? t('admin.whole_suffix') : '')
-      : (entry.says ? String(entry.says) : 'letters, digits, - and _') + ', ' + t('admin.up_to_characters', Number(entry.maxLength) || 64);
+      : (entry.says ? String(entry.says) : t('admin.letters_digits_dash_underscore')) + ', ' + t('admin.up_to_characters', Number(entry.maxLength) || 64);
     return h('div.st-edit',
       field(bind, { value: shownValue, class: entry.kind === 'text' ? 'is-grow' : 'is-short',
         inputmode: entry.kind === 'number' ? 'decimal' : null, 'data-enter': 'st-save', 'data-key': key,
@@ -3824,26 +3861,20 @@
     var answer = S.settings.photos;
     var n = kept ? Number(kept.count) || 0 : 0;
     if (entry.value === true || n < 1) return answer ? answerBox(answer) : null;
-    var photos = tn('admin.kill_photos_count', n);
+    // Each a whole sentence with its count in place (Review 85 G4R2-3): a
+    // translator orders it, and its plural is the language's.
     var files = Number(kept.files) || 0, links = Number(kept.links) || 0;
     var open = Math.max(Number(kept.open) || 0, Number(kept.waiting) || 0);
     var facts = [];
-    if (files) facts.push(num(files) + t('admin.with_a_file_on_this_server'));
-    if (links) {
-      facts.push(num(links) + t('admin.on_lb_phones_image_host_removing')
-        + t('admin.stays_on_the_host'));
-    }
-    if (open) {
-      facts.push(num(open) + t('admin.open_on_a_phone_right_now')
-        + t('admin.is_shown'));
-    }
+    if (files) facts.push(t('admin.kept_photos_with_a_file', num(files)));
+    if (links) facts.push(t('admin.kept_photos_on_the_image_host', num(links)));
+    if (open) facts.push(t('admin.kept_photos_open_on_a_phone', num(open)));
     return h('div.st-kept',
-      h('p.st-about', num(n) + ' ' + photos + t('admin.kept_from_before_kill_photos_were')
-        + t('admin.became_of_each_photo_removing_deletes')),
+      h('p.st-about', tn('admin.kept_photos_note', n, num(n))),
       facts.length ? h('ul.st-kept-facts', facts.map(function (text) { return h('li', text); })) : null,
       h('div.btn-row', writeBtn('.danger.is-small', 'st-remove-photos', {},
-        t('admin.remove_the') + num(n) + ' ' + photos + t('admin.kept_from_before'),
-        t('admin.click_again_remove') + num(n) + ' ' + photos + t('admin.for_good_2'), 'trash-can', true)),
+        tn('admin.remove_kept_photos', n, num(n)),
+        tn('admin.click_again_remove_kept_photos', n, num(n)), 'trash-can', true)),
       answerBox(answer));
   }
 
@@ -3998,7 +4029,7 @@
     { id: 'rewards', label: t('admin.rewards_payouts'), icon: 'sack-dollar' },
     { id: 'completing', label: t('admin.completing_a_contract'), icon: 'flag-checkered' },
     { id: 'buyouts', label: t('admin.buyouts'), icon: 'hand-holding-dollar' },
-    { id: 'intel', label: 'Intel', icon: 'user-secret' },
+    { id: 'intel', label: t('admin.intel_label'), icon: 'user-secret' },
     { id: 'record', label: t('admin.record_standing'), icon: 'star' },
     { id: 'police', label: t('admin.police_city_news'), icon: 'shield-halved' },
     { id: 'messages', label: t('admin.phone_messages_notifications'), icon: 'comment' },
@@ -4106,7 +4137,7 @@
         h('label.st-pair', h('span', t('admin.per')),
           field('st.Cooldowns.' + bucket + '.per', { value: String(typedOr('st.Cooldowns.' + bucket + '.per', per.value)),
             class: 'is-short', inputmode: 'decimal', disabled: !open, 'aria-label': bucket + t('admin.refill_window') })),
-        h('label.st-pair', h('span', 'burst'),
+        h('label.st-pair', h('span', t('admin.w_burst')),
           field('st.Cooldowns.' + bucket + '.burst', { value: String(typedOr('st.Cooldowns.' + bucket + '.burst', burst.value)),
             class: 'is-short', inputmode: 'numeric', disabled: !open, 'aria-label': bucket + t('admin.requests_held') })),
         writeBtn('.is-small', 'st-map-save', { 'data-bucket': bucket, id: 'st-save-Cooldowns.' + bucket }, t('admin.save'),
@@ -4427,10 +4458,10 @@
       liftLabel: t('admin.unfreeze'), confirm: function () { return t('admin.click_again_to_unfreeze'); }, icon: 'play' },
     { id: 'suspend', label: t('admin.suspended'), chip: '.is-warn.is-suspended', none: t('admin.nobody_is_suspended'),
       lift: 'unsuspend', liftLabel: t('admin.lift'), icon: 'unlock',
-      confirm: function (row) { return t('admin.click_again_lift_for') + String(row.name || 'them'); } },
+      confirm: function (row) { return t('admin.click_again_lift_for') + String(row.name || t('admin.w_them')); } },
     { id: 'protect', label: t('admin.protected'), chip: '.is-protected', none: t('admin.nobody_is_protected'), lift: 'unprotect',
       liftLabel: t('admin.lift'), icon: 'unlock',
-      confirm: function (row) { return t('admin.click_again_lift_for') + String(row.name || 'them'); } },
+      confirm: function (row) { return t('admin.click_again_lift_for') + String(row.name || t('admin.w_them')); } },
     { id: 'limit', label: t('admin.own_target_limits'), chip: '', none: t('admin.nobody_has_target_limits_of_their') }
   ];
   });
@@ -4468,7 +4499,7 @@
           var answer = S.players.lift[row.kind + ':' + ref];
           return frag(h('tr',
             h('td.name', String(row.name || t('admin.no_name_on_record')), row.cid ? h('span.cid', String(row.cid)) : null,
-              h('span.chip' + (k.chip || ''), k.label + (row.kind === 'limit' ? (row.exempt ? ': exempt' : '') : '')),
+              h('span.chip' + (k.chip || ''), k.label + (row.kind === 'limit' ? (row.exempt ? t('admin.exempt_suffix') : '') : '')),
               row.online ? h('span.chip.is-live', t('admin.in_the_city')) : null,
               row.cid ? h('div.party', btn('.is-small.ghost', 'pl-open-cid', { 'data-value': String(row.cid) },
                 t('admin.open'), 'arrow-right')) : null),
@@ -4526,7 +4557,7 @@
         + t('admin.1_h_2_h_or_a')
         + t('admin.and_after_players_are_told_only')
         + t('admin.voiding_ends_it') },
-    { title: t('admin.announce'), icon: 'bullhorn', view: 'announce', go: 'Home, Announce',
+    { title: t('admin.announce'), icon: 'bullhorn', view: 'announce', go: t('admin.home_announce'),
       text: t('admin.one_phone_notice_from_staff_to')
         + t('admin.it_never_names_you_takes_two') },
     { title: t('admin.test_tools'), icon: 'screwdriver-wrench', view: 'tools', go: t('admin.test_tools'),
@@ -4791,7 +4822,7 @@
             t('admin.apply_x', String(p.name)), tn('admin.click_again_apply_changes', n), 'check'),
             p.own ? writeBtn('.danger.is-small', 'ps-delete', { 'data-value': String(p.name) },
               t('admin.delete'), t('admin.click_again_delete') + String(p.name), 'trash') : null)),
-          '.ps-card', h('span.chip' + (p.builtIn ? '' : '.is-panel'), p.builtIn ? 'shipped' : p.own ? 'yours' : 'saved'));
+          '.ps-card', h('span.chip' + (p.builtIn ? '' : '.is-panel'), p.builtIn ? t('admin.w_shipped') : p.own ? t('admin.w_yours') : t('admin.w_saved')));
       })));
   }
 
@@ -5063,6 +5094,8 @@
     });
   };
   ACTIONS['su-apply'] = function (node) {
+    // Applied only after its Preview, as the screen says.
+    if (!S.setup.preview) return;
     if (!confirmed(node)) return;
     write('setupApply', { values: setupValues() }, 'setup', node).then(function (reply) {
       if (!reply) return;
@@ -5249,6 +5282,7 @@
   ACTIONS['ct-person-clear'] = function () {
     S.contracts.person = null;
     S.contracts.as = '';
+    S.contracts.whois = {};
     S.contracts.page = 1;
     S.forms['ct.who'] = '';
     show('contracts');
@@ -5503,7 +5537,7 @@
     var label = action === 'dismiss' ? null
       : action === 'pay' ? t('admin.click_again_pay_it_to') + whoLabel
         : data.goods ? t('admin.click_again_refund_every_item_and') + whoLabel
-          : t('admin.click_again_refund_to_from', money(data.amount), whoLabel, data.account);
+          : t('admin.click_again_refund_to_from', money(data.amount), whoLabel, (data.account === 'cash' ? t('admin.w_cash') : t('admin.w_bank')));
     if (!armed(node, label, ['rv.' + id + '.amount', 'rv.' + id + '.note'])) return;
     write('resolve', data, 'resolve:' + id, node).then(function (reply) {
       if (!reply) return;
@@ -5629,12 +5663,21 @@
 
   /** Set one character's counted hours, two clicks, naming them as the
       lookup did. The card shows what the server answered. */
+  /** Which player card is up: the player's handle and the lookup that
+      found them. A write's answer is shown only on the card it was sent
+      from, never on one looked up while it was on its way. */
+  function playerCard() { return String(S.players.ref) + '#' + (S.players.lookups || 0); }
+
   function setPlaytime(node, hours) {
     if (!S.players.ref || !confirmed(node)) return;
+    var card = playerCard();
     write('setPlaytime', { ref: S.players.ref, hours: hours }, 'playtime', node).then(function (reply) {
       if (!reply) return;
-      S.players.playtime = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
+      // Another player was looked up since: this answer, and its hours,
+      // are not theirs.
+      if (card !== playerCard()) return;
+      S.players.playtime = { ok: reply.ok === true, text: words(reply) };
       if (reply.ok && reply.data && reply.data.playtime && S.players.data) {
         S.players.data.playtime = reply.data.playtime;
         delete S.forms['pl.hours'];
@@ -5657,11 +5700,14 @@
 
   /** Freeze or unfreeze the player looked up, two clicks, with the reason. */
   function freezeWrite(op, data, node) {
+    var card = playerCard();
     var sent = op === 'freeze' ? write('freeze', data, 'freeze', node) : write('unfreeze', data, 'freeze', node);
     sent.then(function (reply) {
       if (!reply) return;
-      S.players.freeze = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
+      // Another player was looked up since: the answer is not theirs.
+      if (card !== playerCard()) return;
+      S.players.freeze = { ok: reply.ok === true, text: words(reply) };
       if (reply.ok) {
         delete S.forms['pl.freezeReason'];
         if (S.players.data && !S.players.data.error && data.ref === S.players.ref) {
@@ -6024,10 +6070,12 @@
 
   /** A value as the history shows it; a secret never. */
   function historyValue(value, secret) {
-    if (secret) return h('span.sub', '(hidden)');
+    if (secret) return h('span.sub', t('admin.hidden_value'));
     if (value === null || value === undefined) return h('span.sub', '—');
-    if (typeof value === 'boolean') return value ? 'on' : 'off';
-    if (Array.isArray(value)) return value.map(String).join(', ') || '(none)';
+    if (typeof value === 'boolean') return value ? t('admin.on_word') : t('admin.off_word');
+    if (Array.isArray(value)) return value.map(String).join(', ') || t('admin.none_value');
+    // An empty list crosses from Lua as {}: it is a list with nothing in it.
+    if (typeof value === 'object' && Object.keys(value).length === 0) return t('admin.none_value');
     if (typeof value === 'object') return JSON.stringify(value);
     return String(value);
   }
@@ -6223,9 +6271,10 @@
       closeSearch();
       return;
     }
-    // The innermost layer first: a button waiting for its second click,
-    // then the contract drawer (what was typed in it kept until it is
-    // closed), the folded section menu, and only then the panel.
+    // The innermost layer first: an open dropdown, a button waiting for
+    // its second click, then the contract drawer (what was typed in it kept
+    // until it is closed), the folded section menu, and only then the panel.
+    if (S.menu) { closeMenu(); return; }
     if (S.armed) { disarm(); return; }
     if (S.drawer.id) { closeDrawer(); return; }
     if (S.navOpen) { S.navOpen = false; drawChrome(); return; }
@@ -6427,7 +6476,7 @@
   });
   var ROLE_LABEL;
   Text.later(function () {
-    ROLE_LABEL = { client: 'placed', target: t('admin.on_them'), hitman: 'took' };
+    ROLE_LABEL = { client: t('admin.w_placed'), target: t('admin.on_them'), hitman: t('admin.w_took') };
   });
 
   function moneyTable(rows, none) {
@@ -6488,7 +6537,7 @@
           return h('tr',
             h('td', h('button.link.mono', { type: 'button', 'data-act': 'contract', 'data-id': id }, id)),
             h('td', asList(r.roles).map(function (x) { return ROLE_LABEL[x] || String(x); }).join(', '),
-              r.anonymous ? h('span.chip.is-anon', 'anonymous') : null),
+              r.anonymous ? h('span.chip.is-anon', t('admin.w_anonymous')) : null),
             h('td', stateChip(r.state)), h('td.nowrap', when(r.created_at)),
             ident ? h('td.name', String(r.client || '—')) : null,
             ident ? h('td.name', String(r.target || '—')) : null);
@@ -6517,13 +6566,21 @@
   /** A write from one of the cards: its answer kept on the card, a toast,
       and the lookup and its history read again once it went through. */
   function staffWrite(sent, slot) {
+    // Called as the write is sent: the card it is for.
+    var card = playerCard();
     return sent.then(function (reply) {
       if (!reply) return null;
-      S.pstaff[slot] = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
+      // Another player was looked up since: the answer is not theirs to show.
+      if (card !== playerCard()) return reply;
+      S.pstaff[slot] = { ok: reply.ok === true, text: words(reply) };
       if (reply.ok) {
         var keep = S.pstaff[slot];
-        loadPlayer(true).then(function () { S.pstaff[slot] = keep; drawPlayer(); });
+        loadPlayer(true).then(function () {
+          if (card !== playerCard()) return;
+          S.pstaff[slot] = keep;
+          drawPlayer();
+        });
       } else {
         drawPlayer();
       }
@@ -6672,6 +6729,12 @@
     S.players.at = 0;
     S.players.lift = {};
     S.ctx.contract = null;
+    // Whois answers and the person filter (a lookup handle) are for this
+    // opening only: a reopen without the identity permission must not draw
+    // them, and the handle goes stale.
+    S.contracts.whois = {};
+    S.contracts.person = null;
+    S.contracts.as = '';
     S.search = { q: '', open: false, at: 0 };
     S.navOpen = false;
     resetPlayerStaff();
@@ -6777,7 +6840,7 @@
       return h('li', h('span.time', when(r.at)), ' ', h('b', String(r.who || t('admin.an_operative'))),
         t('admin.removed_by') + String(r.by || t('admin.staff')),
         r.stakeReturned ? h('span.chip', t('admin.stake_returned')) : null,
-        r.blocked ? h('span.chip.is-warn', 'barred') : null,
+        r.blocked ? h('span.chip.is-warn', t('admin.w_barred')) : null,
         h('span.detail', ' ' + String(r.reason || '')));
     })) : null;
     if (!staff.removable) {
@@ -6792,7 +6855,7 @@
         + t('admin.told_an_operative_left_as_a')),
       h('div.ct-row', h('span.ct-label', t('admin.operative')),
         segmented('ct-rm-pick', active.map(function (m) {
-          return { value: String(m.id), label: String(m.alias || 'operative') + (m.name ? ' · ' + m.name : ''),
+          return { value: String(m.id), label: String(m.alias || t('admin.w_operative')) + (m.name ? ' · ' + m.name : ''),
                    disabled: !open, title: off.title };
         }), st.pick)),
       h('div.ct-row', h('span.ct-label', t('admin.their_stake')),
@@ -6900,7 +6963,8 @@
   }
 
   function rewardWho(st) {
-    return st.from === 'placer' ? t('admin.charged_to_the_placers') + st.account : t('admin.added_by_staff') + st.account + ')';
+    return st.from === 'placer' ? t('admin.charged_to_the_placers') + (st.account === 'cash' ? t('admin.w_cash') : t('admin.w_bank'))
+      : t('admin.added_by_staff') + (st.account === 'cash' ? t('admin.w_cash') : t('admin.w_bank')) + ')';
   }
 
   /** What the change typed would do, in the server's figures. */
@@ -6948,7 +7012,7 @@
         + t('admin.changed_by_staff_nobody_is_named')),
       facts,
       h('div.ct-row', h('span.ct-label', t('admin.change')), segmented('rw-dir', dirOpts, st.dir),
-        field('dr.rw.amt.' + id, { class: 'is-short', placeholder: '$ amount', inputmode: 'numeric', maxlength: '9',
+        field('dr.rw.amt.' + id, { class: 'is-short', placeholder: t('admin.dollar_amount'), inputmode: 'numeric', maxlength: '9',
           'data-live': 'rw-preview', disabled: !open, 'aria-label': t('admin.dollars_to_change_the_reward_by') })),
       st.dir === 'raise' ? h('div.ct-row', h('span.ct-label', t('admin.paid_by')),
         segmented('rw-from', [
@@ -7086,7 +7150,7 @@
         h('div.btn-row', btn('.is-small', 'section', { 'data-section': 'players' }, t('admin.find_the_hitman_in_players'),
           'magnifying-glass')));
     }
-    var who = String((S.players.data.player || {}).name || 'them');
+    var who = String((S.players.data.player || {}).name || t('admin.w_them'));
     var v = st.previewRef === S.players.ref ? st.preview : null;
     var ops = v ? asList(v.operatives) : [];
     // The server lets no hitman be anonymous on this target: only named is
@@ -7154,7 +7218,7 @@
       drawDrawer();
       return;
     }
-    var who = String((S.players.data.player || {}).name || 'them');
+    var who = String((S.players.data.player || {}).name || t('admin.w_them'));
     var n = asList(v.operatives).length;
     var identity = v.anonymousAllowed === false ? 'named' : (st.identity || 'anonymous');
     var label = t('admin.click_again_give_it_to') + who + (n ? tn('admin.taking_off_operatives', n) : '')
@@ -7302,9 +7366,16 @@
   ];
   });
 
+  /** A card's time-left band (its code, Util.TIME_BANDS) in words. */
+  var BAND_WORDS;
+  Text.later(function () {
+    BAND_WORDS = { over_2h: t('admin.band_over_2h'), '1_to_2h': t('admin.band_1_to_2h'),
+      under_1h: t('admin.band_under_1h'), under_15m: t('admin.band_under_15m') };
+  });
+
   function viewValue(value) {
-    if (value === true) return 'yes';
-    if (value === false) return 'no';
+    if (value === true) return t('admin.w_yes');
+    if (value === false) return t('admin.w_no');
     if (value && typeof value === 'object') return h('pre.json', prettyJson(value));
     return String(value);
   }
@@ -7315,7 +7386,9 @@
     VIEW_KEYS.forEach(function (pair) {
       seen[pair[0]] = true;
       if (view[pair[0]] === undefined || view[pair[0]] === null) return;
-      var value = pair[0] === 'reason'
+      // The band is sent as its code (Util.TIME_BANDS): its words are here.
+      var value = pair[0] === 'timeLeft' && BAND_WORDS[view.timeLeft] ? BAND_WORDS[view.timeLeft]
+        : pair[0] === 'reason'
         ? frag(String(view.reason || '—'), view.staffEdited ? h('span.chip', t('admin.edited_by_staff')) : null)
         : (pair[0] === 'reward' && view.reward && typeof view.reward === 'object'
           ? money(Number(view.reward.baseline) || 0) + (Number(view.reward.bonus) ? t('admin.plus_bonus', money(view.reward.bonus)) : '')
@@ -7334,14 +7407,14 @@
     var st = ctState();
     var options = [{ value: 'target', label: t('admin.target') }, { value: 'placer', label: t('admin.placer') }];
     asList(d.hitmen).forEach(function (m) {
-      options.push({ value: 'hitman:' + m.id, label: String(m.alias || 'operative') + (m.state === 'active' ? '' : ' (left)') });
+      options.push({ value: 'hitman:' + m.id, label: String(m.alias || t('admin.w_operative')) + (m.state === 'active' ? '' : t('admin.left_paren')) });
     });
     var v = st.view;
     var body = null;
     if (v && v.key === st.viewKey) {
       var r = v.data || {};
       body = frag(
-        r.viewer ? h('p.sub', 'As ', h('b', String(r.viewer.name || '—')), ' ', h('span.cid', String(r.viewer.cid || ''))) : null,
+        r.viewer ? h('p.sub', t('admin.as_prefix'), h('b', String(r.viewer.name || '—')), ' ', h('span.cid', String(r.viewer.cid || ''))) : null,
         r.note ? h('p.note', String(r.note)) : null,
         r.shown === false || !r.view ? null : viewCard(r.view),
         r.whitelisted ? frag(h('p.slot-title', t('admin.whitelisted_job_view')), viewCard(r.whitelisted)) : null);
@@ -7436,7 +7509,7 @@
       links: [{ key: 'Roleplay.ProofOfIntent.Enabled', label: t('admin.proof_of_intent') },
         { key: 'Roleplay.ProofOfIntent.MinMessages', label: t('admin.messages_that_count') },
         { key: 'Roleplay.ProofOfIntent.HoldMaxMinutes', label: t('admin.longest_hold') }] },
-    { title: 'Roleplay: Bodyguards', icon: 'shield-halved',
+    { title: t('admin.roleplay_bodyguards_title'), icon: 'shield-halved',
       text: t('admin.off_as_shipped_on_a_target')
         + t('admin.at_once_and_held_and_a')
         + t('admin.protection_tab_by_its_reward_alone')
@@ -7575,8 +7648,7 @@
       text: t('admin.when_it_is_on_a_target')
         + t('admin.they_have_to_have_been_up')
         + t('admin.told_they_are_still_recovering_with')
-        + t('admin.is_needed_instead_the_rule_always')
-        + 'cooldowns.',
+        + t('admin.is_needed_instead_the_rule_always'),
       links: [{ key: 'Roleplay.EmsRelisting.Enabled', label: t('admin.on_or_off') },
         { key: 'Roleplay.EmsRelisting.TreatedMinutes', label: t('admin.minutes_up') },
         { key: 'Roleplay.EmsRelisting.RequireEMS', label: t('admin.a_medics_revive') }] },
@@ -7814,14 +7886,24 @@
   }
   tlReset();
 
-  var TL_SOURCE = { global: 'global', job: 'job', player: 'player' };
+  /** Where a limit comes from, in words (the server sends the code). */
+  var TL_SOURCE;
+  Text.later(function () {
+    TL_SOURCE = { global: t('admin.tl_source_global'), job: t('admin.tl_source_job'), player: t('admin.tl_source_player') };
+  });
+  /** A grant's state (allow, deny, off, inherit), in words. */
+  var GRANT_STATE;
+  Text.later(function () {
+    GRANT_STATE = { allow: t('admin.grant_state_allow'), deny: t('admin.grant_state_deny'), off: t('admin.off_word'),
+      inherit: t('admin.grant_state_inherit') };
+  });
   /** The limits' short names, for the job table's columns. */
   var TL_SHORT;
   Text.later(function () {
     TL_SHORT = {
     TargetCooldownAfterResolveSeconds: t('admin.after_one_ends'), SameCreatorSameTargetCooldownSeconds: t('admin.same_placer'),
     TargetCooldownAfterCompletionSeconds: t('admin.after_completed'), MaxActiveContractsPerTarget: t('admin.live_at_once'),
-    MaxContractsPerTargetPerDay: 'Per 24 h', MaxContractsPerTargetPerWeek: 'Per 7 days'
+    MaxContractsPerTargetPerDay: t('admin.per_24_h'), MaxContractsPerTargetPerWeek: t('admin.per_7_days')
   };
   });
 
@@ -7831,7 +7913,7 @@
   function tlValue(entry, value) {
     var n = Number(value) || 0;
     if (entry.unit === 's') {
-      if (n === 0) return 'off';
+      if (n === 0) return t('admin.off_word');
       var d = Math.floor(n / 86400), hr = Math.floor((n % 86400) / 3600), mi = Math.floor((n % 3600) / 60);
       var parts = [];
       if (d) parts.push(t('admin.n_d', d));
@@ -7840,7 +7922,7 @@
       if (!parts.length) parts.push(t('admin.n_s', n));
       return parts.join(' ');
     }
-    if (n === 0 && entry.min === 0) return 'off';
+    if (n === 0 && entry.min === 0) return t('admin.off_word');
     return num(n);
   }
 
@@ -7864,7 +7946,7 @@
     return h('div.tl-fields', tlKeys().map(function (k) {
       return h('label.tl-field', h('span.tl-label', String(k.label) + (k.unit === 's' ? ' (seconds)' : '')),
         field(prefix + '.' + k.key, { id: (prefix + '-' + k.key).replace(/\./g, '-'), class: 'is-short',
-          inputmode: 'numeric', maxlength: '7', disabled: !open, placeholder: 'default',
+          inputmode: 'numeric', maxlength: '7', disabled: !open, placeholder: t('admin.w_default'),
           'aria-label': String(k.label) }));
     }));
   }
@@ -8088,6 +8170,9 @@
     disarm();
     var sent = byRef ? { ref: byRef } : { subject: subject.slice(0, 64) };
     var keep = again === true ? S.tl.answer : null;
+    // A lookup of somebody (not the card read again): a write still on its
+    // way answers for the card before (tlWrite).
+    if (!byRef) S.tl.lookups = (S.tl.lookups || 0) + 1;
     return ask('targetStatus', sent, 'targetStatus').then(function (reply) {
       if (!reply) return;
       if (!reply.ok) {
@@ -8099,7 +8184,8 @@
         var p = S.tl.status.player || {};
         S.tl.ref = typeof p.ref === 'string' ? p.ref : null;
       }
-      S.tl.answer = keep;
+      // The answer kept is for the player read again, not one looked up since.
+      S.tl.answer = byRef && S.tl.ref === byRef ? keep : null;
       drawTl();
     });
   }
@@ -8115,16 +8201,16 @@
       h('div.person',
         h('h2', String(p.name || t('admin.no_name_on_record'))),
         p.cid ? h('span.cid', String(p.cid)) : h('span.chip', t('admin.citizen_id_hidden')),
-        p.online ? h('span.chip.is-live', t('admin.in_the_city')) : h('span.chip', 'offline'),
+        p.online ? h('span.chip.is-live', t('admin.in_the_city')) : h('span.chip', t('admin.w_offline')),
         st.job ? h('span.chip.is-job', t('admin.job_x', String(st.job)) + (st.jobFrom === 'last known' ? t('admin.last_known') : '')) : null,
         st.exempt ? h('span.chip.is-warn', t('admin.exempt_from_limits')) : null),
       h('div.tiles.is-compact',
         tile(t('admin.live_on_them_2'), h('p.big', num(st.live) + ' / ' + (st.exempt ? '—' : num(st.limits && st.limits.MaxActiveContractsPerTarget)))),
-        tile('Placed, 24 hours', h('p.big', num(st.day))),
-        tile('Placed, 7 days', h('p.big', num(st.week))),
-        tile(t('admin.cooldown_left'), h('p.big' + (left > 0 ? '.is-warn' : ''), left > 0 ? exactSpan(left) : 'none'))),
+        tile(t('admin.placed_24_hours'), h('p.big', num(st.day))),
+        tile(t('admin.placed_7_days'), h('p.big', num(st.week))),
+        tile(t('admin.cooldown_left'), h('p.big' + (left > 0 ? '.is-warn' : ''), left > 0 ? exactSpan(left) : t('admin.none_word')))),
       left > 0 ? h('p.note', t('admin.set_by_from_the_limits', TL_RULE[st.cooldownRule] || String(st.cooldownRule),
-        TL_SOURCE[st.cooldownFrom] || 'global')) : null,
+        TL_SOURCE[st.cooldownFrom] || TL_SOURCE.global)) : null,
       Number(st.dayAll) !== Number(st.day) || Number(st.weekAll) !== Number(st.week)
         ? h('p.note', t('admin.counted_since_staff_reset_the_counts') + num(st.dayAll) + t('admin.in_24_hours_and') + num(st.weekAll)
           + t('admin.in_7_days_in_all')) : null,
@@ -8133,8 +8219,8 @@
         h('tbody', keys.map(function (k) {
           var from = st.source ? st.source[k.key] : 'global';
           return h('tr', h('td', String(k.label)),
-            h('td', st.exempt ? 'exempt' : tlValue(k, st.limits ? st.limits[k.key] : 0)),
-            h('td', st.exempt ? 'player' : (TL_SOURCE[from] || 'global')));
+            h('td', st.exempt ? t('admin.w_exempt') : tlValue(k, st.limits ? st.limits[k.key] : 0)),
+            h('td', st.exempt ? TL_SOURCE.player : (TL_SOURCE[from] || TL_SOURCE.global)));
         })))),
       ov ? h('p.sub', (ov.exempt ? t('admin.exempt_from_limits') : t('admin.their_own_limits')) + ' '
         + (ov.until_at ? t('admin.until_plain', when(ov.until_at)) : t('admin.for_good_3')) + (ov.reason ? ': ' + String(ov.reason) : '')) : null,
@@ -8232,10 +8318,13 @@
     if (!confirmed(node)) return;
     var data = { ref: S.tl.ref, reason: reason.slice(0, 120) };
     Object.keys(extra || {}).forEach(function (k) { data[k] = extra[k]; });
+    var card = String(data.ref) + '#' + (S.tl.lookups || 0);
     send(data, node).then(function (reply) {
       if (!reply) return;
-      S.tl.answer = { ok: reply.ok === true, text: words(reply) };
       toast(words(reply), reply.ok ? 'ok' : 'error');
+      // Another player was looked up since: the answer is not for their card.
+      if (card !== String(S.tl.ref) + '#' + (S.tl.lookups || 0)) return;
+      S.tl.answer = { ok: reply.ok === true, text: words(reply) };
       if (reply.ok) loadTargetStatus(true); else drawTl();
     });
   }
@@ -8883,7 +8972,7 @@
         + t('admin.permissions_pick_the_one_every_hitman')
         + t('admin.citizen_is_a_member_of_one')),
       h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', 'Organisation'), h('th', t('admin.job')), h('th', t('admin.members')), h('th', ''))),
+        h('thead', h('tr', h('th', t('admin.organisation_col')), h('th', t('admin.job')), h('th', t('admin.members')), h('th', ''))),
         h('tbody', orgs.map(function (o) {
           var on = String(o.id) === String(d.id);
           return h('tr' + (on ? '.is-on' : ''),
@@ -8974,8 +9063,8 @@
         h('tbody', roles.map(function (r) {
           return h('tr' + (sel && Number(sel.grade) === Number(r.grade) ? '.is-open' : ''),
             h('td.num', num(r.grade)), h('td.mono', String(r.name || '—')), h('td', String(r.label || '—'),
-              r.locked ? h('span.chip.is-warn', 'locked') : null),
-            h('td.num', money(r.pay)), h('td', r.boss ? h('span.chip.is-panel', 'boss') : '—'),
+              r.locked ? h('span.chip.is-warn', t('admin.w_locked')) : null),
+            h('td.num', money(r.pay)), h('td', r.boss ? h('span.chip.is-panel', t('admin.w_boss')) : '—'),
             h('td.num', num(r.members)),
             h('td', btn('.is-small.ghost', 'org-role-open', { 'data-id': String(r.grade) }, t('admin.edit_powers'), 'pen')));
         })))) : empty(t('admin.no_roles_yet_add_one_below')), '', h('span.sub', num(roles.length))),
@@ -8985,7 +9074,7 @@
           field('org.new.grade', { class: 'is-short', inputmode: 'numeric', placeholder: t('admin.grade'), 'aria-label': t('admin.grade') }),
           field('org.new.name', { class: 'is-mid', maxlength: '64', placeholder: t('admin.name_job_grade'), 'aria-label': t('admin.name') }),
           field('org.new.label', { class: 'is-mid', maxlength: '64', placeholder: t('admin.label'), 'aria-label': t('admin.label') }),
-          field('org.new.pay', { class: 'is-short', inputmode: 'numeric', placeholder: '$ pay', 'aria-label': t('admin.pay') }),
+          field('org.new.pay', { class: 'is-short', inputmode: 'numeric', placeholder: t('admin.dollar_pay'), 'aria-label': t('admin.pay') }),
           segmented('org-new-boss', [{ value: 'no', label: t('admin.not_boss') }, { value: 'yes', label: t('admin.boss') }],
             S.org.newBoss ? 'yes' : 'no'),
           writeBtn('.primary', 'org-role-add', {}, t('admin.add_role'), t('admin.click_again_to_add'), 'plus')),
@@ -9004,7 +9093,7 @@
           maxlength: '64', 'aria-label': t('admin.name') })),
         h('label.st-pair', h('span', t('admin.label')), field('org.role.' + g + '.label', { class: 'is-mid',
           value: String(r.label || ''), maxlength: '64', 'aria-label': t('admin.label') })),
-        h('label.st-pair', h('span', 'Pay $'), field('org.role.' + g + '.pay', { class: 'is-short', inputmode: 'numeric',
+        h('label.st-pair', h('span', t('admin.pay_dollar')), field('org.role.' + g + '.pay', { class: 'is-short', inputmode: 'numeric',
           value: String(r.pay == null ? '' : r.pay), 'aria-label': t('admin.pay') })),
         h('label.st-pair', h('span', t('admin.grade')), field('org.role.' + g + '.grade', { class: 'is-short', inputmode: 'numeric',
           value: g, 'aria-label': t('admin.grade_order') }))),
@@ -9047,13 +9136,13 @@
     var hireGrade = S.org.hire != null ? S.org.hire : (asList(d.roles).length ? String(asList(d.roles)[asList(d.roles).length - 1].grade) : '');
     return frag(
       card(t('admin.hire'), frag(
-        h('p.about', player ? t('admin.hire_the_player_selected_in_players') + String(player.name || 'them') + t('admin.into_a_role')
+        h('p.about', player ? t('admin.hire_the_player_selected_in_players') + String(player.name || t('admin.w_them')) + t('admin.into_a_role')
           : t('admin.look_a_player_up_in_players')),
         h('div.toolbar',
           player ? h('span.chip.is-live', icon('user'), ' ', String(player.name || t('admin.no_name_on_record')))
             : field('org.hire.cid', { class: 'is-mid', placeholder: t('admin.exact_citizen_id'), maxlength: '64',
               'aria-label': t('admin.citizen_id') }),
-          h('span.sub', 'as'),
+          h('span.sub', t('admin.w_as')),
           h('div.seg', { role: 'group' }, asList(d.roles).map(function (r) {
             var on = String(r.grade) === String(hireGrade);
             return h('button.seg-btn' + (on ? '.is-on' : ''), { type: 'button', 'data-act': 'org-hire-grade',
@@ -9068,10 +9157,10 @@
           var suspended = m.suspendedUntil && Number(m.suspendedUntil) > nowSeconds();
           return h('tr' + (sel && sel.ref === m.ref ? '.is-open' : ''),
             h('td.name', String(m.name || '—')), h('td', String(m.role || roleName(d, m.grade))),
-            h('td', m.online ? h('span.chip.is-live', 'yes') : 'no'),
+            h('td', m.online ? h('span.chip.is-live', t('admin.w_yes')) : t('admin.w_no')),
             h('td.nowrap', m.joined ? ago(m.joined) : '—'), h('td.nowrap', m.lastSeen ? ago(m.lastSeen) : '—'),
-            h('td', m.boss ? h('span.chip.is-panel', 'boss') : null, m.locked ? h('span.chip.is-warn', 'locked') : null,
-              suspended ? h('span.chip.is-warn', 'suspended') : null,
+            h('td', m.boss ? h('span.chip.is-panel', t('admin.w_boss')) : null, m.locked ? h('span.chip.is-warn', t('admin.w_locked')) : null,
+              suspended ? h('span.chip.is-warn', t('admin.w_suspended')) : null,
               Object.keys(m.grants || {}).length ? h('span.chip', t('admin.n_granted', num(Object.keys(m.grants).length))) : null,
               Object.keys(m.denies || {}).length ? h('span.chip', t('admin.n_denied', num(Object.keys(m.denies).length))) : null),
             h('td', btn('.is-small.ghost', 'org-member-open', { 'data-id': String(m.ref) }, t('admin.manage'), 'pen')));
@@ -9081,7 +9170,7 @@
 
   function orgMemberCard(d, m) {
     var ref = String(m.ref);
-    var name = String(m.name || 'them');
+    var name = String(m.name || t('admin.w_them'));
     var grants = m.grants || {}, denies = m.denies || {};
     var held = Object.keys(m.held || {});
     var roleSel = S.org.staged['role:' + ref] != null ? S.org.staged['role:' + ref] : String(m.grade);
@@ -9091,14 +9180,14 @@
     return card(t('admin.member_x', name), frag(
       h('dl.facts',
         h('dt', t('admin.role')), h('dd', roleName(d, m.grade)),
-        h('dt', t('admin.holds_now')), h('dd', held.length ? held.map(function (c) { return powerName(d, c); }).join(', ') : 'nothing'),
+        h('dt', t('admin.holds_now')), h('dd', held.length ? held.map(function (c) { return powerName(d, c); }).join(', ') : t('admin.w_nothing')),
         h('dt', t('admin.own_grants')), h('dd', Object.keys(grants).length ? Object.keys(grants).map(function (c) {
           return powerName(d, c) + (grants[c].inactive ? t('admin.inactive_paren', String(grants[c].inactive)) : '')
             + t('admin.by_x', String(grants[c].by));
-        }).join(', ') : 'none'),
+        }).join(', ') : t('admin.none_word')),
         h('dt', t('admin.own_denies')), h('dd', Object.keys(denies).length ? Object.keys(denies).map(function (c) {
           return powerName(d, c) + t('admin.by_x', String(denies[c]));
-        }).join(', ') : 'none'),
+        }).join(', ') : t('admin.none_word')),
         h('dt', t('admin.limits')), h('dd', (limits.maxAtOnce ? num(limits.maxAtOnce) + t('admin.at_once') : t('admin.servers_at_once')) + ' · '
           + (limits.cooldownMinutes != null ? num(limits.cooldownMinutes) + t('admin.min_between_accepts') : t('admin.servers_cooldown'))),
         m.suspendedUntil ? h('dt', t('admin.suspended_until')) : null, m.suspendedUntil ? h('dd', when(m.suspendedUntil)) : null),
@@ -9209,9 +9298,9 @@
               'eraser') : null)) : null,
         h('div.btn-row',
           writeBtn('.primary', 'org-app', { 'data-id': id, 'data-value': 'yes' }, t('admin.accept'),
-            t('admin.click_again_hire') + String(a.name || 'them') + t('admin.into_the_lowest_role'), 'check'),
+            t('admin.click_again_hire') + String(a.name || t('admin.w_them')) + t('admin.into_the_lowest_role'), 'check'),
           writeBtn('.danger', 'org-app', { 'data-id': id, 'data-value': 'no' }, t('admin.reject'),
-            t('admin.click_again_reject') + String(a.name || 'them'), 'xmark')),
+            t('admin.click_again_reject') + String(a.name || t('admin.w_them')), 'xmark')),
         orgAnswer('app:' + id));
     })) : empty(t('admin.no_open_applications_players_apply_from')),
     '', h('span.sub', num(apps.length))));
@@ -9228,10 +9317,21 @@
     });
   }
 
-  function orgNonce() {
-    if (!S.org.nonce) S.org.nonce = 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+  /** The nonce a movement is sent with: the same one for as long as it is
+      the same movement (`sig`: its direction, amount, reason, member and
+      organisation), so a retry after no answer is deduped by the server,
+      and a new one for a movement that differs in any of them. */
+  function orgNonce(sig) {
+    if (!S.org.nonce || S.org.nonceFor !== sig) {
+      S.org.nonce = 'n' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36);
+      S.org.nonceFor = sig;
+    }
     return S.org.nonce;
   }
+  /** The answer was lost, not refused: the movement may still have gone
+      through (client/admin.lua answers 'timeout' after its wait; ask()
+      'no_answer' when nothing came back). */
+  var LOST_ANSWER = { timeout: true, no_answer: true };
 
   function orgFundsBody(d) {
     var f = S.org.funds;
@@ -9262,7 +9362,7 @@
             { value: 'bonus', label: t('admin.bonus_to_a_member') }], dir),
           dir === 'bonus' ? dropdown('org-bonus-to') : null),
         h('div.toolbar',
-          field('org.funds.amount', { class: 'is-short', inputmode: 'numeric', placeholder: '$ amount', 'aria-label': t('admin.amount') }),
+          field('org.funds.amount', { class: 'is-short', inputmode: 'numeric', placeholder: t('admin.dollar_amount'), 'aria-label': t('admin.amount') }),
           field('org.funds.reason', { class: 'is-grow', maxlength: '200', placeholder: t('admin.reason_kept_in_the_log_2'),
             'aria-label': t('admin.reason') }),
           writeBtn('.primary', 'org-funds', {}, dir === 'deposit' ? t('admin.deposit') : dir === 'withdraw' ? t('admin.withdraw') : t('admin.pay_bonus'),
@@ -9553,7 +9653,7 @@
         var ref = String(m.ref);
         return h('div.toolbar', h('span.is-grow', String(m.name || 'member')),
           writeBtn('.ghost', 'org-duty-off', { 'data-ref': ref }, t('admin.send_off_duty'),
-            t('admin.click_again_send') + String(m.name || 'them') + t('admin.off_duty_2'), 'power-off'),
+            t('admin.click_again_send') + String(m.name || t('admin.w_them')) + t('admin.off_duty_2'), 'power-off'),
           orgAnswer('duty:' + ref));
       })) : empty(t('admin.nobody_is_on_duty')), '', h('span.sub', num(on.length))));
     }
@@ -9619,7 +9719,7 @@
           return h('tr', h('td.num', num(tv.points)), h('td', String(tv.label)),
             h('td', Number(tv.max) > 0 ? money(tv.max) : t('admin.no_cap')));
         })))),
-        h('div.toolbar', field('org.rep.points', { class: 'is-mid', type: 'number', placeholder: '+/- points',
+        h('div.toolbar', field('org.rep.points', { class: 'is-mid', type: 'number', placeholder: t('admin.plus_minus_points'),
           'aria-label': t('admin.points_to_add_or_take_off') }), field('org.rep.reason', { class: 'is-grow', maxlength: '200',
           placeholder: t('admin.reason'), 'aria-label': t('admin.reason') }),
           writeBtn('.primary', 'org-rep-adjust', {}, t('admin.adjust'), t('admin.click_again_adjust_the_reputation'), 'pen')),
@@ -9753,7 +9853,7 @@
             orgAnswer('arm:lim:' + g));
         })))),
       card(t('admin.log'), log.length ? h('div.stack', log.slice(0, 50).map(function (e) {
-        return h('p.sub', (e.dir === 'in' ? 'In: ' : 'Out: ') + String(e.item) + ' × ' + num(e.count) + ' · '
+        return h('p.sub', (e.dir === 'in' ? t('admin.armory_in') : t('admin.armory_out')) + String(e.item) + ' × ' + num(e.count) + ' · '
           + String(e.who || t('admin.a_member')) + (e.at ? ' · ' + ago(e.at) : ''));
       })) : empty(t('admin.nothing_moved_yet_every_move_is')), '', h('span.sub', num(log.length))));
   }
@@ -10041,7 +10141,7 @@
             powers.filter(function (p) { return p.area === area; }).map(function (p) {
               return h('tr',
                 h('td.bp-power', h('b', String(p.label)), office[p.code] ? h('span.chip.is-warn', { title: t('admin.needs_the_boss_office') },
-                  icon('lock'), ' office') : null,
+                  icon('lock'), t('admin.office_suffix')) : null,
                   asList(p.limits).length ? h('button.link.bp-limits-link', { type: 'button', 'data-act': 'section',
                     'data-section': 'bplimits' }, t('admin.limits_2')) : null,
                   h('span.detail', ' ' + String(p.about || ''))),
@@ -10111,8 +10211,8 @@
           h('tbody', asList(d.powers).map(function (p) {
             var on = !!office[p.code];
             return h('tr', h('td', h('b', String(p.label)), h('span.sub', ' ' + (AREA_NAMES[p.area] || p.area))),
-              h('td', on ? h('span.chip.is-warn', icon('lock'), ' office') : 'no'),
-              h('td', bossOwn[p.code] ? 'yes' : '—'),
+              h('td', on ? h('span.chip.is-warn', icon('lock'), t('admin.office_suffix')) : t('admin.w_no')),
+              h('td', bossOwn[p.code] ? t('admin.w_yes') : '—'),
               h('td', writeBtn('.is-small', 'bp-office', { 'data-power': p.code, 'data-value': on ? 'off' : 'on' },
                 on ? t('admin.stop_requiring_it') : t('admin.require_the_office'),
                 on ? t('admin.click_again_x_anywhere', p.label) : t('admin.click_again') + p.label + t('admin.only_in_the_office'), 'building')));
@@ -10146,10 +10246,10 @@
           var undoTo = isRole ? (det.before === 'allow' ? 'allow' : 'off') : null;
           return h('tr', h('td.nowrap', when(r.ts)), h('td', String(r.by || '—')),
             h('td', isRole ? t('admin.role_x', roleName(d, det.id)) : t('admin.one_boss_2')),
-            h('td', powerName(d, det.power)), h('td', String(det.before || 'off')), h('td', String(det.after || 'off')),
+            h('td', powerName(d, det.power)), h('td', GRANT_STATE[det.before] || String(det.before || t('admin.off_word'))), h('td', GRANT_STATE[det.after] || String(det.after || t('admin.off_word'))),
             h('td', isRole && det.before !== det.after ? writeBtn('.is-small.ghost', 'bp-undo', { 'data-index': String(i),
               'data-id': String(det.id), 'data-power': String(det.power), 'data-value': undoTo }, t('admin.undo'),
-              t('admin.click_again') + powerName(d, det.power) + t('admin.back_to') + undoTo, 'arrow-rotate-left')
+              t('admin.click_again') + powerName(d, det.power) + t('admin.back_to') + (GRANT_STATE[undoTo] || undoTo), 'arrow-rotate-left')
               : (isRole ? null : h('span.sub', t('admin.change_it_in_the_matrix')))));
         })))) : empty(t('admin.nothing_granted_or_revoked_yet')))
         : (S.org.historyError ? empty(S.org.historyError) : loading(t('admin.reading_the_history')))),
@@ -10264,10 +10364,10 @@
     var rows = asList(k.rows);
     return frag(
       k.using ? h('p.sub', k.label + ': ' + (k.using === 'panel' ? t('admin.standing_at_the_places_set_here')
-        : t('admin.using_its_config') + (k.key ? '(' + k.key + ')' : 'default') + '.')) : null,
+        : t('admin.using_its_config') + (k.key ? '(' + k.key + ')' : t('admin.w_default')) + '.')) : null,
       k.defaults ? h('p.sub', t('admin.defaults_config') + (defaults.length ? defaults.map(function (p) {
         return fmt(p.x) + ', ' + fmt(p.y) + ', ' + fmt(p.z);
-      }).join(' · ') : 'none')) : null,
+      }).join(' · ') : t('admin.none_word'))) : null,
       k.off && rows.length ? h('p.sub', num(rows.length) + t('admin.set_here_kept_while_it_is')) : null);
   }
 
@@ -10289,13 +10389,13 @@
       kind.off ? switchRow(kind.switch) : null,
       kind.note ? h('p.sub', String(kind.note)) : null,
       rows.length ? h('div.table-wrap', h('table.grid',
-        h('thead', h('tr', h('th', t('admin.name')), h('th', 'x, y, z, heading'), f.radius ? h('th.num', t('admin.radius')) : null,
+        h('thead', h('tr', h('th', t('admin.name')), h('th', t('admin.xyz_heading')), f.radius ? h('th.num', t('admin.radius')) : null,
           f.blip ? h('th', t('admin.blip')) : null, f.enabled ? h('th', t('admin.on')) : null, h('th', ''))),
         h('tbody', rows.map(function (r) {
           return h('tr' + (r.id === edit && !kind.single ? '.is-open' : ''), h('td.name', String(r.label || '—')),
             h('td.mono', fmt(r.x) + ', ' + fmt(r.y) + ', ' + fmt(r.z) + ', ' + fmt(r.heading, 0)),
-            f.radius ? h('td.num', fmt(r.radius) + ' m') : null, f.blip ? h('td', r.blip ? 'yes' : 'no') : null,
-            f.enabled ? h('td', r.enabled === false ? 'off' : 'on') : null,
+            f.radius ? h('td.num', fmt(r.radius) + ' m') : null, f.blip ? h('td', r.blip ? t('admin.w_yes') : t('admin.w_no')) : null,
+            f.enabled ? h('td', r.enabled === false ? t('admin.off_word') : t('admin.on_word')) : null,
             h('td', h('div.inline-form',
               !kind.single && open ? btn('.is-small.ghost', 'loc-edit', { 'data-id': String(r.id), 'data-value': k },
                 t('admin.edit'), 'pen') : null,
@@ -10312,7 +10412,7 @@
             return input(a, { class: 'is-short', inputmode: 'decimal', placeholder: a, value: editing ? fmt(editing[a]) : '',
               'aria-label': a });
           }),
-          input('h', { class: 'is-short', inputmode: 'decimal', placeholder: 'heading',
+          input('h', { class: 'is-short', inputmode: 'decimal', placeholder: t('admin.w_heading'),
             value: editing ? fmt(editing.heading, 0) : '', 'aria-label': t('admin.heading') }),
           f.radius ? input('r', { class: 'is-short', inputmode: 'decimal', placeholder: t('admin.radius_m'),
             value: editing && editing.radius != null ? fmt(editing.radius) : '', 'aria-label': t('admin.radius_m_2') }) : null),
@@ -10685,7 +10785,7 @@
     var who;
     if (hasPlayer()) {
       data.ref = S.players.ref;
-      who = String((S.players.data.player || {}).name || 'them');
+      who = String((S.players.data.player || {}).name || t('admin.w_them'));
     } else {
       var cid = trim(S.forms['org.hire.cid']);
       if (!cid) { orgRefuse('hire', t('admin.look_a_player_up_in_players_2')); return; }
@@ -10711,7 +10811,7 @@
     S.org.staged['state:' + node.getAttribute('data-id')] = node.getAttribute('data-value');
     drawOrg();
   };
-  function memberName(ref) { var m = memberOf(S.org.data || {}, ref); return m ? String(m.name || 'them') : 'them'; }
+  function memberName(ref) { var m = memberOf(S.org.data || {}, ref); return m ? String(m.name || t('admin.w_them')) : t('admin.w_them'); }
   ACTIONS['org-member-role'] = function (node) {
     var d = S.org.data || {};
     var ref = node.getAttribute('data-id');
@@ -10999,7 +11099,8 @@
       : dir === 'withdraw' ? t('admin.click_again_withdraw') + money(amount)
         : t('admin.click_again_pay') + memberName(S.org.bonusTo) + ' ' + money(amount);
     if (!armed(node, label, ['org.funds.amount', 'org.funds.reason'])) return;
-    var data = { direction: dir, amount: amount, reason: reason.slice(0, 200), nonce: orgNonce() };
+    var sig = [dir, amount, reason.slice(0, 200), dir === 'bonus' ? S.org.bonusTo : '', S.orgScope || ''].join('\u0001');
+    var data = { direction: dir, amount: amount, reason: reason.slice(0, 200), nonce: orgNonce(sig) };
     if (dir === 'bonus') data.member = S.org.bonusTo;
     orgWrite('orgFundsMove', data, 'funds', node, function () {
       S.org.nonce = null;
@@ -11007,8 +11108,17 @@
       delete S.forms['org.funds.reason'];
       loadOrgFunds();
     }).then(function (reply) {
-      // A refusal (not a lost answer) is a new movement next time.
-      if (reply && !reply.ok) S.org.nonce = null;
+      if (!reply || reply.ok) return;
+      // A lost answer keeps its nonce: the server may still have moved the
+      // money, and the same nonce is what stops a retry moving it twice.
+      if (LOST_ANSWER[reply.err]) {
+        S.org.answers.funds = { ok: false, text: t('admin.no_answer_yet_it_may_still') };
+        toast(t('admin.no_answer_yet_it_may_still'), 'error');
+        drawOrg();
+        return;
+      }
+      // A refusal is a new movement next time.
+      S.org.nonce = null;
     });
   };
   ACTIONS['org-funds-refresh'] = function () { loadOrgFunds(); };

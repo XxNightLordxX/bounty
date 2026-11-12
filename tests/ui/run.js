@@ -10,10 +10,10 @@
 /* How long a contract has left, as the server sends it (Util.timeBand):
    a rough band, never a deadline. */
 function band(seconds) {
-  if (seconds > 7200) { return 'More than 2 hours left'; }
-  if (seconds > 3600) { return '1\u20132 hours left'; }
-  if (seconds > 900) { return 'Under 1 hour left'; }
-  return 'Under 15 minutes left';
+  if (seconds > 7200) { return 'over_2h'; }
+  if (seconds > 3600) { return '1_to_2h'; }
+  if (seconds > 900) { return 'under_1h'; }
+  return 'under_15m';
 }
 
 const fs = require('fs');
@@ -2851,7 +2851,7 @@ async function main() {
     const app = placeForm({
       create: function (body) {
         app.body = body;
-        return { ok: true, data: { bailoutAmount: 60000, penaltyAmount: 0, timeLeft: 'More than 2 hours left' } };
+        return { ok: true, data: { bailoutAmount: 60000, penaltyAmount: 0, timeLeft: 'over_2h' } };
       }
     });
     await settle(); await settle();
@@ -4908,7 +4908,7 @@ async function main() {
       hitmenActive: 1, hitmenMax: 5,
       targetName: 'Dana Reyes', role: 'hitman',
       // The time left as the server says it: a band, never a deadline.
-      timeLeft: 'More than 2 hours left'
+      timeLeft: 'over_2h'
     }], onMe: [] } };
 
     const app = boot({
@@ -6120,7 +6120,7 @@ async function main() {
     const MINE_ONE = { ok: true, data: {
       created: [{ id: 'ct00000001', target: 'Dana Reyes', reason: 'Unpaid debt',
                   state: 'active', role: 'creator', mode: 'exclusive',
-                  timeLeft: 'More than 2 hours left',
+                  timeLeft: 'over_2h',
                   reward: { total: 5000 }, hitmen: [] }],
       accepted: [], onMe: []
     } };
@@ -7138,7 +7138,7 @@ async function main() {
   await (async function theStakeOnTheBoard() {
     const STAKED = JSON.parse(JSON.stringify(BOARD));
     STAKED.data.contracts[0].penaltyAmount = 4000;
-    const BAND = '1\u20132 hours left';
+    const BAND = '1_to_2h';
     STAKED.data.contracts[0].timeLeft = BAND;
 
     const app = boot({ list: STAKED, mine: MINE, ledger: LEDGER });
@@ -7244,7 +7244,7 @@ async function main() {
   await (async function tooLittleTimeToStake() {
     const STAKED = JSON.parse(JSON.stringify(BOARD));
     STAKED.data.contracts[0].penaltyAmount = 4000;
-    STAKED.data.contracts[0].timeLeft = 'Under 15 minutes left';
+    STAKED.data.contracts[0].timeLeft = 'under_15m';
 
     const app = boot({
       list: STAKED, mine: MINE, ledger: LEDGER,
@@ -8263,7 +8263,7 @@ async function main() {
        * remainder, so at exactly 5400 one second of drift between building
        * this and reading the screen gives 89 minutes and "1h 29m". I wrote
        * this test today and it carried the flake it was written beside. */
-      timeLeft: '1\u20132 hours left'
+      timeLeft: '1_to_2h'
     };
 
     await (async function extendSaysWhereTheDeadlineStands() {
@@ -8533,7 +8533,7 @@ async function main() {
         return Object.assign({}, own, { role: 'hitman', hitmen: undefined, timeLeft: band });
       }
       const app = boot({
-        mine: { ok: true, data: { created: [], accepted: [heldWith('Under 1 hour left')], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [heldWith('under_1h')], onMe: [] } },
         amendments: { ok: true, data: [] }
       });
       await settle(); await settle();
@@ -8551,7 +8551,7 @@ async function main() {
       });
 
       const tight = boot({
-        mine: { ok: true, data: { created: [], accepted: [heldWith('Under 15 minutes left')], onMe: [] } },
+        mine: { ok: true, data: { created: [], accepted: [heldWith('under_15m')], onMe: [] } },
         amendments: { ok: true, data: [] }
       });
       await settle(); await settle();
@@ -15118,6 +15118,25 @@ async function main() {
       truthy(/^[A-Za-z0-9_-]{1,32}$/.test(w[0].body.nonce), 'a nonce the server takes: ' + w[0].body.nonce);
     });
 
+    // Review 85 C14a-1: the funds ledger as the server sends it (Funds.ledger:
+    // `at`, and the kind as a code) says when each row moved, in words.
+    const ledgered = await openOrg(memberMine(ALL, { payroll: { salary: 0 } }), {
+      orgFunds: { ok: true, data: { balance: 9000, rows: [
+        { kind: 'withdraw', amount: -2000, at: Math.floor(Date.now() / 1000) - 300, reason: 'rent' },
+        { kind: 'cut_back', amount: -50, at: Math.floor(Date.now() / 1000) - 7200 },
+        { kind: 'something_new', amount: 10, at: Math.floor(Date.now() / 1000) - 30 }] } } });
+    await screen(ledgered, 'Money');
+    const ledgerRows = ledgered.view.all().filter(function (n) {
+      return n.className && n.className.indexOf('org-ledger') !== -1;
+    }).map(function (n) { return n.textContent; });
+    it('R85 C14a-1: each funds row says when it moved and what moved it, in words', function () {
+      eq(ledgerRows.length, 3, ledgerRows.join(' | '));
+      eq(ledgerRows[0], '\u2212$2,000 · withdrawal · rent · 5 min ago');
+      eq(ledgerRows[1], '\u2212$50 · cut given back · 2h ago');
+      truthy(ledgerRows[2].indexOf('something_new') === -1, 'an unknown kind is never the code: ' + ledgerRows[2]);
+      drewCleanly(ledgered, 'the funds ledger');
+    });
+
     // Sweep 9 PHONE-2: a money move out of time may have gone through; a
     // second press is a new nonce, so a real second transfer.
     const slowMoney = await openOrg(memberMine(ALL, { payroll: { salary: 0 } }), {
@@ -16144,6 +16163,202 @@ async function main() {
     });
     [named, offered, officer, fresh, broke, split, words, failed, far, hold].forEach(function (app, i) {
       it('player review 1: drew cleanly (' + i + ')', function () { drewCleanly(app, 'player review ' + i); });
+    });
+  })();
+
+  /* ---------- Review 85 (pages) ---------- */
+
+  /* A translated server: every app text upper-cased, placeholders kept, so
+     a word that stayed English shows in lower case and a match against the
+     page's own words fails as it would in German. */
+  function r85Shout(v) {
+    if (typeof v === 'string') {
+      return v.split(/(%(?:\d+\$)?[sd])/).map(function (p, i) { return i % 2 ? p : p.toUpperCase(); }).join('');
+    }
+    if (v && typeof v === 'object') {
+      const o = {};
+      Object.keys(v).forEach(function (k) { o[k] = r85Shout(v[k]); });
+      return o;
+    }
+    return v;
+  }
+  const R85_XX = { location: { hostname: 'cfx-nui-renamed-by-the-operator', search: '?lang=xx' } };
+  function r85Translated(responses) {
+    require('./dom.js').localeXhr.extra['xx.json'] = r85Shout(LOCALE_EN);
+    const app = boot(responses, R85_XX);
+    return app;
+  }
+  function r85Done() { delete require('./dom.js').localeXhr.extra['xx.json']; }
+
+  /* C14b-1: a money source the server switched off is not offered on a
+     translated server: its switch is caps.<source>Enabled, a fixed key,
+     never one built from translated words. */
+  await (async function r85SourceSwitchedOffTranslated() {
+    const WALLET = { ok: true, data: { cash: 5000, bank: 5000, dirty: 5000, items: [], weapons: [],
+      caps: { dirtyEnabled: false, slots: 1, cash: 100000, bank: 100000, dirty: 100000 } } };
+    const app = r85Translated({ list: BOARD, mine: MINE, ledger: LEDGER, rewardOptions: WALLET,
+      browseTargets: { ok: true, data: { people: [], total: 0, page: 1, pages: 1 } } });
+    for (let i = 0; i < 4; i++) { await settle(); }
+    tab(app, 'place');
+    for (let i = 0; i < 5; i++) { await settle(); }
+    r85Done();
+    const fields = app.view.all().filter(function (n) {
+      return n.tagName === 'INPUT' && /^slot-/.test(n.id || '');
+    }).map(function (n) { return n.id; });
+    it('R85 C14b-1: dirty money switched off is not offered on a translated server', function () {
+      drewCleanly(app, 'translated place form');
+      truthy(fields.indexOf('slot-cash-1') !== -1, fields.join(','));
+      eq(fields.indexOf('slot-dirty-1'), -1, 'no dirty money field: ' + fields.join(','));
+    });
+    it('R85 C14b-1: and the page says so, in the page\'s language, as one sentence', function () {
+      truthy(app.view.textContent.indexOf('THIS SERVER DOES NOT TAKE DIRTY MONEY AS A REWARD.') !== -1,
+        app.view.textContent.slice(0, 600));
+    });
+    it('R85 C14b-1: the page never builds a key from translated words', function () {
+      const src = fs.readFileSync(APP, 'utf8');
+      const found = src.replace(/\/\*[\s\S]*?\*\//g, '').match(/[\w)\]]\[[^\]\n]*\bt\([^\]\n]*\]/g);
+      falsy(found, 'a t() inside an index expression: ' + JSON.stringify(found));
+    });
+  })();
+
+  /* C14b-2, C15-2, G4R2-1: the server sends a contract's time left as a
+     band code (Util.TIME_BANDS); the page says it in its own words. On a
+     translated server every card had no band at all: no clock chip, no
+     stake-window block, no deadline cut. */
+  await (async function r85BandsTranslated() {
+    const tight = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    tight.penaltyAmount = 2000;
+    tight.timeLeft = 'under_15m';
+    const board = { ok: true, data: { page: 1, pages: 1, contracts: [tight],
+      settings: { warnCreator: true, warnHitman: true, flagListing: true, minQueryLength: 4, stakeWindowMinutes: 30 } } };
+    const app = r85Translated({ list: board, mine: MINE, ledger: LEDGER });
+    await settle(); await settle(); await settle();
+    r85Done();
+    const text = app.view.textContent;
+    it('R85 bands: a translated card shows its band in the page\'s words', function () {
+      drewCleanly(app, 'translated board');
+      truthy(text.indexOf('UNDER 15 MINUTES LEFT') !== -1, text.slice(0, 600));
+      falsy(text.indexOf('under_15m') !== -1, 'the code is never shown');
+    });
+    it('R85 bands: and the stake-window block shows, in place of an Accept the server refuses', function () {
+      truthy(text.indexOf('TOO LITTLE TIME LEFT TO STAKE ON THIS ONE.') !== -1, text.slice(0, 600));
+    });
+
+    const own = JSON.parse(JSON.stringify(BOARD.data.contracts[0]));
+    own.role = 'creator'; own.state = 'active'; own.hitmenActive = 0; own.timeLeft = 'over_2h';
+    const placer = r85Translated({ list: { ok: true, data: { page: 1, pages: 1, contracts: [],
+      settings: { amendments: true, deadlineMaxMinutes: 2880 } } },
+      mine: { ok: true, data: { created: [own], accepted: [], onMe: [] } }, ledger: LEDGER, amendments: { ok: true, data: [] } });
+    await settle(); await settle(); await settle();
+    tab(placer, 'mine');
+    await settle(); await settle();
+    r85Done();
+    let sheet = '';
+    try { click(placer, 'EDIT'); await settle(); sheet = placer.view.textContent; } catch (e) { sheet = 'no Edit: ' + e.message; }
+    it('R85 bands: the Edit sheet says the band in the page\'s words, as one sentence', function () {
+      truthy(sheet.indexOf('IT HAS MORE THAN 2 HOURS LEFT.') !== -1, sheet.slice(0, 600));
+    });
+
+    const RUMOUR = { id: 'ct00000301', mode: 'competitive', state: 'active', role: 'public',
+      fulfilment: 'alive', slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
+      timeLeft: 'over_2h', rumour: { area: 'Legion Square', low: 30000, high: 50000 } };
+    const rumours = r85Translated({ list: { ok: true, data: { page: 1, pages: 1, contracts: [RUMOUR],
+      rumours: { npc: true, minutes: 30 }, settings: { relay: true, amendments: true } } },
+      ledger: LEDGER, mine: MINE });
+    await settle(); await settle(); await settle();
+    r85Done();
+    it('R85 bands: a rumour card says its band in the page\'s words, never the code', function () {
+      drewCleanly(rumours, 'translated rumour');
+      const t = rumours.view.textContent;
+      truthy(t.indexOf('MORE THAN 2 HOURS LEFT') !== -1, t.slice(0, 400));
+      falsy(t.indexOf('over_2h') !== -1, t.slice(0, 400));
+    });
+  })();
+
+  /* C14b-4: a job change (an access push) while the protection board or a
+     take of a job is on its way: no throw, and a job taken is still said. */
+  await (async function r85ProtectionAfterAJobChange() {
+    let releaseBoard, releaseAccept, boardCalls = 0;
+    const before = failures.length;
+    const PBOARD = JSON.parse(JSON.stringify(BOARD));
+    PBOARD.data.settings.protection = true;
+    const app = boot({ list: PBOARD, mine: MINE, ledger: LEDGER,
+      protectionBoard: function () {
+        boardCalls++;
+        if (boardCalls === 1) { return new Promise(function (r) { releaseBoard = r; }); }
+        return { ok: true, data: { enabled: true, maxJobs: 2, open: [{ job: 'prot00000001', reward: 2500 }], mine: [] } };
+      },
+      protectionAccept: function () { return new Promise(function (r) { releaseAccept = r; }); } });
+    await settle(); await settle();
+    click(app, 'Protection'); await settle();
+    app.sandbox.window._message({ data: { type: 'push', reason: 'access' } });
+    await settle();
+    releaseBoard({ ok: true, data: { enabled: true, maxJobs: 2, open: [], mine: [] } });
+    await settle(); await settle(); await settle();
+    const afterBoard = failures.length;
+    click(app, 'Protection'); await settle(); await settle();
+    const take = app.view.all().filter(function (n) { return n.tagName === 'BUTTON' && /Take/.test(n.textContent); });
+    if (take.length) { take[0].onclick(); await settle(); }
+    const sure = app.view.all().filter(function (n) {
+      return n.tagName === 'BUTTON' && (n.textContent === 'Take it' || n.textContent === 'Under my name');
+    });
+    if (sure.length) { sure[0].onclick(); await settle(); }
+    const sentAccept = typeof releaseAccept === 'function';
+    app.sandbox.window._message({ data: { type: 'push', reason: 'access' } });
+    await settle();
+    if (sentAccept) { releaseAccept({ ok: true, data: { enabled: true, open: [], mine: [] } }); }
+    await settle(); await settle(); await settle();
+    const added = failures.splice(before);
+    it('R85 C14b-4: a protection board answered after a job change does not throw', function () {
+      eq(afterBoard - before, 0, added.join(' | '));
+    });
+    it('R85 C14b-4: a job taken while the job changed is still said, and nothing throws', function () {
+      truthy(sentAccept, 'the take was sent');
+      eq(added.length, 0, added.join(' | '));
+      truthy(app.notice().indexOf('You took the job') !== -1, app.notice());
+      drewCleanly(app, 'protection race');
+    });
+  })();
+
+  /* Review 85 C14a-2, C14a-3, C14b-3, G3R2-3: English that sat inside the
+     phone's translated sentences, by the snippet each finding named. One
+     table for all of them; the invite below is the same, seen drawn. */
+  (function r85PhoneEnglishTable() {
+    const src = fs.readFileSync(APP, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const GONE = [
+      "cash: 'cash'", "item: 'items'", "weapon: 'weapons'", "names.push('cash')", "names.push('bank')",
+      "return 'money'", "|| 'them'", "join(', or ')", "+ 'returned.'", "+ change.what", "done.push(change.what)",
+      "? 'anonymous' :", ": 'none')", "+ 'count.'", "+ 'kill.'", "+ 'again.'", "+ 'another.'", "'works.'", "'work.'",
+      ": 'free'", "moved.push('buyout')", "moved.push('stake')", "off.join(' or ')",
+      "'In: '", "'Out: '", "' (probation)'", "'e.g. 42'", "'number', 'none'", "t('app.tap_again_to') + which",
+      "t('app.tap_again') + pair[0]", "orgCard('Organisation name'", "String(row.kind || '')", "taken === 'money'",
+      "taken.indexOf(' and ')", "t('app.enabled')", "text.toLowerCase()"
+    ];
+    it('R85 phone: no English joined into a translated sentence where the review found it', function () {
+      const left = GONE.filter(function (snippet) { return src.indexOf(snippet) !== -1; });
+      eq(left.join(' | '), '', 'still in ui/app.js');
+    });
+  })();
+
+  /* C14a-3: the invite's armed button, translated: the words of the
+     language, not 'accept' or 'decline'. */
+  await (async function r85InviteTranslated() {
+    function listing() {
+      const b = JSON.parse(JSON.stringify(BOARD));
+      b.data.orgInvite = { id: 'inv1_1234', label: 'Crimson Contractors', role: 'Recruit', expiresIn: 540 };
+      return b;
+    }
+    const app = r85Translated({ list: listing, mine: MINE, ledger: LEDGER,
+      orgInviteAnswer: { ok: true, data: { accepted: true } } });
+    await settle(); await settle(); await settle();
+    r85Done();
+    click(app, 'ACCEPT');
+    await settle();
+    const armed = app.view.all().filter(function (n) { return n.tagName === 'BUTTON' && n.className.indexOf('is-armed') !== -1; })
+      .map(function (n) { return n.textContent; });
+    it('R85 C14a-3: the invite\'s second tap is asked in the page\'s language', function () {
+      eq(armed.join(' | '), 'TAP AGAIN TO ACCEPT');
+      drewCleanly(app, 'translated invite');
     });
   })();
 

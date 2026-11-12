@@ -311,11 +311,18 @@ Util.CLOCK_STEP = 300
 --- deadline, the seconds left or whether the clock runs; only this, worked
 --- out from the run time the contract really has left. It moves only while
 --- the clock runs, so nobody logging off or on changes it.
+---
+--- `id` is what is sent (a contract's timeLeft) and sent back (the band an
+--- acceptance was shown, Util.bandRank): a fixed code in every language,
+--- which the pages put into words themselves (TIME_BANDS in ui/app.js,
+--- BAND_WORDS in ui/admin.js). Words sent from here would be English on a
+--- translated server, and a page matching them to its own translation
+--- would find no band at all.
 Util.TIME_BANDS = {
-    { above = 7200, text = 'More than 2 hours left' },
-    { above = 3600, text = '1–2 hours left' },
-    { above = 900,  text = 'Under 1 hour left' },
-    { above = nil,  text = 'Under 15 minutes left' },
+    { above = 7200, id = 'over_2h' },
+    { above = 3600, id = '1_to_2h' },
+    { above = 900,  id = 'under_1h' },
+    { above = nil,  id = 'under_15m' },
 }
 
 --- The run time a contract really has left, in seconds: from its deadline
@@ -353,21 +360,21 @@ end
 
 --- The band a run time falls in, and its rank (1 the longest).
 ---@param seconds integer|nil
----@return string|nil text
+---@return string|nil id the band's code (Util.TIME_BANDS)
 ---@return integer|nil rank
 function Util.timeBand(seconds)
     if seconds == nil then return nil, nil end
     for i, band in ipairs(Util.TIME_BANDS) do
-        if band.above == nil or seconds > band.above then return band.text, i end
+        if band.above == nil or seconds > band.above then return band.id, i end
     end
 end
 
---- The rank of a band's words, or nil for words that are not one.
----@param text any
+--- The rank of a band's code, or nil for anything that is not one.
+---@param id any
 ---@return integer|nil
-function Util.bandRank(text)
+function Util.bandRank(id)
     for i, band in ipairs(Util.TIME_BANDS) do
-        if band.text == text then return i end
+        if band.id == id then return i end
     end
     return nil
 end

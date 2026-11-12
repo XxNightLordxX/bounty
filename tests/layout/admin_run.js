@@ -363,7 +363,7 @@ function serverStub() {
       note: 'No longer on it (abandoned): this is the card the board would show them.',
       viewer: { cid: 'HITMAN01', name: LONG },
       view: { id: 'ct10000001', role: 'hitman', targetName: LONG, reason: REASON, staffEdited: true,
-        timeLeft: 'More than 2 hours left', reward: { baseline: 1250000, bonus: 625000,
+        timeLeft: 'over_2h', reward: { baseline: 1250000, bonus: 625000,
           sources: { bank: 1250000, cash: 0, dirty: 0 }, goods: { count: 3, labels: ['a_long_item_name_1'] } },
         penaltyAmount: 25000, myAlias: 'Ghost of the Eastern Docks', creatorAnonymous: true,
         locationTip: { left: 2, waitSeconds: 0, note: REASON } } } }

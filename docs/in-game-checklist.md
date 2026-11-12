@@ -892,6 +892,16 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] A lieutenant holding Boss menu layout hides a tab from the top boss's grade: the top boss still sees it; a lieutenant's office rule does not bind the top boss
 - [ ] `Config.Locale` set to a copy of `en.lua` with the band, stash label and codename keys changed: the stats bands, the armory stash and a codename on a contract read in the copy's words
 
+## 38. Review 85 checks (pages)
+
+- [ ] Staff panel, Organisation › Funds, with the database slowed or Renewed-Banking stopped so the answer takes over 15 s: deposit $2,500 (two clicks). The panel says *No answer yet. It may still go through*; click it again: the ledger shows one deposit, not two. Change the amount and send it: that is a second, separate deposit
+- [ ] Staff with `crimson.identity`: Contracts, filter to one person, Whois a row. Remove the ACE, close and reopen the panel: no name or citizen id is shown, and the person filter is gone
+- [ ] Staff panel: set a player's playtime (or suspend them) and look up another player before it answers: the toast names the first, the second player's card shows nothing of it. The same in Target limits › Per player with Reset cooldown
+- [ ] `Config.Locale` set to a copy of `en.json`/`en.lua` with the app's words changed: every card shows its time left in the copy's words; a staked contract with under 15 minutes left shows *Too little time left to stake*; with dirty money off, the Place form offers no dirty money field
+- [ ] Phone: open Board › Protection and change the player's job (`/setjob`) before it loads, then take a job and change it again: no error, and *You took the job* is said
+- [ ] Staff panel: open a dropdown (Contracts › state) and press Escape: the dropdown closes, the panel stays
+- [ ] Organisation › Money (a boss holding View funds): each row says what moved the money in words and how long ago
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

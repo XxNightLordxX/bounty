@@ -57,6 +57,36 @@ say how things work now.
   salary ledger reason, two spot names and a config warning come from
   `locales/en.lua` as whole sentences.
 
+**Review 85 fixes (pages)**
+- Staff panel, Organisation › Funds: a deposit, withdrawal or bonus with no
+  answer in time keeps its nonce, so clicking it again cannot move the money
+  twice; the panel says *No answer yet. It may still go through: look before
+  you try again.* A different amount, reason, direction or member is a new
+  movement.
+- Staff panel: a Whois answer (who is behind an anonymous party) and the
+  Contracts person filter no longer survive closing the panel, and are never
+  drawn once the identity ACE is gone.
+- Staff panel: an answer to a write on a player's card or in Target limits ›
+  Per player that comes back after another player was looked up is told in a
+  toast only, never shown on the new player's card.
+- Translated servers (`Config.Locale`): every card shows its time left again,
+  with the stake-window block and the deadline cut; the server now sends the
+  band as a code (`over_2h`, `1_to_2h`, `under_1h`, `under_15m`) that the pages
+  put into words. A money source switched off is no longer offered on the
+  Place form or Add to it.
+- Phone: a protection job taken just as the player's job changed is still
+  confirmed, and the board no longer errors.
+- Staff panel: Escape with a dropdown open closes the dropdown; a button off
+  for its own reason (nothing to apply, no Preview yet) stays off when
+  recovery finishes; an emptied list reads *(none)* in Setting changes; how
+  a contract ended reads in words (*Withdrawn by the placer*), never its code.
+- Organisation › Money: each funds row says when it moved and what moved it
+  in words.
+- Translations: the waits (*in about 3 minutes*), what a missing script
+  means (Config.Integrations), and many single words and joined phrases on
+  the phone and in the panel are now in the language files, whole sentences
+  with their plural forms.
+
 **Review 84 fixes (1)**
 - Body disposal starts in game: a verified kill with `Config.Disposal` on
   waits in escrow until the drop-off, the vehicle is made and the body can be

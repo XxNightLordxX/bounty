@@ -5,6 +5,14 @@ CrimsonBoot.define('shared.words', function() --- Crimson Hitman System — numb
 
 local Words = {}
 
+--- The words: locales/en.lua (words.*), in the language in force.
+local L = CrimsonBoot.requireShared('locale').t
+
+--- One of a pair of keys by the count: key_one for 1, key_other otherwise.
+local function plural(key, n)
+    return L(key .. (n == 1 and '_one' or '_other')):format(n)
+end
+
 --- Whole dollars with thousands grouped: $15,000.
 ---
 --- `sign` says what a negative amount reads as: nil '$-1,500' (staff
@@ -49,9 +57,8 @@ end
 ---@return string
 function Words.duration(seconds)
     seconds = math.max(0, math.floor(tonumber(seconds) or 0))
-    if seconds < 60 then return ('%d second%s'):format(seconds, seconds == 1 and '' or 's') end
-    local minutes = math.ceil(seconds / 60)
-    return ('%d minute%s'):format(minutes, minutes == 1 and '' or 's')
+    if seconds < 60 then return plural('words.seconds', seconds) end
+    return plural('words.minutes', math.ceil(seconds / 60))
 end
 
 --- When something can be tried again: 'in a moment', 'in 45 seconds',
@@ -60,10 +67,9 @@ end
 ---@return string
 function Words.inAbout(seconds)
     local s = math.ceil(tonumber(seconds) or 0)
-    if not (s > 0) then return 'in a moment' end
-    if s < 60 then return ('in %d second%s'):format(s, s == 1 and '' or 's') end
-    local m = math.ceil(s / 60)
-    return ('in about %d minute%s'):format(m, m == 1 and '' or 's')
+    if not (s > 0) then return L('words.in_a_moment') end
+    if s < 60 then return plural('words.in_seconds', s) end
+    return plural('words.in_about_minutes', math.ceil(s / 60))
 end
 
 --- A distance in metres: '10', '7.5' (no unit).
