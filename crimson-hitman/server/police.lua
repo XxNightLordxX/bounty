@@ -30,13 +30,28 @@ local Identity, Notify
 local saidPressFailAt = -math.huge
 
 --- The departments a dispatch entry is for: the job names configured to
---- receive advisories, so the MDT and the phones are told the same people;
---- police where none is switched on.
+--- receive advisories, and the job of every officer online whom
+--- RecipientJobTypes makes one (a department added by its type, 'leo',
+--- whose name is in no list), so the MDT and the phones are told the same
+--- people; police where none is switched on.
 ---@return string[]
 function Police.jobs()
-    local jobs = {}
+    local jobs, seen = {}, {}
     for name, on in pairs(Config.Advisory and Config.Advisory.RecipientJobNames or {}) do
-        if on == true and type(name) == 'string' then jobs[#jobs + 1] = name end
+        if on == true and type(name) == 'string' and not seen[name] then
+            seen[name] = true
+            jobs[#jobs + 1] = name
+        end
+    end
+    if Identity and Identity.online then
+        for _, actor in ipairs(Identity.online() or {}) do
+            local job = actor.job
+            local name = type(job) == 'table' and type(job.name) == 'string' and job.name:lower() or nil
+            if name and not seen[name] and Identity.isAdvisoryRecipient(job) then
+                seen[name] = true
+                jobs[#jobs + 1] = name
+            end
+        end
     end
     table.sort(jobs)
     if #jobs == 0 then jobs = { 'police' } end

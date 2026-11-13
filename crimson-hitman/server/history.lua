@@ -35,7 +35,11 @@ local AUDIT_MONEY = {
     informant_purchased     = { way = 'out', kind = L('history.informants'), field = 'cost', informant = 'informant' },
     placer_informant_bought = { way = 'out', kind = L('history.informants'), field = 'amount', informant = 'placerInformant' },
     location_tip_bought     = { way = 'out', kind = L('history.informants'), field = 'amount', informant = 'locationTip' },
-    location_tip_refunded   = { way = 'in', kind = L('history.informant_refunds'), field = 'amount' },
+    -- A tip refunded was never written as bought (the refund comes before
+    -- the purchase stands, server/intel/engine.lua): counting the refund
+    -- as money in, with no charge out against it, read a hitman's spending
+    -- as lower by every refunded tip. Only purchases that stood are listed.
+    go_dark_bought          = { way = 'out', kind = L('history.going_dark'), field = 'amount' },
     anonymity_fee           = { way = 'out', kind = L('history.anonymity_fees'), field = 'amount', identityOnly = true },
 }
 

@@ -71,7 +71,7 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 - A payout to a player who is away or full is owed and given at their next login (and retried every 30 s while online). One the server could not give after three tries waits for staff under **Money waiting** in the panel's inbox.
 - Every completion (a verified kill, a live handover, a proof item, a confirmed handover) is paid by one claim, after one check that it may pay (still on it, no staff or restart hold, no slot cooldown, a slot left). Once paid, a payout may wait in escrow, owed to the hitman, for the payout checks switched on, in order: body disposal (`Config.Disposal`), then proof of intent (`Config.Roleplay.ProofOfIntent`); it is handed over by the same retry once none holds it.
 - Anything no rule can settle (a buyout the store would not record, a payment the database did not confirm) goes to **Needs review** for staff.
-- Caps: `Config.MaxContractValue`, each source's `max`, `Config.Penalty` for stakes, `Config.Bailout` for buyouts; every figure is checked on the server, never taken from the phone.
+- Caps: `Config.MaxContractValue`, each source's `max` (per part of a reward: a payout's baseline, its bonus, one addition; `Config.MaxContractValue` bounds the whole contract), `Config.Penalty` for stakes, `Config.Bailout` for buyouts; every figure is checked on the server, never taken from the phone.
 
 ## What stops it being abused
 

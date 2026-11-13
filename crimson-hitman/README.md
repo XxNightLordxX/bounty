@@ -132,7 +132,7 @@ every card and Ledger entry.
 | `/ch-void <contract> [reason]` | Close a contract and refund its placer (moderators void from the panel) | `crimson.admin` |
 | `/ch-settle <line> pay [amount] \| return [citizenid] \| delivered` | Finish one stuck payout by hand | `crimson.admin` |
 | `/ch-review [all] \| <id> refund … \| pay … \| dismiss <note>` | The review queue | `crimson.admin` |
-| `/ch-refresh timers` | Test servers: bring every wait forward | `crimson.admin` |
+| `/ch-refresh timers` | Test servers: bring the waits forward (its answer names the ones it leaves alone) | `crimson.admin` |
 
 The players' buyout command (`Config.Bailout.Command`, `/cleanse`) is not a
 staff command; it answers in chat. `/cleanse` lists what is out on the player

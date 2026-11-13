@@ -716,6 +716,13 @@ Contracts.guardsTarget = nil
 --- elimination but no kill anybody saw.
 Contracts.afterClaim = {}
 
+--- What runs once the maintenance tick has finished a claim that raised
+--- (Contracts.retryStuckClaims), by name: called with (contractId,
+--- hitmanCid, how) inside pcall, `how` as Contracts.recoverCompleting
+--- answers it (nil when nothing was left to finish). The proof items give
+--- back an item taken for a claim that paid nothing (server/imp_proof.lua).
+Contracts.afterStuck = {}
+
 --- Set by server/org/init.lua: asked before an acceptance (nil to let it
 --- through, or the refusal and its data), and told after one.
 Contracts.acceptGate = nil
@@ -1460,8 +1467,11 @@ end
 ---@return string|nil err
 local function stakeTimeRefusal(contract, shown, shownBand)
     if (contract.penalty_amount or 0) <= 0 or not contract.deadline_at then return nil end
-    -- A paused clock has what it had when it stopped.
-    local left = Util.runLeft(contract)
+    -- A paused clock has what it had when it stopped; and the lifetime too
+    -- (Util.bandLeft), which ends the contract first when it is nearer: a
+    -- stake was taken on 28 minutes of lifetime under a 30-minute window.
+    local held = Holds.why(contract, nil, 'public')
+    local left = Util.bandLeft(contract, held and held.since or nil) or Util.runLeft(contract)
     if left < (Config.Penalty.MinWindowMinutes or 0) * 60 then
         return CH.ERR.TOO_LITTLE_TIME
     end
@@ -1608,7 +1618,10 @@ local function acceptUnlocked(actor, contractId, anonymous, opts)
         and type(opts.shownDeadline) == 'number' and opts.shownDeadline or nil
     local shownBand = opts and opts.checkDisclosure and Config.Penalty.RequireDisclosureOnAccept
         and opts.shownBand or nil
-    local timeErr = stakeTimeRefusal(contract, shown, shownBand)
+    -- Not where no stake is taken: staff reassigning with the stake waived
+    -- (Config.Staff.ReassignStake 'waive') were told to extend the deadline
+    -- for a stake nobody puts up.
+    local timeErr = not (opts and opts.waiveStake) and stakeTimeRefusal(contract, shown, shownBand) or nil
     if timeErr then return false, timeErr end
     -- Kept by value: on the memory store `contract` is the stored row
     -- itself, and would read whatever the deadline is moved to next.
@@ -5103,6 +5116,12 @@ function Contracts.retryStuckClaims()
                 how = nil
             else
                 if stuckClaims[contractId] == stuck then stuckClaims[contractId] = nil end
+                for name, fn in pairs(Contracts.afterStuck) do
+                    local hookRan, hookErr = pcall(fn, contractId, stuck.hitman, how)
+                    if not hookRan then
+                        Log.debug(('after a stuck claim, %s raised: %s'):format(name, tostring(hookErr)))
+                    end
+                end
                 if how then
                     finished = finished + 1
                     Log.always(('contract %s: a claim raised part-way; finished as the next '

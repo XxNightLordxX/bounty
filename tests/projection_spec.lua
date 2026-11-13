@@ -363,10 +363,18 @@ describe('target mugshots', function()
         local s, f, c = seededMug()
         render(s, 'TARGET01')
 
-        falsy(s.mugshot.invalidate('TARGET01'), 'too soon after the last render')
-        Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 10)
-        truthy(s.mugshot.invalidate('TARGET01'), 'now the appearance change takes effect')
-        falsy(s.mugshot.get('TARGET01'))
+        -- A hint taken at once (review 86 C5-2): the old face is kept until
+        -- the new one arrives, and asked for again a minute after the render.
+        truthy(s.mugshot.invalidate('TARGET01'), 'the appearance change is taken')
+        truthy(s.mugshot.get('TARGET01'), 'the old face is still served')
+        Env.advance(61)
+        Env.clientEvents = {}
+        s.mugshot.request('TARGET01')
+        local asked = 0
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:renderMugshot' then asked = asked + 1 end
+        end
+        eq(asked, 1, 'rendered again inside the refresh floor')
     end)
 end)
 

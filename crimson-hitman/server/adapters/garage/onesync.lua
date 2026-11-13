@@ -31,8 +31,11 @@ function Adapter.spawn(model, at)
 end
 
 --- Kept by the server whoever is near it (orphan mode 2, KeepEntity), in the
---- member's routing bucket, plated, marked and locked (the keys adapter gives
---- the keys).
+--- member's routing bucket, plated, marked and locked where a keys adapter
+--- answers (Config.Integrations.Keys; it gives the keys). Without one it is
+--- left unlocked, as body disposal leaves its vehicle (server/disposal.lua):
+--- locked, nobody could get into it, and it still counted against
+--- GarageMaxOut until GarageKeepMinutes ran out. false then, for the caller.
 function Adapter.prepare(vehicle, plate, src)
     if type(SetEntityOrphanMode) == 'function' then SetEntityOrphanMode(vehicle, 2) end
     if src and type(SetEntityRoutingBucket) == 'function' and type(GetPlayerRoutingBucket) == 'function' then
@@ -40,8 +43,14 @@ function Adapter.prepare(vehicle, plate, src)
     end
     SetVehicleNumberPlateText(vehicle, plate)
     Entity(vehicle).state:set('crimsonOrgVehicle', true, true)
-    SetVehicleDoorsLocked(vehicle, 2)
-    return true
+    -- Asked here, not at load: the adapters are loaded by the module asked.
+    local keys = CrimsonBoot.require('server.adapters.init').get('keys')
+    if keys and keys.GiveKeys then
+        SetVehicleDoorsLocked(vehicle, 2)
+        return true
+    end
+    SetVehicleDoorsLocked(vehicle, 1)
+    return false
 end
 
 function Adapter.exists(vehicle)

@@ -196,6 +196,25 @@ local function fileOf(record)
     return nil
 end
 
+--- Every place this resource may have put a record's file: where it is
+--- written, and the two a kept photo moves to (keptFile). Empty for a
+--- record that names no file of its own.
+---@return string[]
+local function placesOf(record)
+    local file = fileOf(record)
+    if not file then return {} end
+    local ext = file:match('%.(%a+)$')
+    return { PHOTO_DIR .. '/' .. record.id .. '.' .. ext,
+             KEPT_DIR .. '/' .. record.id .. '.' .. ext,
+             PHOTO_DIR .. '/' .. KEPT_PREFIX .. record.id .. '.' .. ext }
+end
+
+--- Whether a photo file is on disk, by reading it (FiveM's own file read).
+local function present(file)
+    local ok, bytes = pcall(LoadResourceFile, GetCurrentResourceName(), file)
+    return ok and type(bytes) == 'string' and bytes ~= ''
+end
+
 --- Remove one photo file. os.remove resolves a relative path against the
 --- server's working directory, not the resource (json.lua's prune learnt
 --- that), so it is given the whole path. A file it could not remove is
@@ -450,7 +469,20 @@ local function readBytes(record)
     local file = fileOf(record)
     if not file or not CH.PHOTO_MIME[record.mime] then return nil end
     local ok, bytes = pcall(LoadResourceFile, GetCurrentResourceName(), file)
-    if not ok or type(bytes) ~= 'string' or bytes == '' then return nil end
+    if not ok or type(bytes) ~= 'string' or bytes == '' then
+        -- Not where the record says: a keep whose store did not answer
+        -- moved the file and the record may not say so (keep). Read from
+        -- another of its places; the next start puts it back where the
+        -- record names it (Photos.sweepFiles).
+        bytes = nil
+        for _, at in ipairs(placesOf(record)) do
+            if at ~= file then
+                local read, there = pcall(LoadResourceFile, GetCurrentResourceName(), at)
+                if read and type(there) == 'string' and there ~= '' then bytes = there break end
+            end
+        end
+        if not bytes then return nil end
+    end
     if record.size and #bytes ~= tonumber(record.size) then
         Log.always(('the kill photo %s reads back as %d bytes, not the %s '
             .. 'written. It cannot be shown.'):format(file, #bytes, tostring(record.size)))
@@ -866,9 +898,18 @@ local function keptFile(record)
     if not file then return nil end
     local ext = file:match('%.(%a+)$')
     makeFolder(KEPT_DIR)
-    for _, to in ipairs({ KEPT_DIR .. '/' .. record.id .. '.' .. ext,
-                          PHOTO_DIR .. '/' .. KEPT_PREFIX .. record.id .. '.' .. ext }) do
+    local places = { KEPT_DIR .. '/' .. record.id .. '.' .. ext,
+                     PHOTO_DIR .. '/' .. KEPT_PREFIX .. record.id .. '.' .. ext }
+    for _, to in ipairs(places) do
         if to == file or moveFile(file, to) then return to end
+    end
+    -- Already moved by a keep whose store did not answer: the record still
+    -- names where it was, and the file is in its kept place. That place,
+    -- so the record names the file that is there.
+    if not present(file) then
+        for _, to in ipairs(places) do
+            if present(to) then return to end
+        end
     end
     return file
 end
@@ -884,7 +925,18 @@ local function keep(actor, record)
         file = keptFile(record)
     end
     local from = record.file
-    if not Storage.keepPhoto(record.id, CH.PHOTO.OPEN, file) then
+    -- A store that raises (on mysql, one that did not answer in time) may
+    -- or may not have taken the change: the file is left where it was moved,
+    -- which the record names if it did, and which a retry (keptFile), a
+    -- read (readBytes) and the next start (Photos.sweepFiles) all find if it
+    -- did not. Moved back, a change that landed late named a file gone.
+    local wrote, kept = pcall(Storage.keepPhoto, record.id, CH.PHOTO.OPEN, file)
+    if not wrote then
+        Log.always(('keeping the kill photo %s in the app: the store raised (%s); its file '
+            .. 'is at %s'):format(tostring(record.id), Util.dbError(kept), tostring(file or from)))
+        error(kept, 0)
+    end
+    if not kept then
         -- Deleted or timed out in the meantime. A file moved for it would
         -- be named by no record; the one it moved from went with that.
         if file and file ~= from then removeFile(file) end
@@ -1354,7 +1406,15 @@ function Photos.sweepFiles()
         local id = handleIn(file)
         if id and fileOf({ id = id, file = file }) then
             local record = Storage.readPhoto(id)
-            if not (record and record.file == file) and removeFile(file) then
+            local named = record and fileOf(record)
+            if record and named and named ~= file and not present(named)
+                and moveFile(file, named) then
+                -- The record's file, in another of its places (a keep whose
+                -- store did not answer): put back where the record names
+                -- it, not removed as a file nobody names.
+                Log.debug(('kill photo %s: its file was at %s, put back at %s')
+                    :format(tostring(id), file, named))
+            elseif not (record and record.file == file) and removeFile(file) then
                 removed = removed + 1
             end
         end

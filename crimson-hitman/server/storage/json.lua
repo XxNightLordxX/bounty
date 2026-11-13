@@ -1399,7 +1399,10 @@ function JsonStore.open()
         -- Moving to mysql is a fresh start there: nothing is carried over,
         -- and mysql mode refuses to start while this store still holds
         -- money (README, Changing storage mode).
-        Log.debug(('json store holds %d contracts; a server this busy is better on '
+        -- Printed whatever Debug says, once a start (configuration.md:
+        -- "warn above this many contracts"); a debug line was never seen
+        -- with Debug off.
+        Log.notice(('json store holds %d contracts; a server this busy is better on '
             .. 'mysql mode, which starts empty: let the open contracts here finish first (see '
             .. 'the README, Changing storage mode)'):format(count))
     end
@@ -1709,8 +1712,11 @@ local function touch(financial, contractId)
         recordsDirty = true
     end
     if financial and Config.Database.Json.SyncOnFinancialWrite then
-        JsonStore.save(true, true)
+        -- Its answer, for a write that must not be told it is kept when the
+        -- file was not written (JsonStore.writeReview).
+        return JsonStore.save(true, true)
     end
+    return true
 end
 
 --- Finished contracts past the retention age that hold nobody's money.
@@ -2240,7 +2246,18 @@ function JsonStore.writeReview(item)
     local row = {}
     for k, v in pairs(item) do row[k] = v end
     db.reviews[row.id] = row
-    touch(true)
+    -- Written to the file, or not kept: an item records money nothing else
+    -- does, and answered as stored while records.json could not be
+    -- written it was in this process alone, lost at the next restart with
+    -- nothing on this machine (review.lua keeps an item the store would
+    -- not take, in resource KVP, and writes it again later).
+    -- (records.json itself: another contract's file the disk refused also
+    -- answers the save false, and leaves this one written.)
+    local saved, file = touch(true)
+    if saved == false and recordsDirty then
+        db.reviews[row.id] = nil
+        error(('the store could not write %s'):format(tostring(file or 'records.json')), 0)
+    end
     return true
 end
 

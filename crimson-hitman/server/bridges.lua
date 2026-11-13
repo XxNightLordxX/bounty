@@ -1863,7 +1863,9 @@ function Bridges.installBuyoutCommand(modules)
         local typed
         if args[2] ~= nil then
             typed = tonumber((tostring(args[2]):gsub('[%$,]', '')))
-            if not typed or typed < 0 or typed ~= math.floor(typed) then
+            -- Finite as well: 1e400 is math.huge, which floor leaves as it is.
+            if not typed or typed ~= typed or typed < 0 or typed == math.huge
+                or typed ~= math.floor(typed) then
                 return answer(src, (L('bridges.could_not_buy_it_out_the')):format(cmd))
             end
         end
@@ -1876,6 +1878,14 @@ function Bridges.installBuyoutCommand(modules)
         end
         if agreed == nil then return priceNow(listed.amount, L('bridges.nothing_was_bought_yet')) end
         if agreed ~= listed.amount then
+            -- "Changed" only of a price they were quoted: a typed one that
+            -- was never the price is said as not the price, not as the
+            -- placer having changed it.
+            local said = quoted(actor.cid, id)
+            if typed ~= nil and said ~= typed then
+                return priceNow(listed.amount, (L('bridges.nothing_was_bought_the_price_is_not'))
+                    :format(Words.dollars(typed, 'none')))
+            end
             return priceNow(listed.amount, (L('bridges.nothing_was_bought_the_price_changed'))
                 :format(Words.dollars(agreed, 'none')))
         end

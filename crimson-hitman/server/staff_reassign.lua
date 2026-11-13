@@ -100,7 +100,10 @@ local function eligible(subject, contract)
             or deps.identity.sameAccount(contract.target_account, actor.account)) then
         return nil, CH.ERR.SAME_ACCOUNT
     end
-    if Holds.of(actor.cid) then return nil, CH.ERR.CONTRACT_FROZEN end
+    -- Their own freeze, said as theirs: as the contract's (CONTRACT_FROZEN)
+    -- it was answered "try again in a moment", which no retry changes.
+    -- Staff named the hitman themselves, so saying it names nobody new.
+    if Holds.of(actor.cid) then return nil, 'hitman_frozen' end
     if C.suspension(actor.cid) then return nil, CH.ERR.SUSPENDED end
     if C.staffContract and C.staffContract.barred(contract.id, actor.cid, actor.account) then
         return nil, CH.ERR.STAFF_BARRED
@@ -244,7 +247,9 @@ local function reassignUnlocked(staff, contractId, subject, opts)
             local back = rollBack()
             deps.audit.staff('staff_reassign_failed', staff.cid, contractId, { to = actor.cid,
                 err = removeErr, removed = #removed, reinstated = back, reason = opts.reason })
-            if back == #removed then return false, removeErr end
+            -- Everybody back on it: said as an operative that could not be
+            -- taken off, not as the new hitman's Accept (never tried).
+            if back == #removed then return false, 'remove_failed', { err = removeErr } end
             return false, 'not_all_removed', { removed = #removed - back }
         end
         ok, acceptErr, row = accept()
@@ -318,6 +323,8 @@ local MESSAGES = {
     [CH.ERR.TERMS_CHANGED] = L('staff_reassign.its_terms_changed_while_it_was'),
     [CH.ERR.HOLD_RELEASED] = L('staff_reassign.its_hold_was_released_while_it'),
     [CH.ERR.FEATURE_OFF] = L('staff_reassign.what_it_needs_is_switched_off'),
+    hitman_frozen = L('staff_reassign.that_hitman_is_on_hold_by'),
+    remove_failed = L('staff_reassign.an_operative_could_not_be_taken'),
 }
 
 local function said(err, detail)

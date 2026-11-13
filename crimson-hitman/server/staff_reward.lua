@@ -319,13 +319,21 @@ function StaffReward.preview(contractId, by)
     end
     if by then
         out.after = held.reward + by
+        -- Refused here as the change itself refuses it (opChange): off while
+        -- RewardChangeMax is 0, and past it either way, a lowering as well.
+        if most() == 0 then
+            out.refused = 'reward_change_off'
+            return out
+        end
+        if math.abs(by) > most() then
+            out.refused, out.refusedDetail = 'too_much', { max = most() }
+            return out
+        end
         if by > 0 then
             -- Refused here as the change itself refuses it, with its own
             -- figures: the preview said nothing and only the confirm did.
             local ceiling = tonumber(Config.MaxContractValue) or 0
-            if most() > 0 and by > most() then
-                out.refused, out.refusedDetail = 'too_much', { max = most() }
-            elseif ceiling > 0 and out.total + by > ceiling then
+            if ceiling > 0 and out.total + by > ceiling then
                 out.refused, out.refusedDetail = 'too_much_value', { max = math.max(0, ceiling - out.total) }
             end
         end
@@ -363,6 +371,7 @@ local MESSAGES = {
     placer_away = L('staff_reward.charging_the_placer_needs_them_in'),
     [CH.ERR.INSUFFICIENT] = L('staff_reward.the_placer_cannot_cover_that_from'),
     [CH.ERR.REWARD_TOO_SMALL] = L('staff_reward.not_below_the_least_a_reward'),
+    reward_change_off = L('staff_reward.changing_a_reward_is_off_config'),
 }
 
 local function refused(src, contractId, err, detail)

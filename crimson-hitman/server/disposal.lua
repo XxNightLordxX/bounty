@@ -517,29 +517,39 @@ local function HeldLines(step)
 end
 
 --- Whether a split of this line to `cid` was already made (a retry after a
---- restart makes none twice).
-local function SplitTo(lines, lineId, cid)
+--- restart makes none twice): one that stood, the line where it left it
+--- (as Escrow.recoverOwed decides). An owed line written ahead of a cut the
+--- process died before making is voided at the start (amount 0), or about
+--- to be; counted as made, the retry after the restart split nothing and
+--- the hitman was paid the whole line.
+local function SplitTo(lines, line, cid)
+    local now = math.floor(tonumber(line.amount) or 0)
     for _, l in ipairs(lines) do
         local mark = type(l.metadata) == 'table' and l.metadata or nil
-        if l.portion == CH.PORTION.OWED and mark and mark.splitFrom == lineId and l.owed_to == cid then
+        if l.portion == CH.PORTION.OWED and mark and mark.splitFrom == line.id and l.owed_to == cid
+            and (tonumber(l.amount) or 0) > 0 and tonumber(mark.stakeNow) == now then
             return true
         end
     end
     return false
 end
 
---- Hand `cid` this share of each cash or bank line of the payout now, the
---- rest left on the line (Escrow.reduceStake: the owed share is written
---- before the line is lowered, and boot recovery finishes one cut off).
+--- Hand `cid` this share of each cash or bank line of the payout now (each
+--- money line, dirty money too, with `allMoney`), the rest left on the line
+--- (Escrow.reduceStake: the owed share is written before the line is
+--- lowered, in the line's own money, and boot recovery finishes one cut off).
 ---@param keepPercent number what stays on each line, of 100
 ---@param keepFor? fun(line: table, all: table[], amount: integer): integer what stays on a
 --- line in dollars, where a share of 100 is not the rule (the 'reduced' timeout)
+---@param allMoney? boolean every money line (CH.MONEY_SOURCES), not cash and bank alone
 ---@return integer moved dollars
-local function SplitMoney(step, cid, keepPercent, reason, keepFor)
+local function SplitMoney(step, cid, keepPercent, reason, keepFor, allMoney)
     local moved = 0
     local held, all = HeldLines(step)
     for _, line in ipairs(held) do
-        if (line.source == 'cash' or line.source == 'bank') and not SplitTo(all, line.id, cid) then
+        local money = line.source == 'cash' or line.source == 'bank'
+            or (allMoney and CH.MONEY_SOURCES[line.source] == true)
+        if money and not SplitTo(all, line, cid) then
             local amount = math.floor(tonumber(line.amount) or 0) - math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
             local keep = keepFor and math.max(0, math.min(amount, math.floor(keepFor(line, all, amount) or amount)))
                 or math.floor(amount * keepPercent / 100)
@@ -626,7 +636,10 @@ local function TimedOut(step)
         -- the part already paid at once (PayNowPercent, split off this line
         -- to them) counts towards it. Taken of what was left after that,
         -- 40 at once and 50 reduced kept them 70. Never less than they were
-        -- already handed: nothing paid is taken back.
+        -- already handed: nothing paid is taken back. Every money line,
+        -- dirty money as well (its share goes back as dirty money): cash
+        -- and bank alone left a payout funded in black money whole to the
+        -- hitman, the placer given nothing back, and both told it was cut.
         local pct = math.max(0, math.min(100, Num('ReducedPercent', 50)))
         SplitMoney(step, step.creator_cid, pct, 'disposal_reduced', function(line, all, _)
             local paidNow = 0
@@ -640,7 +653,7 @@ local function TimedOut(step)
             local arrived = math.max(0, math.floor(tonumber(line.deliver_arrived) or 0))
             local original = math.floor(tonumber(line.amount) or 0) + paidNow
             return math.floor(original * pct / 100) - paidNow - arrived
-        end)
+        end, true)
     else
         mode = 'pay'
     end
@@ -648,18 +661,25 @@ local function TimedOut(step)
 end
 
 --- The part paid at once (PayNowPercent), once.
+---@return integer moved dollars handed over now
 local function PayNow(step)
-    if step.paid_now then return end
+    if step.paid_now then return 0 end
     local pct = math.max(0, math.min(90, Num('PayNowPercent', 0)))
+    local moved = 0
     if pct > 0 then
-        SplitMoney(step, step.hitman_cid, 100 - pct, 'disposal_pay_now')
+        moved = SplitMoney(step, step.hitman_cid, 100 - pct, 'disposal_pay_now')
     end
     step.paid_now = true
     Write(step)
+    return moved
 end
 
-local function Instructions(step)
-    return (L('disposal.get_rid_of_the_body_a')):format(Disposal.band(LeftOf(step)))
+--- What the hitman is told at the start: paid at the drop-off, or, where
+--- part was handed over at once (PayNowPercent), the rest there. "You are
+--- paid at the drop-off" read as nothing having arrived.
+local function Instructions(step, paidNow)
+    return (L((paidNow or 0) > 0 and 'disposal.get_rid_of_the_body_part_paid'
+        or 'disposal.get_rid_of_the_body_a')):format(Disposal.band(LeftOf(step)))
 end
 
 --- A claim is about to release a payout (Contracts.claimSlot, under its
@@ -707,9 +727,9 @@ function Disposal.afterClaim(contractId, hitmanCid, claimed)
                 Write(step)
                 Deps.audit.financial('disposal_started', hitmanCid, contractId,
                     { slot = step.slot, limit = LimitSeconds() })
-                PayNow(step)
+                local paidNow = PayNow(step)
                 SpawnVehicle(step, 'start')
-                Tell(hitmanCid, L('disposal.body_disposal'), Instructions(step))
+                Tell(hitmanCid, L('disposal.body_disposal'), Instructions(step, paidNow))
                 Refresh()
             end
         end

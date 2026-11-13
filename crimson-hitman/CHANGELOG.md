@@ -86,6 +86,54 @@ say how things work now.
   translated, `/ch-void` and moderators, the whitelisted-job view and the
   missing target script.
 
+**Review 86 fixes (server)**
+- Body disposal's `OnTimeout = 'reduced'` splits dirty money as it does cash
+  and bank: the hitman keeps `ReducedPercent`, and the rest goes back to the
+  placer as the same dirty item, never as clean bank money. And a split cut
+  by a crash is made again after the restart, not taken for made with the
+  hitman paid the whole line. When `PayNowPercent` paid part at once, the
+  start notice says so.
+- A handover paid while its contract's read-back raised still writes both
+  Ledger rows and tells the placer. A proof item taken for a claim that raised
+  and paid nothing is given back (at once, or once the maintenance tick finds
+  nothing was paid); one it cannot give is left for staff.
+- The post-respawn protection (`Config.Immunity.PostRespawnSeconds`) outlasts
+  a relog or a game crash.
+- Contract decay counts neither time taken nor a freeze that fell between two
+  of its passes.
+- An informant tip stays on the map, and its card keeps its time and wait,
+  while the contract is held (the app pause, the restart hold, a freeze).
+- Keep in the app with a database that does not answer no longer loses the
+  kill photo: a retry, a look and the next start all find the picture.
+- In `'review'` mode, a low-effort reason set by an agreed change of reason
+  goes to Needs review, as one set by placing or Edit does.
+- Settings import applies only the changes its preview listed, from the
+  values it listed: a newer change by another staff member stops the apply.
+- json mode: a review item `records.json` could not take is kept as not in the
+  store yet (and on this machine) and written later, not answered as stored.
+  The contract count warning (`Config.Database.Json.WarnContractCount`) is
+  printed with `Config.Debug` off.
+- Staff Extend on a contract whose banked deadline is past its lifetime
+  extends the lifetime, and says the time it really has.
+- The organisation garage's vehicle is left unlocked where no keys script
+  answers, and the console says the garage wants one.
+- A contract sent to an organisation no longer tells the placer whether it
+  reached it (that said whether the target was a member).
+- Smaller: the history card counts going dark and no longer counts a tip
+  refund as money in; `/ch-diag` names which escrow source is off and the
+  config values the start put back; a named integration not started is
+  answered with the setting to change; burner phones and proof items count
+  as needing the inventory; `/cleanse` with a wrong price says it is not the
+  price; a staked accept needs `Penalty.MinWindowMinutes` of lifetime too,
+  and a reassign with the stake waived needs none; reassign says a frozen
+  hitman is on hold and an operative that could not be taken off as that;
+  the reward preview refuses what the change refuses; panel notes, playtime,
+  announcements, photo removal and alerts wait for boot recovery; a dispatch
+  entry goes to departments added by job type; a manual payment and the
+  suspend and protect answers are whole sentences; a change of clothes
+  re-renders the headshot after a minute; Current undoes an own preset; a
+  JSON version answer is read from its `version` field.
+
 **Review 85 fixes (organisation)**
 - A contract on a member of an organisation is no longer held for that
   organisation when the placer sends it there: it goes on the open board as

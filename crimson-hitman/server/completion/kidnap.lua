@@ -511,6 +511,8 @@ function Kidnap.tick(deltaMs)
                     completions[#completions + 1] = {
                         contractId = state.contractId, hitmanCid = state.hitmanCid,
                         countdown = state, slot = contract.next_slot or 1,
+                        -- As read here, for a read-back after the claim that raises.
+                        contract = contract,
                     }
                 end
             else
@@ -560,6 +562,10 @@ function Kidnap.tick(deltaMs)
                             -- Which collection it is for, so a claim that
                             -- throws can be told apart from one that paid.
                             slot       = contract.next_slot or 1,
+                            -- The contract as read here: what the ledger
+                            -- rows and the notice are written from when
+                            -- reading it back after the claim raises.
+                            contract   = contract,
                         }
                     end
                 else
@@ -669,10 +675,19 @@ function Kidnap.tick(deltaMs)
             -- ledger write that raised dropped the client's notice and the
             -- financial row too, and said nothing of it anywhere.
             local read, contract = pcall(Storage.readContract, done.contractId)
-            if not read then
-                Log.always(('handover %s was paid, and reading its contract back raised: %s')
-                    :format(tostring(k), Util.dbError(contract)))
-                contract = nil
+            if not read or not contract then
+                if not read then
+                    Log.always(('handover %s was paid, and reading its contract back raised: %s')
+                        :format(tostring(k), Util.dbError(contract)))
+                end
+                -- As read before the claim (photo.lua afterPaid does the
+                -- same): the money moved, so the ledger rows and the notice
+                -- are still owed. Nil wrote neither, and said nothing.
+                contract = done.contract
+            end
+            if not contract then
+                pcall(Audit.financial, 'ledger_write_failed', done.hitmanCid, done.contractId,
+                    { error = 'contract_unread' })
             end
             local wrote, ledgerErr = pcall(Ledger.record, contract, done.hitmanCid, nil,
                 CH.FULFILMENT.KIDNAPPING, result)

@@ -1210,7 +1210,10 @@ function App.register()
         })
         if not contract then return false, err, refusal end
         -- Held for the organisation before anybody else can take it.
-        local sent = toOrg and deps.org.receiveContract(contract.id, actor.cid, toOrgId) or nil
+        -- Its answer is not put on the reply: whether the organisation took
+        -- it says whether the target is one of its members, which a placer
+        -- is never told (anonymity).
+        if toOrg then deps.org.receiveContract(contract.id, actor.cid, toOrgId) end
         -- Not sent anywhere: first refusal for the organisation whose
         -- territory the target is in, where a member of it can see them
         -- (Config.Organisation.Territory, server/org/extras3.lua). Nobody
@@ -1224,7 +1227,6 @@ function App.register()
         -- On success the third is the anonymity fee taken, for the
         -- confirmation to name.
         if reply and refusal then reply.charged = refusal end
-        if reply and toOrg then reply.sentToOrg = sent == true end
         return reply
     end)
 

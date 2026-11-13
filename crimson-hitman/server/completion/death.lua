@@ -1750,6 +1750,14 @@ function Death.sweep()
         if now - record.at > unseenFor then unobserved[key] = nil end
     end
 
+    -- Respawn stamps past the protection they give (kept across a relog,
+    -- Death.clearPlayer).
+    local lasts = math.max(0, tonumber(Config.Immunity and Config.Immunity.PostRespawnSeconds) or 0)
+    local wall = os.time()
+    for cid, at in pairs(respawnedAt) do
+        if wall - at >= lasts then respawnedAt[cid] = nil end
+    end
+
     return removed
 end
 
@@ -1839,7 +1847,10 @@ function Death.clearPlayer(cid)
     damage[cid] = nil
     hitBy[cid] = nil
     condition[cid] = nil
-    respawnedAt[cid] = nil
+    -- respawnedAt is kept: the post-respawn protection is wall-clock
+    -- (os.time) and outlasts a relog. Cleared here, a target who crashed
+    -- or switched character inside Config.Immunity.PostRespawnSeconds came
+    -- back unprotected. Aged entries go in Death.sweep.
     seenDead[cid] = nil
     upSince[cid] = nil
     reviveClaims[cid] = nil

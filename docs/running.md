@@ -64,7 +64,7 @@ To copy your settings to another server, or keep a copy: Developer, **Export & i
 
 ## Version check
 
-Off as shipped. Set `Config.VersionCheck.Enabled = true` and `Config.VersionCheck.Url` to an https address that serves the latest version number (plain text such as `1.3.0`, or JSON with it in). The server asks it once at start, with a plain GET: no body, no headers of its own, and an address with `?` or `#` (or a user name) in it is refused unasked, so nothing about your server is sent. A newer version is one console line; anything else says nothing. With no address (as shipped) nothing is ever asked.
+Off as shipped. Set `Config.VersionCheck.Enabled = true` and `Config.VersionCheck.Url` to an https address that serves the latest version number (plain text such as `1.3.0`, or JSON with it in a `"version"` or `"tag_name"` field). The server asks it once at start, with a plain GET: no body, no headers of its own, and an address with `?` or `#` (or a user name) in it is refused unasked, so nothing about your server is sent. A newer version is one console line; anything else says nothing. With no address (as shipped) nothing is ever asked.
 
 ## Adding a language
 

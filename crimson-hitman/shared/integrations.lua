@@ -38,7 +38,13 @@ Integrations.KINDS = {
           local s = c.Sources or {}
           local on = function(t) return type(t) == 'table' and t.enabled == true end
           local org = type(c.Organisation) == 'table' and c.Organisation or {}
+          local rp = type(c.Roleplay) == 'table' and c.Roleplay or {}
+          local imp = type(c.Improvements) == 'table' and c.Improvements or {}
           return on(s.item) or on(s.weapon) or on(s.dirty) or (org.Enabled == true and org.Armory == true)
+              -- Burner phones and proof items are inventory items too
+              -- (docs/dev/adapters.md).
+              or (type(rp.BurnerPhone) == 'table' and rp.BurnerPhone.Enabled == true)
+              or (type(imp.ProofItems) == 'table' and imp.ProofItems.Enabled == true)
       end },
     { kind = 'target', key = 'Target', side = 'client',
       withoutKey = 'integrations.without_target',
@@ -62,7 +68,11 @@ Integrations.KINDS = {
       needed = function() return true end },
     { kind = 'keys', key = 'Keys', side = 'server',
       withoutKey = 'integrations.without_keys',
-      needed = function(c) return type(c.Disposal) == 'table' and c.Disposal.Enabled == true end },
+      needed = function(c)
+          local org = type(c.Organisation) == 'table' and c.Organisation or {}
+          return (type(c.Disposal) == 'table' and c.Disposal.Enabled == true)
+              or (org.Enabled == true and org.Garage == true)
+      end },
     { kind = 'garage', key = 'Garage', side = 'server',
       withoutKey = 'integrations.without_garage',
       needed = function(c)
@@ -276,6 +286,27 @@ function Integrations.status(kind)
     }
 end
 
+--- The scripts to name as not started for a kind with no adapter
+--- answering: the one Config.Integrations names, when it names one, else
+--- every adapter's not started. And one of the others that is started, if
+--- any (the setting points past it).
+---@param st table Integrations.status
+---@return string[] names
+---@return string|nil started an adapter's name whose script is started
+---@return string|nil startedResource its script
+function Integrations.notStarted(st)
+    local names, started, startedResource = {}, nil, nil
+    for i = 1, #st.detected do
+        local d = st.detected[i]
+        if st.choice == 'auto' or st.choice == d.name then
+            names[#names + 1] = d.resource
+        elseif d.up and not started then
+            started, startedResource = d.name, d.resource
+        end
+    end
+    return names, started, startedResource
+end
+
 --- Every kind's status, in order.
 ---@return table[]
 function Integrations.statusAll()
@@ -297,8 +328,7 @@ function Integrations.offLine(st)
     elseif st.choice == 'none' then
         why = (L('integrations.is_none')):format(st.key)
     else
-        local names = {}
-        for i = 1, #st.detected do names[i] = st.detected[i].resource end
+        local names = Integrations.notStarted(st)
         why = #names > 0 and (L('integrations.not_started')):format(table.concat(names, ' / '))
             or L('integrations.no_adapter_registered')
     end

@@ -66,12 +66,7 @@ local ALLOW = {
     -- line two lines below it.
     ['server/police.lua'] = { ['no phone adapter answers (Config.Integrations.Phone)'] = true },
     -- The preset name kept in an audit row, which is data; and a console line.
-    ['server/panel.lua'] = { ['Current'] = true, ["the admin panel\\'s %s raised: %s"] = true,
-        -- TODO(review 85, server/panel.lua, not this change's file): spanWords
-        -- says '1 day' and '1 hour' in English inside the translated 'is
-        -- protected from new contracts' answer; it wants plural keys
-        -- (panel.n_days_one/_other ...) and the 'for ' inside the sentence.
-        ['1 day'] = true, ['1 hour'] = true },
+    ['server/panel.lua'] = { ['Current'] = true, ["the admin panel\\'s %s raised: %s"] = true },
     -- The shipped presets' names, which are what they are applied, saved
     -- and audited by.
     ['server/presets.lua'] = { ['Current'] = true, ['Strict'] = true, ['Relaxed'] = true },

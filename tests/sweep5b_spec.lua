@@ -1026,19 +1026,21 @@ describe('sweep 5 review R2: a death sweep inside the restart hold\'s release', 
 end)
 
 describe('sweep 5 review R3: the stake\'s band and the card\'s are one', function()
-    local function staked()
+    local function staked(lifetime)
         local s = newStack()
         local f = fixture(s)
         local c = place(s, f, { penaltyAmount = 2000 })
         local row = s.storage.readContract(c.id)
         row.deadline_at = os.time() + 5 * 3600
-        row.expires_at = os.time() + 1000
+        row.expires_at = os.time() + (lifetime or 1000)
         s.storage.writeContract(row)
         return s, f, c
     end
 
     it('an acceptance on the band the card shows under the restart hold is taken', function()
-        local s, f, c = staked()
+        -- Under an hour, past the stake window (Penalty.MinWindowMinutes
+        -- counts the lifetime as well since review 86 A-1).
+        local s, f, c = staked(2400)
         Config.Holds.RestartPauseBeforeSeconds = 1800
         truthy(s.holds.scheduledRestart({ secondsRemaining = 1800 }))
         Env.advance(300)

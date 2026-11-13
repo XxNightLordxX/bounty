@@ -18,7 +18,7 @@ The console output, and where contracts and money are kept. Switching storage mo
 | `Config.Database.Mode` | `'mysql'` | 'json' \| 'mysql' \| 'memory' (testing only) |
 | `Config.Database.AllowModeSwitch` | `false` | start even though the old mode still holds money |
 | `Config.Database.QueryTimeoutSeconds` | `10` | mysql: seconds a statement may go unanswered; 0 = forever |
-| `Config.Database.Json.Directory` | `'data'` | folder inside the resource |
+| `Config.Database.Json.Directory` | `'data'` | folder inside the resource; a new one starts an empty store; change it only once the old one holds no money |
 | `Config.Database.Json.SyncOnFinancialWrite` | `true` | write money changes to disk at once |
 
 ## Other scripts
@@ -34,7 +34,7 @@ Which of your other scripts this resource works with, one per kind (docs/dev/ada
 | `Config.Integrations.Ambulance` | `'auto'` | 'auto' \| 'sc-ambulance' \| 'qbx_medical' \| 'none' |
 | `Config.Integrations.Banking` | `'auto'` | 'auto' \| 'Renewed-Banking' \| 'none' (organisation funds) |
 | `Config.Integrations.Phone` | `'auto'` | 'auto' \| 'lb-phone' \| 'none' (the phone app) |
-| `Config.Integrations.Keys` | `'auto'` | 'auto' \| 'qbx_vehiclekeys' \| 'none' (disposal vehicle) |
+| `Config.Integrations.Keys` | `'auto'` | 'auto' \| 'qbx_vehiclekeys' \| 'none' (disposal and garage vehicles) |
 | `Config.Integrations.Garage` | `'auto'` | 'auto' \| 'onesync' \| 'none' (organisation garage vehicles) |
 | `Config.Integrations.Mugshot` | `'auto'` | 'auto' \| 'MugShotBase64' \| 'none' (target headshots) |
 | `Config.Integrations.Clothing` | `'auto'` | 'auto' \| a clothing adapter's name \| 'none' |
@@ -68,7 +68,7 @@ What a reward may be made of and how big it may be, payouts, stakes and buyouts.
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Sources.cash` | `{ enabled = true, max = 250000 }` | cash, at most this much |
+| `Config.Sources.cash` | `{ enabled = true, max = 250000 }` | cash, at most this much per part (a payout's baseline, its bonus, one addition); Config.MaxContractValue bounds the whole contract |
 | `Config.Sources.bank` | `{ enabled = true, max = 500000 }` | bank money |
 | `Config.Sources.dirty` | `{ enabled = true, item = 'black_money', max = 250000 }` | dirty money, as this item |
 | `Config.Sources.item` | `{ enabled = true, maxPerStack = 100, maxStacks = 10 }` | items: stacks, and per stack |
@@ -89,8 +89,8 @@ What a reward may be made of and how big it may be, payouts, stakes and buyouts.
 | `Config.Bailout.Enabled` | `true` | a target may buy out a contract on them |
 | `Config.Bailout.MinMultiplier` | `1.0` | least buyout price, times the reward's cash and bank |
 | `Config.Bailout.MaxMultiplier` | `3.0` | most buyout price, times the reward's cash and bank |
-| `Config.Bailout.AbsoluteMax` | `500000` | most buyout price in money |
-| `Config.Bailout.ProcessingDelaySeconds` | `120` | a held contract's hitman gets this long first |
+| `Config.Bailout.AbsoluteMax` | `500000` | most buyout price in money; wins over MinMultiplier |
+| `Config.Bailout.ProcessingDelaySeconds` | `120` | a held contract's hitman gets this long; untaken closes at once |
 | `Config.Bailout.BlockWhileIncapacitated` | `true` | no buyout while dead or downed |
 | `Config.Bailout.Command` | `'cleanse'` | the buyout command, for players who cannot open the app |
 
@@ -353,7 +353,7 @@ The staff tools: /hitmanadmin and the F8 commands. ACE names are never changed f
 | `Config.Admin.Ace` | `'crimson.admin'` | ACE for staff, and for anything that writes |
 | `Config.Admin.IdentityAce` | `'crimson.identity'` | ACE to see who is behind an anonymous party |
 | `Config.Admin.DeveloperAce` | `'crimson.developer'` | ACE for the panel's Developer section |
-| `Config.Admin.ModeratorAce` | `'crimson.moderator'` | ACE that reads, freezes, suspends, protects and voids |
+| `Config.Admin.ModeratorAce` | `'crimson.moderator'` | ACE that reads, freezes, suspends, protects, voids, moves deadlines |
 | `Config.Admin.ExtraAces` | `{ 'command' }` | ACEs that may also read (never write) |
 | `Config.Admin.Commands` | `{ contracts = 'ch-contracts', diagnose = 'ch-diag', panel = 'hitmanadmin', refresh = 'ch-refresh', … 10 in all }` | command names, without the slash |
 | `Config.Admin.PanelPageSize` | `25` | rows per page in the panel's lists |
@@ -602,7 +602,7 @@ Map markers for each step of a contract, to the one party who acts on it (docs/f
 
 Logging, diagnostics, rate limits, json tuning and the timings of the kill and handover checks. The shipped values suit most servers.
 
-`Config.Cooldowns`: one row for each entry.
+`Config.Cooldowns`: one row for each entry. Each player holds up to `burst`, refilled evenly over `per` seconds (one every per/burst), so `{ burst = 2, per = 60 }` allows a third 30 seconds after the second.
 
 | Setting | Shipped | What it does |
 |---|---|---|

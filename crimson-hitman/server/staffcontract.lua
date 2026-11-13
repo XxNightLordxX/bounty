@@ -67,6 +67,19 @@ local function forget(row)
     if #list == 0 then removals[row.contract_id] = nil end
 end
 
+--- Whether a removal's record was taken back and is left in the store only
+--- because its delete failed (removeHitman refused, liftRemoval): its
+--- operative is still on the contract on the very stint it was written for.
+--- Read back at a start, it barred a hitman staff never took off.
+---@param row table
+---@return boolean
+function StaffContract.voidedRemoval(row)
+    if type(row) ~= 'table' or row.kind ~= 'removal' or not row.subject_cid or not row.stint then return false end
+    local ok, hitman = pcall(Storage.readHitman, row.contract_id, row.subject_cid)
+    return ok and type(hitman) == 'table' and hitman.state == 'active'
+        and tonumber(hitman.accepted_at) == tonumber(row.stint)
+end
+
 ---@param deps table { storage, audit, notify, contracts, identity }
 function StaffContract.init(deps)
     Storage, Audit, Notify, Contracts, Identity =
@@ -75,7 +88,15 @@ function StaffContract.init(deps)
     if Storage.readContractStaffMarks then
         local ok, rows = pcall(Storage.readContractStaffMarks)
         if ok then
-            for _, row in ipairs(rows or {}) do remember(row) end
+            for _, row in ipairs(rows or {}) do
+                if StaffContract.voidedRemoval(row) then
+                    -- Its delete did not land when it was taken back: gone
+                    -- now, rather than barring an operative still on it.
+                    pcall(Storage.deleteContractStaff, row.id)
+                else
+                    remember(row)
+                end
+            end
         else
             Log.always(('staff records on contracts could not be read (%s): no contract shows '
                 .. '"edited by staff", and nobody staff barred from one is barred, until the next '

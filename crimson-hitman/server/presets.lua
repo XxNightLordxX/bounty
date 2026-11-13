@@ -371,16 +371,26 @@ function Presets.deleteOwn(name, staff, actorCid)
     return true, nil, (L('presets.deleted_nothing_else_changed')):format(preset.name)
 end
 
---- Keep the values in force now of every key a preset names, as Current.
+--- Keep the values in force now of every key a preset names, as Current:
+--- the shipped presets' keys, and those of the preset about to be applied
+--- (`also`), so going back undoes an own or imported preset too. Only the
+--- shipped ones' keys, Current could not undo a key only an own preset
+--- named, and said "Nothing to change" while it stood changed.
 ---@param staff string|nil who, for the row
+---@param also table|nil a preset's values, by key, whose keys are kept as well
 ---@return boolean ok
 ---@return string|nil err
-function Presets.saveCurrent(staff)
+function Presets.saveCurrent(staff, also)
     local Storage = deps and deps.storage
     if not (Storage and Storage.writeRpRow) then return false, 'store_failed' end
     local values = {}
     for _, key in ipairs(trackedKeys()) do
         if deps.settings.entry(key) then values[key] = deps.settings.valueOf(key) end
+    end
+    for key in pairs(type(also) == 'table' and also or {}) do
+        if type(key) == 'string' and values[key] == nil and deps.settings.entry(key) then
+            values[key] = deps.settings.valueOf(key)
+        end
     end
     local ok = pcall(Storage.writeRpRow, { id = 'preset:' .. Presets.CURRENT, kind = Presets.STORE_KIND,
         name = Presets.CURRENT, values = values, by = staff, at = os.time() })
@@ -405,7 +415,7 @@ function Presets.apply(name, staff, actorCid)
         return false, 'unchanged', (L('presets.nothing_to_change_the_settings_are')):format(preset.name)
     end
     if preset.name ~= Presets.CURRENT then
-        local saved = Presets.saveCurrent(staff)
+        local saved = Presets.saveCurrent(staff, preset.values)
         if not saved then
             return false, 'store_failed', L('presets.current_could_not_be_saved_first')
         end

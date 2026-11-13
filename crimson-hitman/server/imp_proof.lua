@@ -40,9 +40,19 @@ local deps
 --- One handover per contract and hitman at a time.
 local working = {}
 
+--- Items taken for a claim that raised part-way, its outcome not known yet:
+--- [contractId] = { cid, item, metadata, nextSlot }. Settled once the
+--- maintenance tick has finished that claim (Contracts.afterStuck).
+local owedBack = {}
+
 function Proof.init(d)
     deps = d
     working = {}
+    owedBack = {}
+    local Contracts = d and d.contracts
+    if Contracts and type(Contracts.afterStuck) == 'table' then
+        Contracts.afterStuck.proofItems = Proof.afterStuck
+    end
 end
 
 Proof.RULES = {
@@ -181,9 +191,25 @@ function Proof.handover(actor, rawId)
         CH.FULFILMENT.ELIMINATION, { outcome = CH.FULFILMENT.PROOF })
     working[busy] = nil
     if not ran then
-        -- The maintenance tick finishes a claim that raised
-        -- (Contracts.retryStuckClaims); the item stays spent on it.
+        -- Not spent until it is known the claim paid. Still accepted on the
+        -- same collection, it never took the contract: nothing was paid,
+        -- and the item goes back now. Mid-settlement (completing), the
+        -- maintenance tick finishes the claim (Contracts.retryStuckClaims)
+        -- and Proof.afterStuck gives it back if that finds nothing paid.
+        -- Anything else is left for staff, naming the item. It used to stay
+        -- spent on every raise, a claim that never ran included.
         deps.audit.financial('proof_item_claim_raised', actor.cid, contractId, { item = item })
+        local readOk, now = pcall(Storage.readContract, contractId)
+        if readOk and now and now.state == CH.STATE.ACCEPTED
+            and (now.next_slot or 1) == (contract.next_slot or 1) then
+            giveBack(actor, contractId, item, slot, 'claim_raised')
+        elseif readOk and now and now.state == CH.STATE.COMPLETING then
+            owedBack[contractId] = { cid = actor.cid, item = item, metadata = slot.metadata,
+                                     nextSlot = contract.next_slot or 1 }
+        else
+            deps.audit.financial('proof_item_not_returned', actor.cid, contractId,
+                { item = item, reason = 'claim_raised', review = true })
+        end
         error(ok, 0)
     end
     if not ok then
@@ -211,6 +237,33 @@ function Proof.handover(actor, rawId)
             :format(tostring(contractId), Util.dbError(tellErr)))
     end
     return true, nil, result
+end
+
+--- The maintenance tick finished a claim that raised (Contracts.retryStuckClaims):
+--- an item taken for it goes back when nothing was paid ('reopened', or
+--- the contract found accepted on the same collection), and stays spent
+--- otherwise. A hitman away is left for staff, as one that cannot be given.
+---@param contractId string
+---@param _ string|nil the hitman the stuck claim was for
+---@param how string|nil what recoverCompleting did
+function Proof.afterStuck(contractId, _, how)
+    local owed = owedBack[contractId]
+    if not owed then return end
+    owedBack[contractId] = nil
+    local unpaid = how == 'reopened'
+    if not unpaid and how == nil then
+        local readOk, now = pcall(deps.storage.readContract, contractId)
+        unpaid = readOk and now ~= nil and now.state == CH.STATE.ACCEPTED
+            and (now.next_slot or 1) == owed.nextSlot
+    end
+    if not unpaid then return end
+    local actor = deps.identity.byCitizenId(owed.cid)
+    if not actor then
+        deps.audit.financial('proof_item_not_returned', owed.cid, contractId,
+            { item = owed.item, reason = 'claim_raised', away = true, review = true })
+        return
+    end
+    giveBack(actor, contractId, owed.item, { metadata = owed.metadata }, 'claim_raised')
 end
 
 return Proof

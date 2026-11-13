@@ -378,9 +378,9 @@ end
 --- untaken contract that is due one, at most STEPS_PER_PASS a pass, and the
 --- rows of contracts that ended forgotten. The steps sleep until the
 --- soonest is due; what is running comes from the snapshot the other loops
---- share (Projection.liveSnapshot), so a pass with no step due and no row
---- kept reads nothing, and one with rows kept reads nothing new while
---- nothing was written.
+--- share (Projection.liveSnapshot), read nothing new while nothing was
+--- written; a pass with no step due still looks at it, so a contract taken
+--- or held between two steps has its count stand still from then.
 ---@return integer stepped
 function Decay.tick()
     local cfg = Feature.active(BLOCK)
@@ -402,7 +402,13 @@ function Decay.tick()
     local hours = math.max(1, num(cfg.Hours, 1))
     if hours ~= nextHours then nextAt, nextHours = 0, hours end
     local stepping = now >= nextAt
-    if not stepping and next(rows) == nil then return 0 end
+    -- Every pass looks at the live contracts, stepping or not: one placed
+    -- between two stepping passes and taken or held meanwhile gets its row
+    -- then, standing still from the acceptance or the hold's start. A
+    -- pass with no step due and no row kept used to read nothing, and the
+    -- row made at the next stepping pass counted from the placing, the
+    -- time taken or frozen in between included (the placer charged a rise
+    -- early). The list is the snapshot the other loops share.
     local every = hours * 3600
     local soonest, stepped, more = now + every, 0, false
     local list, rosters
@@ -420,13 +426,14 @@ function Decay.tick()
         local active = contract.state == CH.STATE.ACTIVE
         local kept = rows[contract.id]
         local since = nil
-        if not skip and active and (stepping or kept) then
+        if not skip and active then
             since = heldSince(contract, rosters and rosters[contract.id], now)
         end
         if skip or not active then
-            -- Taken: its count stands still from the acceptance.
-            if not skip and kept and not kept.held_since then
-                pauseRow(kept, takenSince(contract, rosters, now))
+            -- Taken: its count stands still from the acceptance (its row
+            -- made now if it has none yet, from its placing).
+            if not skip and not (kept and kept.held_since) then
+                pauseRow(kept or rowFor(contract, now, hours), takenSince(contract, rosters, now))
             end
         elseif since then
             -- Held: no step, its count stands still from the hold's start,

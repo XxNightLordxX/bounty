@@ -96,10 +96,13 @@ payUnlocked = function(staffCid, cid, amount, account, reason, name)
                          amount = amount, account = account })
     end
     local words = Words.dollars(amount, 'before')
+    -- A sentence for each account: the code ('bank') put into the sentence
+    -- could not be worded by a translation.
+    local bank = account == 'bank'
     Notify.tellOrKeep(cid, L('payments.payment_from_staff'), paid
-        and (L('payments.staff_paid_you_in')):format(words, account, reason)
-        or (L('payments.staff_paid_you_in_it_is'))
-            :format(words, account, reason), { bypassBudget = true })
+        and (L(bank and 'payments.staff_paid_you_bank' or 'payments.staff_paid_you_cash')):format(words, reason)
+        or (L(bank and 'payments.staff_paid_you_bank_owed' or 'payments.staff_paid_you_cash_owed'))
+            :format(words, reason), { bypassBudget = true })
     return true, { paid = paid == true, owed = not paid, line = not paid and id or nil, payment = id }
 end
 

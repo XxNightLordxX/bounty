@@ -104,8 +104,14 @@ end
 local NO_IMAGE_RETRY_SECONDS = 30
 local NO_IMAGE_QUICK_TRIES = 3
 
+--- How soon after its last render a face whose clothes changed is asked
+--- for again (Mugshot.invalidate): sooner than the refresh floor, never on
+--- demand.
+local CHANGED_FLOOR_SECONDS = 60
+
 --- How long an entry waits before it is asked for again, and from when.
 local function nextAsk(entry, floor)
+    if entry.data and entry.changed then return math.min(floor, CHANGED_FLOOR_SECONDS), entry.at end
     if entry.data then return floor, entry.at end
     local misses = entry.misses or 0
     local since = entry.askedAt or entry.at
@@ -155,6 +161,8 @@ function Mugshot.request(cid)
         id = entry and entry.id or nil,
         at = entry and entry.at or os.time(),
         misses = entry and entry.misses or 0,
+        -- Still out of date until a new face arrives (Mugshot.invalidate).
+        changed = entry and entry.changed or nil,
         pending = true,
         pendingSince = os.time(),
         -- When it was last asked, for an entry with no image yet (nextAsk).
@@ -224,20 +232,19 @@ function Mugshot.store(cid, image)
     return true
 end
 
---- Drop a cached image so the next request re-renders. Called when the
---- target's appearance changes, rather than re-rendering on a timer.
+--- Mark a cached image as out of date, so the next request re-renders it
+--- sooner than the refresh floor: a minute after its last render
+--- (CHANGED_FLOOR_SECONDS). Called when the target's appearance changes.
+--- The old face is kept and served until the new one arrives. It used to be
+--- refused inside the floor (so a change of clothes brought nothing
+--- sooner) and, past it, dropped, which only blanked the face meanwhile.
 function Mugshot.invalidate(cid)
     local entry = cache[cid]
     if not entry then return false end
-    -- The floor still applies: an appearance change is a hint, not a licence
-    -- to render on demand. To a face somebody has: an entry with none is
-    -- spaced out by its own wait (nextAsk), and keeping it is what does so.
+    -- To a face somebody has: an entry with none is spaced out by its own
+    -- wait (nextAsk), and keeping it is what does so.
     if not entry.data then return false end
-    if (os.time() - entry.at) < ((Config.Mugshot.MinRefreshMinutes or 5) * 60) then
-        return false
-    end
-    dropHandle(entry)
-    cache[cid] = nil
+    entry.changed = true
     return true
 end
 

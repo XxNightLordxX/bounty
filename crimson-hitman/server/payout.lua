@@ -64,14 +64,16 @@ function Payout.holds(recipientCid, line)
 end
 
 --- When the hold on this give is released anyway (os.time()), from the
---- first check that holds it and says, or nil.
+--- first check that holds it, or nil when that one does not say. A check
+--- that does not hold the give is not asked: the dead drop's time was
+--- given for a payout body disposal was holding, past which it still held.
 ---@return integer|nil
 function Payout.releasesAt(recipientCid, line)
     for _, name in ipairs(Payout.ORDER) do
         local check = checks[name]
-        if check and check.releasesAt then
-            local at = ask(name, check.releasesAt, recipientCid, line)
-            if at ~= nil then return at end
+        if check and check.holds and ask(name, check.holds, recipientCid, line) then
+            if not check.releasesAt then return nil end
+            return (ask(name, check.releasesAt, recipientCid, line))
         end
     end
     return nil

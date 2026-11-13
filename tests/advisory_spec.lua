@@ -69,9 +69,14 @@ describe('threat advisory', function()
             targetCid = 'TARGET01', reason = 'x', reward = { baseline = { cash = 1000 } },
         })
         local jobs = Natives.calls.dispatch[1].job_table
-        eq(#jobs, 2, 'the enabled names and no others')
-        eq(jobs[1], 'police')
-        eq(jobs[2], 'sast')
+        -- The enabled names, and the job of an officer online whom
+        -- RecipientJobTypes makes a recipient (the trooper, by type 'leo':
+        -- review 86 E8-4); never a name switched off.
+        local set = {}
+        for _, j in ipairs(jobs) do set[j] = true end
+        truthy(set.police and set.sast, 'the enabled names: ' .. table.concat(jobs, ','))
+        truthy(set.trooper, 'the officer online by type: ' .. table.concat(jobs, ','))
+        falsy(set.k9, 'not a name switched off')
     end)
 
     it('takes the threat off the MDT when the contract ends', function()

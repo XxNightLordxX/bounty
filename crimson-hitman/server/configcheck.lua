@@ -32,9 +32,21 @@ local ConfigCheck = {}
 
 local Settings
 
+--- What this start's own checks said of config.lua (main.lua's
+--- validateConfig), kept for the findings: a value they put back is in
+--- range in the settings in force, and only these still name it.
+local startWarnings = {}
+
 ---@param deps table { settings }
 function ConfigCheck.init(deps)
     Settings = deps and deps.settings or nil
+end
+
+--- Keep what this start's checks said (main.lua, once a start).
+---@param warn string[]
+function ConfigCheck.startSaid(warn)
+    startWarnings = {}
+    for i, line in ipairs(type(warn) == 'table' and warn or {}) do startWarnings[i] = tostring(line) end
 end
 
 --- The setting a line names (Config.<key>), for its fix.
@@ -103,7 +115,9 @@ function ConfigCheck.findings()
         out[#out + 1] = { kind = kind, text = text, fix = fix }
     end
 
-    -- Values: what the checks say of the settings in force now.
+    -- Values: what the checks said of config.lua at this start, and what
+    -- they say of the settings in force now (one line said by both, once).
+    for _, line in ipairs(startWarnings) do add('setting', line, settingFix(line)) end
     if Settings and Settings.configWarnings then
         local fatal, warn = Settings.configWarnings()
         for _, line in ipairs(fatal or {}) do add('setting', line, settingFix(line)) end
@@ -121,13 +135,20 @@ function ConfigCheck.findings()
             elseif st.choice == 'none' then
                 fix = (L('configcheck.set_config_integrations_auto_once_you')):format(st.key, table.concat(st.names, ', '))
             else
-                local names = {}
-                for i = 1, #st.detected do names[i] = st.detected[i].resource end
-                fix = #names > 0
-                    and (L('configcheck.install_and_start_before_crimson_hitman'))
+                -- Only the script the setting names, when it names one: a
+                -- started script beside it is offered, by name, rather than
+                -- told to be installed.
+                local names, started, startedResource = Integrations.notStarted(st)
+                if started then
+                    fix = (L('configcheck.set_config_integrations_to_the_started'))
+                        :format(st.key, tostring(st.choice), startedResource, st.key, started)
+                elseif #names > 0 then
+                    fix = (L('configcheck.install_and_start_before_crimson_hitman'))
                         :format(table.concat(names, ' or '), st.key)
-                    or (L('configcheck.install_one_and_start_it_before'))
+                else
+                    fix = (L('configcheck.install_one_and_start_it_before'))
                         :format(table.concat(st.names or {}, ', '), st.key)
+                end
             end
             add('script', line, fix)
         end

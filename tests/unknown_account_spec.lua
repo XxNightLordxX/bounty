@@ -136,9 +136,10 @@ describe('the diagnosis on a server with unreadable accounts', function()
         fixture(s)
         withConfig({ { Config.Sources.item, 'enabled', false } }, function()
             local out = table.concat(s.admin.diagnose(1), '\n')
-            truthy(out:find('money only', 1, true), out)
-            truthy(out:find('predates', 1, true),
-                'and say what to do about it: ' .. out)
+            -- Item escrow off alone: weapons and money are still offered,
+            -- and an explicit false is no old config (review 86 C1-1).
+            truthy(out:find('weapons and money only', 1, true), out)
+            falsy(out:find('predates', 1, true), 'no old config to blame: ' .. out)
         end)
     end)
 

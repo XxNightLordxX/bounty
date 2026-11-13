@@ -35,7 +35,17 @@ local asked = false
 ---@return integer[]|nil
 function VersionCheck.parse(text)
     if type(text) ~= 'string' then return nil end
-    local a, b, c = text:sub(1, VersionCheck.MAX_BODY):match('(%d+)%.(%d+)%.?(%d*)')
+    local body = text:sub(1, VersionCheck.MAX_BODY)
+    -- JSON with it in (docs/running.md): read from its "version" or
+    -- "tag_name" field. The first dotted number anywhere was a rating
+    -- (4.5) or a date (2026.11.13) as often as the version.
+    if body:match('^%s*{') then
+        local field = body:match('"version"%s*:%s*"v?([^"]*)"')
+            or body:match('"tag_name"%s*:%s*"v?([^"]*)"')
+        if not field then return nil end
+        body = field
+    end
+    local a, b, c = body:match('(%d+)%.(%d+)%.?(%d*)')
     if not a then return nil end
     if #a > 9 or #b > 9 or #c > 9 then return nil end
     return { math.tointeger(tonumber(a)), math.tointeger(tonumber(b)), math.tointeger(tonumber(c)) or 0 }

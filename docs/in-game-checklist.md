@@ -942,6 +942,22 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] Admin panel, a live contract's **Money** tab while the server does not answer (stop the resource's server side briefly): *The game did not answer that.* with **Ask again**, which reads the reward again
 - [ ] Admin panel header search, before opening any organisation view: type *office radius* and pick the setting: Org > Setup opens with the row marked and in view
 
+## 42. Review 86 server checks
+
+- [ ] Body disposal on, `OnTimeout = 'reduced'`, `ReducedPercent = 50`: place a $5,000 contract in dirty money, kill and verify, let the step time out: the hitman ends with $2,500 in black money and the placer gets $2,500 in black money back
+- [ ] Body disposal on with `PayNowPercent = 40`: the start notice says *Part of your payout is paid now; the rest at the drop-off*
+- [ ] `Config.Completion.Fulfilment = 'either'`: revive a killed target, have them relog within 5 minutes: they are still protected from a new kill until the 5 minutes are up
+- [ ] Proof items on: hand over an ID card while the database is stopped (`mysql`): the card comes back when nothing was paid
+- [ ] Informant tips on: buy a tip, pause the app for 11 minutes: the area stays on the map and the card keeps its time; after the pause the time picks up where it stood
+- [ ] `'server'` photo storage on `mysql`: press *Keep in the app* while the database is stopped, start it, press it again: the photo is kept and opens
+- [ ] Reason quality on with `LowEffortAction = 'review'`: agree a change of reason to *rdm because he looked at me*: Needs review lists it
+- [ ] Two staff: one previews a settings import, the other changes one of its settings: the apply is refused as changed since the preview
+- [ ] A contract whose deadline was banked past its lifetime: Staff Extend +1 h moves the lifetime and says the real time left
+- [ ] Organisation garage on with `Config.Integrations.Keys = 'none'`: the vehicle taken out opens, and the start says the garage wants a keys script
+- [ ] Send a contract to an organisation: the reply does not say whether it reached it
+- [ ] Protect a player for 1 hour and suspend one for 2 days from the panel: each answer is one sentence (*for 1 hour*, *for 2 days*)
+- [ ] `/cleanse <id> 14000` on a $15,000 buyout: *Nothing was bought: the price is not $14,000* and the real price
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

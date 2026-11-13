@@ -36,7 +36,7 @@ Developer, **Other scripts** (client kinds are sent to every player's game).
 | `Ambulance` | `sc-ambulance`, `qbx_medical` | both | Death and last stand from the framework's player metadata and the game | sc-ambulance escrowed (its `IsDead` / `IsLaststand`, as always called); qbx_medical read |
 | `Banking` | `Renewed-Banking` | server | The organisation's funds in this resource's own ledger (chosen once, kept) | Renewed-Banking 2.1.4 |
 | `Phone` | `lb-phone` | both | No phone app; notices shown in the game's feed | lb-phone 2.9 documented exports |
-| `Keys` | `qbx_vehiclekeys` | server | The disposal vehicle is left unlocked, no keys | its `GiveKeys(source, vehicle)` as qbx_core calls it |
+| `Keys` | `qbx_vehiclekeys` | server | The disposal vehicle and the organisation garage's vehicles are left unlocked, no keys | its `GiveKeys(source, vehicle)` as qbx_core calls it |
 | `Garage` | `onesync` | server | The organisation's garage is off, in one line | no resource: the FiveM server natives `CreateVehicleServerSetter`, `SetEntityOrphanMode`, `SetEntityRoutingBucket`, `SetVehicleNumberPlateText`, `SetVehicleDoorsLocked`, `DoesEntityExist`, `GetEntityCoords`, `DeleteEntity` (docs.fivem.net); no garage resource's export is guessed |
 | `Mugshot` | `MugShotBase64` | client | No target headshots | MugShotBase64 read |
 | `Clothing` | `qb-clothing`, `illenium-appearance`, `rcore_clothing` | client | A change of clothes does not refresh the headshot early | events only, as always listened for; not read |

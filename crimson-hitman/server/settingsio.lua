@@ -37,6 +37,13 @@ SettingsIO.BYTES_MAX = 200000
 
 local deps
 
+--- The last preview each staff member was shown, by who they are (the
+--- name the panel passes as `staff`): its text, and each change it listed
+--- with the value it was from (`basis`), for the apply to hold to.
+local shown = {}
+--- The most remembered at once; the oldest is let go of past it.
+local SHOWN_MAX = 32
+
 local function count(t)
     local n = 0
     for _ in pairs(t) do n = n + 1 end
@@ -46,6 +53,7 @@ end
 ---@param d table { settings, presets, audit }
 function SettingsIO.init(d)
     deps = d
+    shown = {}
 end
 
 local function resourceVersion()
@@ -102,8 +110,9 @@ end
 ---@param text any
 ---@return table|nil { changes = { { key, label, from, to } }, refused = { { key, label, why } }, same = n,
 --- presets = { { name, keys, why } }, resource }
+---@param viewer string|nil who it is shown to: remembered for their apply
 ---@return string|nil why
-function SettingsIO.preview(text)
+function SettingsIO.preview(text, viewer)
     local body, why = decode(text)
     if not body then return nil, why end
     local Settings = deps.settings
@@ -165,6 +174,20 @@ function SettingsIO.preview(text)
     for _, r in ipairs(refused) do
         out.refused[#out.refused + 1] = { key = r.key, label = labels[r.key], why = r.why }
     end
+    if viewer ~= nil then
+        local basis = {}
+        for _, change in ipairs(out.changes) do
+            basis[change.key] = { value = Util.copy(Settings.valueOf(change.key)) }
+        end
+        if shown[viewer] == nil and count(shown) >= SHOWN_MAX then
+            local oldest, at
+            for who, seen in pairs(shown) do
+                if not at or seen.at < at then oldest, at = who, seen.at end
+            end
+            if oldest ~= nil then shown[oldest] = nil end
+        end
+        shown[viewer] = { text = text, basis = basis, n = #out.changes, at = os.time() }
+    end
     for _, preset in ipairs(type(body.presets) == 'table' and body.presets or {}) do
         local name = type(preset) == 'table' and preset.name or nil
         local values = type(preset) == 'table' and preset.values or nil
@@ -196,12 +219,32 @@ function SettingsIO.apply(text, expect, staff, actorCid)
     if tonumber(expect) ~= #preview.changes then
         return false, 'invalid_value', L('settingsio.the_settings_changed_since_the_preview')
     end
+    -- Key for key, and each from the value the preview showed: the count
+    -- alone let a change another staff member made after the preview, to a
+    -- key it listed as unchanged, be written over when another listed
+    -- change had come to match the text meanwhile (same count, other keys).
+    local seen = staff ~= nil and shown[staff] or nil
+    local basis = {}
+    if seen and seen.text == text then
+        local Settings = deps.settings
+        for _, change in ipairs(preview.changes) do
+            local was = seen.basis[change.key]
+            if not was or not Settings.same(Settings.valueOf(change.key), was.value) then
+                return false, 'invalid_value', L('settingsio.the_settings_changed_since_the_preview')
+            end
+            basis[change.key] = was.value
+        end
+        if seen.n ~= #preview.changes then
+            return false, 'invalid_value', L('settingsio.the_settings_changed_since_the_preview')
+        end
+    end
     if #preview.changes == 0 and addable == 0 then
         return false, 'unchanged', L('settingsio.nothing_to_change_the_settings_are')
     end
     local applied, refused = {}, {}
     for _, change in ipairs(preview.changes) do
-        local ok, err, detail = deps.settings.set(change.key, Util.copy(preview.values[change.key]), staff, actorCid)
+        local ok, err, detail = deps.settings.set(change.key, Util.copy(preview.values[change.key]), staff, actorCid,
+            Util.copy(basis[change.key]))
         if ok then
             applied[#applied + 1] = change.key
         else
@@ -220,6 +263,7 @@ function SettingsIO.apply(text, expect, staff, actorCid)
             end
         end
     end
+    if staff ~= nil and shown[staff] == seen then shown[staff] = nil end
     pcall(deps.audit.staff, 'admin_settings_imported', actorCid, nil,
         { keys = applied, refused = #refused + #preview.refused, presets = added, by = staff })
     -- Whole clauses, each with its own count and its own plural.

@@ -220,16 +220,44 @@ local function clearFor(cid, contractId)
     return Markers.clear(actor.source, 'tip:' .. contractId)
 end
 
+--- When something a tip started (its showing, or the wait after it) ends,
+--- with the time the contract has been held so far added: it stands still
+--- while the contract is held (the restart hold, the app pause, a staff
+--- freeze), as buy() counts the wait and LocationTip.heldBack gives the
+--- time back once the hold ends.
+---@param contract table|nil
+---@param at integer when it ends on the wall clock
+---@param bought integer when the tip was bought
+---@param now integer
+---@return integer
+local function heldEnd(contract, at, bought, now)
+    if not contract or at <= 0 then return at end
+    local since = Holds.since(contract)
+    if not since then return at end
+    local start = math.max(since, bought)
+    if start >= at or now <= start then return at end
+    return at + (now - start)
+end
+
 --- Take the tip off the map when its time runs out, unless a newer one on
---- the same contract is showing by then.
+--- the same contract is showing by then, or the contract is held: its
+--- showing stands still with the hold, and the hold's end puts it back with
+--- its time (LocationTip.heldBack, which arms this again).
 local function armClear(row)
     if clearTimers[row.id] then return end
     local left = math.max(0, (tonumber(row.expires_at) or 0) - os.time())
     clearTimers[row.id] = SetTimeout(left * 1000, function()
         clearTimers[row.id] = nil
         local ok, err = pcall(function()
-            local _, _, showing = boughtBy(row.contract_id, row.buyer_cid, os.time())
+            local now = os.time()
+            local _, _, showing = boughtBy(row.contract_id, row.buyer_cid, now)
             if showing then return end
+            local read, contract = pcall(Storage.readContract, row.contract_id)
+            if read and contract and not CH.TERMINAL[contract.state]
+                and (Holds.releasing() or heldEnd(contract, tonumber(row.expires_at) or 0,
+                    tonumber(row.bought_at) or 0, now) > now) then
+                return
+            end
             if clearFor(row.buyer_cid, row.contract_id) then
                 Notify.push(row.buyer_cid, 'tip', row.contract_id)
             end
@@ -465,7 +493,16 @@ end
 function LocationTip.cardFor(contract, cid)
     if CH.TERMINAL[contract.state] then return nil end
     local now = os.time()
-    local _, _, showing = boughtBy(contract.id, cid, now)
+    -- Shown and waited as the hold has them: standing still while it
+    -- lasts (heldEnd). On the wall clock alone, the card dropped the area
+    -- and the wait mid-hold and offered a tip the purchase then refused.
+    local showing, showingEnds
+    for _, row in ipairs(rowsFor(contract.id)) do
+        if row.buyer_cid == cid then
+            local ends = heldEnd(contract, tonumber(row.expires_at) or 0, tonumber(row.bought_at) or 0, now)
+            if ends > now then showing, showingEnds = row, ends end
+        end
+    end
     local count, newest = boughtOn(contract.id)
     local on = LocationTip.enabled(contract)
     -- Off for this contract while the server sells them elsewhere: said, so
@@ -479,14 +516,17 @@ function LocationTip.cardFor(contract, cid)
         IntelRules.tipCard(out, contract, mine, count, (boughtBy(contract.id, cid, now)), now)
     end
     if showing then
-        out.secondsLeft = (tonumber(showing.expires_at) or 0) - now
-        out.expiresAt = tonumber(showing.expires_at)
+        out.secondsLeft = showingEnds - now
+        out.expiresAt = showingEnds
     end
     if on then
         out.left = math.max(0, setting('MaxPurchasesPerContract', 0) - count)
         local untilAt = newest
             and ((tonumber(newest.bought_at) or 0) + math.max(0, setting('CooldownMinutes', 0)) * 60)
             or 0
+        if newest and untilAt > 0 then
+            untilAt = heldEnd(contract, untilAt, tonumber(newest.bought_at) or 0, now)
+        end
         if untilAt > now then
             out.cooldownSeconds = untilAt - now
             out.cooldownUntil = untilAt

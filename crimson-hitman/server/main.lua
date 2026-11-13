@@ -683,13 +683,29 @@ local function validateConfig(quiet)
         { 'Relay', 'MaxLength' },
     }
 
+    -- Each section said once, and as what it is: one written as a number
+    -- (`LocationTip = 25000`) is there, the wrong kind, not missing.
+    local saidSection = {}
     for _, entry in ipairs(REQUIRED_NUMBERS) do
         local section, key = entry[1], entry[2]
-        -- A section may be a block inside one ('Intel.LocationTip').
-        local block = Config
-        for part in section:gmatch('[^%.]+') do block = type(block) == 'table' and block[part] or nil end
+        -- A section may be a block inside one ('Intel.LocationTip'): the
+        -- first part that is not a block is the one named.
+        local block, path = Config, nil
+        for part in section:gmatch('[^%.]+') do
+            if type(block) == 'table' then
+                path = path and (path .. '.' .. part) or part
+                block = block[part]
+            end
+        end
         if type(block) ~= 'table' then
-            fatal[#fatal + 1] = (L('main.config_is_missing_entirely')):format(section)
+            if not saidSection[path] then
+                saidSection[path] = true
+                if block == nil then
+                    fatal[#fatal + 1] = (L('main.config_is_missing_entirely')):format(path)
+                else
+                    fatal[#fatal + 1] = (L('main.config_is_a_it_has_to_be_a_table')):format(path, type(block))
+                end
+            end
         elseif type(block[key]) ~= 'number' then
             fatal[#fatal + 1] = (L('main.config_is_it_has_to_be')):format(section, key, type(block[key]))
         end
@@ -857,7 +873,10 @@ local function validateConfig(quiet)
     -- refusal, which is the safe way to misread it; said so here.
     local allowSwitch = Config.Database.AllowModeSwitch
     if allowSwitch ~= nil and type(allowSwitch) ~= 'boolean' then
-        warn[#warn + 1] = (L('main.config_database_allowmodeswitch_is_not_true')):format(tostring(allowSwitch))
+        -- A string quoted, as NotifyTarget's check says it: 'true' printed
+        -- bare read as "is true, not true or false".
+        warn[#warn + 1] = (L('main.config_database_allowmodeswitch_is_not_true')):format(
+            type(allowSwitch) == 'string' and ('"' .. allowSwitch .. '"') or tostring(allowSwitch))
     end
     -- How long one mysql statement may go unanswered (server/storage/mysql.lua).
     -- Not a number, or below 0, is the shipped 10; over 12, the phone's own
@@ -1411,6 +1430,11 @@ local function validateConfig(quiet)
 
     if quiet then return #fatal == 0, fatal, warn end
 
+    -- What this start said, for /ch-diag config (ConfigCheck.findings): a
+    -- value the start put back is in range by then, so checking the live
+    -- settings again never named it, though config.lua still holds it.
+    CrimsonBoot.require('server.configcheck').startSaid(warn)
+
     -- Configuration problems (shared/log.lua): each in full with
     -- Config.Debug on, and one line for all of them at the end of the start
     -- with it off (StartCrimsonHitman). Refusing to start says them all.
@@ -1762,7 +1786,10 @@ local function reportIntegrations()
     -- that was never there.
     local app = CrimsonBoot.require('server.app')
     local online = modules.identity and modules.identity.online() or {}
-    local read = Integrations.has('inventory') and app.probeInventory(online[1]) or nil
+    -- Not `has and probe() or nil`: a probe answering false (no read on this
+    -- build answered) came out of that as nil, read as nobody online.
+    local read = nil
+    if Integrations.has('inventory') then read = app.probeInventory(online[1]) end
     if not Integrations.has('inventory') then
         Log.debug('inventory read: no inventory adapter answers (said above)')
     elseif read == nil then

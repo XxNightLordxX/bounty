@@ -1285,6 +1285,14 @@ applyUnlocked = function(proposal, keyHeld)
 
     Audit.action('amendment_applied', proposal.proposer, proposal.contract_id, { kind = kind })
 
+    -- An agreed change of reason sets a reason as placing and Edit do: one
+    -- the reason-quality rule lets through for review goes to staff
+    -- (server/rp_reason.lua). Without it, Propose change set any low-effort
+    -- reason unseen.
+    if kind == CH.AMENDMENT.CHANGE_REASON and Contracts.reasonSet then
+        pcall(Contracts.reasonSet, proposal.contract_id, 'change_reason')
+    end
+
     local people = participants(contract)
     for cid in pairs(people) do
         Notify.toCitizen(cid, L('amendments.contract_amended'), L('amendments.a_contract_you_hold_has_been'))

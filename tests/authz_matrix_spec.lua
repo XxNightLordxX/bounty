@@ -1910,13 +1910,20 @@ describe('the events registered outside the app gate', function()
         truthy(s.mugshot.handleFor('CREATOR1'))
         truthy(s.mugshot.handleFor('HITMAN01'))
 
-        -- Past the refresh floor, so an invalidation is allowed at all.
-        Env.advance((Config.Mugshot.MinRefreshMinutes * 60) + 1)
         truthy(fire('appearanceChanged', 3))
 
-        falsy(s.mugshot.handleFor('HITMAN01'), 'the sender face is dropped')
-        truthy(s.mugshot.handleFor('CREATOR1'),
-            'and a player cannot drop somebody else face')
+        -- Marked out of date, its face kept until the new one (review 86
+        -- C5-2): a minute on, only the sender is asked to render again.
+        Env.advance(61)
+        Env.clientEvents = {}
+        s.mugshot.request('HITMAN01')
+        s.mugshot.request('CREATOR1')
+        local asked = {}
+        for _, event in ipairs(Env.clientEvents) do
+            if event.name == 'crimson-hitman:renderMugshot' then asked[event.target] = true end
+        end
+        truthy(asked[3], 'the sender is asked again')
+        falsy(asked[1], 'and a player cannot touch somebody else face')
     end)
 
     it('answers whoAmI about the caller and nobody else', function()

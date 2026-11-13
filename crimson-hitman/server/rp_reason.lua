@@ -92,11 +92,16 @@ end
 --- and wording. Nothing in it but the contract, its placer (shown to staff
 --- without the identity ACE by their role only) and the phrase it matched.
 local queued = {}
-function Reason.after(name, actor, payload, result)
-    if (name ~= 'create' and name ~= 'revise') or not Feature.on(BLOCK) then return end
+
+--- Queue the contract's reason as it stands now, if it is low-effort and
+--- let through for review. `request` says what set it: create, revise, or
+--- change_reason (an agreed change, server/amendments.lua).
+---@param contractId string|nil
+---@param request string
+function Reason.queue(contractId, request)
+    if not Feature.on(BLOCK) then return end
     if Feature.block(BLOCK).LowEffortAction ~= 'review' or Config.Reason.Mode ~= 'freetext' then return end
-    local id = name == 'create' and type(result) == 'table' and result.id or payload.id
-    local contract = id and deps.storage.readContract(Util.toId(id))
+    local contract = contractId and deps.storage.readContract(Util.toId(contractId))
     if not contract or type(contract.reason) ~= 'string' then return end
     local matched = Reason.lowEffort(contract.reason)
     if not matched then return end
@@ -106,15 +111,25 @@ function Reason.after(name, actor, payload, result)
     deps.review.open({
         kind = 'low_effort_reason', contract_id = contract.id,
         cids = { creator = contract.creator_cid },
-        known = { matched = matched, request = name },
+        known = { matched = matched, request = request },
     })
+end
+
+function Reason.after(name, actor, payload, result)
+    if name ~= 'create' and name ~= 'revise' then return end
+    local id = name == 'create' and type(result) == 'table' and result.id or payload.id
+    Reason.queue(id, name)
 end
 
 function Reason.init(d)
     deps = d
     -- Contracts.reasonFor asks this after its own rules, wherever a reason
     -- is set.
-    if deps.contracts then deps.contracts.reasonQuality = Reason.check end
+    if deps.contracts then
+        deps.contracts.reasonQuality = Reason.check
+        -- And amendments.lua asks this once an agreed change of reason is set.
+        deps.contracts.reasonSet = Reason.queue
+    end
 end
 
 Reason.RULES = {

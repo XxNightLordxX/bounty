@@ -31,7 +31,7 @@ Config.Database = {
     AllowModeSwitch     = false,   -- start even though the old mode still holds money
     QueryTimeoutSeconds = 10,      -- mysql: seconds a statement may go unanswered; 0 = forever
     Json                = {
-        Directory            = 'data',  -- folder inside the resource
+        Directory            = 'data',  -- folder inside the resource; a new one starts an empty store
         SyncOnFinancialWrite = true,    -- write money changes to disk at once
     },
 }
@@ -52,7 +52,7 @@ Config.Integrations = {
     Ambulance   = 'auto',  -- 'auto' | 'sc-ambulance' | 'qbx_medical' | 'none'
     Banking     = 'auto',  -- 'auto' | 'Renewed-Banking' | 'none' (organisation funds)
     Phone       = 'auto',  -- 'auto' | 'lb-phone' | 'none' (the phone app)
-    Keys        = 'auto',  -- 'auto' | 'qbx_vehiclekeys' | 'none' (disposal vehicle)
+    Keys        = 'auto',  -- 'auto' | 'qbx_vehiclekeys' | 'none' (disposal and garage vehicles)
     Garage      = 'auto',  -- 'auto' | 'onesync' | 'none' (organisation garage vehicles)
     Mugshot     = 'auto',  -- 'auto' | 'MugShotBase64' | 'none' (target headshots)
     Clothing    = 'auto',  -- 'auto' | a clothing adapter's name | 'none'
@@ -90,8 +90,8 @@ Config.Holds = { -- what stops every contract's clocks (server/holds.lua)
 -- What a reward may be made of and how big it may be, payouts, stakes and
 -- buyouts. Every reward is held in escrow from placing until the end.
 
-Config.Sources = { -- what a reward may be paid in, and the most of each
-    cash   = { enabled = true,  max = 250000 },                        -- cash, at most this much
+Config.Sources = { -- what a reward may be paid in, and the most of each per part
+    cash   = { enabled = true,  max = 250000 },                        -- cash, at most this much per part
     bank   = { enabled = true,  max = 500000 },                        -- bank money
     dirty  = { enabled = true,  max = 250000, item = 'black_money' },  -- dirty money, as this item
     item   = { enabled = true,  maxStacks = 10, maxPerStack = 100 },   -- items: stacks, and per stack
@@ -131,8 +131,8 @@ Config.Bailout = {
     Enabled                 = true,       -- a target may buy out a contract on them
     MinMultiplier           = 1.0,        -- least buyout price, times the reward's cash and bank
     MaxMultiplier           = 3.0,        -- most buyout price, times the reward's cash and bank
-    AbsoluteMax             = 500000,     -- most buyout price in money
-    ProcessingDelaySeconds  = 120,        -- a held contract's hitman gets this long first
+    AbsoluteMax             = 500000,     -- most buyout price in money; wins over MinMultiplier
+    ProcessingDelaySeconds  = 120,        -- a held contract's hitman gets this long; untaken closes at once
     BlockWhileIncapacitated = true,       -- no buyout while dead or downed
     Command                 = 'cleanse',  -- the buyout command, for players who cannot open the app
 }
@@ -554,7 +554,7 @@ Config.Admin = {
     Ace                 = 'crimson.admin',      -- ACE for staff, and for anything that writes
     IdentityAce         = 'crimson.identity',   -- ACE to see who is behind an anonymous party
     DeveloperAce        = 'crimson.developer',  -- ACE for the panel's Developer section
-    ModeratorAce        = 'crimson.moderator',  -- ACE that reads, freezes, suspends, protects and voids
+    ModeratorAce        = 'crimson.moderator',  -- ACE that reads, freezes, suspends, protects, voids, moves deadlines
     ExtraAces           = { 'command' },        -- ACEs that may also read (never write)
     Commands            = { -- command names, without the slash
         timeline  = 'ch-timeline',   -- one contract's history
@@ -920,7 +920,7 @@ Config.RateLimit = {
     Key = 'license',  -- 'license' (per account) | 'citizenid' (per character)
 }
 
-Config.Cooldowns = { -- per-player allowances: refill over `per` seconds, `burst` held
+Config.Cooldowns = { -- per-player allowances: `burst` held, one back every per/burst seconds
     diagnostic      = { per = 60, burst = 10 },   -- the page's own fault reports
     create          = { per = 60, burst = 2 },    -- placing a contract
     accept          = { per = 30, burst = 3 },    -- accept, abandon, cancel, handovers, one-tap actions

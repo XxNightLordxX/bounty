@@ -2604,7 +2604,11 @@ function Escrow.reduceStake(contractId, line, amount, reason)
         slot = 0,
         portion = CH.PORTION.OWED,
         owed_to = line.staker,
-        source = line.source == 'cash' and 'cash' or 'bank',
+        -- In the line's own money: dirty money split off a dirty line (body
+        -- disposal's reduced timeout) goes back as the same item, never as
+        -- clean bank money. Anything else is paid as bank, as it was.
+        source = CH.MONEY_SOURCES[line.source] and line.source or 'bank',
+        item = line.source == CH.SOURCE.DIRTY and dirtyItemOf(line) or nil,
         amount = returned,
         state = CH.ESCROW_STATE.HELD,
         metadata = { splitFrom = line.id, stakeWas = original, stakeNow = amount,

@@ -176,6 +176,11 @@ local WAITS_FOR_RECOVERY = {
     presetSaveOwn = true, presetDelete = true, settingsImportApply = true,
     targetJobSet = true, targetJobRemove = true, targetReset = true, targetExtend = true,
     targetCounts = true, targetOverride = true, targetOverrideClear = true, targetJobAction = true,
+    -- And the writes that move no money, as docs/admin-panel.md says every
+    -- write but the log's flush waits: a note, a player's playtime, a
+    -- notice to every hitman, kept photos removed, alerts acknowledged.
+    addNote = true, setPlaytime = true, announce = true, removePhotos = true,
+    ackAlerts = true, testAlert = true,
 }
 
 --- How long one overview is shared between requests. Each open panel asks
@@ -2518,9 +2523,12 @@ H.settingsExport = function()
 end
 
 --- What an exported text would change now: nothing changes.
-H.settingsImport = function(_, data)
+H.settingsImport = function(src, data)
     if not deps.settingsio then return false, 'unavailable', L('panel.export_and_import_are_not_running') end
-    local preview, why = deps.settingsio.preview(data.text)
+    -- Remembered for whoever is shown it, so their apply holds to it
+    -- (SettingsIO.apply).
+    local _, who = staffOf(src)
+    local preview, why = deps.settingsio.preview(data.text, who)
     if not preview then return false, CH.ERR.INVALID_INPUT, why end
     preview.values = nil
     return true, nil, nil, preview
@@ -3193,16 +3201,22 @@ local function actionSubject(data, src)
     return who
 end
 
---- How long a measure runs, as the phrase its sentence takes: 'for 2
---- days' where it is whole days, otherwise hours. Whole phrases with their
---- plurals, so a translation words them itself.
-local function forSpan(seconds)
+--- The sentence a measure's answer is, for how long it runs: whole days
+--- where it is whole days, otherwise hours, each its own whole sentence
+--- with its plural (`base` .. '_days_one' and so on), so a translation
+--- words the span with the rest of it. A span pieced into the sentence
+--- ('for 1 day') was English inside a translated answer.
+---@param base string the keys' common start
+---@param name string who it is on
+---@param seconds integer
+---@return string
+local function spanSentence(base, name, seconds)
     if seconds % 86400 == 0 then
         local days = seconds // 86400
-        return (L(days == 1 and 'panel.for_days_one' or 'panel.for_days_many')):format(days)
+        return (L(base .. (days == 1 and '_days_one' or '_days_many'))):format(name, days)
     end
     local hours = seconds // 3600
-    return (L(hours == 1 and 'panel.for_hours_one' or 'panel.for_hours_many')):format(hours)
+    return (L(base .. (hours == 1 and '_hours_one' or '_hours_many'))):format(name, hours)
 end
 
 --- What a refused suspension or protection says.
@@ -3256,8 +3270,9 @@ H.suspend = function(src, data)
     if not ok then
         return sanctionRefusal(err, L('panel.they_are_suspended_already_lift_it'))
     end
-    return true, nil, (L('panel.is_suspended_from_placing_and_accepting'))
-        :format(who.name or L('panel.they'), days > 0 and forSpan(days * 86400) or L('panel.until_you_lift_it')),
+    local name = who.name or L('panel.they')
+    return true, nil, days > 0 and spanSentence('panel.suspended', name, days * 86400)
+            or (L('panel.suspended_until_lifted')):format(name),
         { suspended = Measures.view('suspend', who.cid, identifies(src)) }
 end
 
@@ -3290,8 +3305,9 @@ H.protect = function(src, data)
     if not ok then
         return sanctionRefusal(err, L('panel.they_are_protected_already_lift_it'))
     end
-    return true, nil, (L('panel.is_protected_from_new_contracts_contracts'))
-        :format(who.name or L('panel.they'), hours > 0 and forSpan(hours * 3600) or L('panel.for_good')),
+    local name = who.name or L('panel.they')
+    return true, nil, hours > 0 and spanSentence('panel.protected', name, hours * 3600)
+            or (L('panel.protected_for_good')):format(name),
         { protected = Measures.view('protect', who.cid, identifies(src)) }
 end
 
@@ -3334,11 +3350,14 @@ H.manualPay = function(src, data)
         return false, result, L('panel.not_paid_the_server_could_not')
     end
     local whom = who.name or L('panel.them')
+    -- A sentence for each account, not its code in one.
+    local bank = account == 'bank'
     if result.paid then
-        return true, nil, L('panel.paid_in_to'):format(amount, account, whom),
+        return true, nil, L(bank and 'panel.paid_bank_to' or 'panel.paid_cash_to'):format(amount, whom),
             { paid = true, owed = false }
     end
-    return true, nil, L('panel.in_is_owed_to_handed_over'):format(amount, account, whom), { paid = false, owed = true }
+    return true, nil, L(bank and 'panel.owed_bank_to' or 'panel.owed_cash_to'):format(amount, whom),
+        { paid = false, owed = true }
 end
 
 --------------------------------------------------------------------------

@@ -115,7 +115,9 @@ describe('R2: contracts sent to the organisation', function()
         local reply = W.call('create', 1, { target = handle, reason = 'x', toOrg = true, anonymous = false,
             reward = { slots = { { baseline = { cash = 2000 } } } }, shown = {} })
         eq(reply.ok, true, tostring(reply.err))
-        eq(reply.data.sentToOrg, true)
+        -- Never said: whether it reached the organisation says whether the
+        -- target is a member there.
+        eq(reply.data.sentToOrg, nil, 'the reply never says whether it reached the organisation')
         local id = reply.data.id
         eq(org.settings.orgContracts[id].state, 'waiting')
         falsy(listed(3, id), 'not on the open board for a stranger')

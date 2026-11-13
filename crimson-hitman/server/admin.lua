@@ -1295,6 +1295,22 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
             plan = { left = left, expires = expires }
             return deadline + seconds
         end
+        if expires and deadline >= expires then
+            -- Banked pauses put the deadline past the lifetime (Util.bandLeft):
+            -- what ends it is the lifetime, so that is what is extended, and
+            -- the deadline goes no further than to meet it. Extended from the
+            -- deadline, an amount up to the gap between them was refused as
+            -- at the limit, with the lifetime nowhere near it, and one past
+            -- the gap was said as the second or two the deadline moved.
+            local newExpires = math.max(expires, math.min(expires + seconds, lifetimeCap))
+            if newExpires <= expires then
+                plan = { refused = 'at_limit', left = math.max(0, math.min(left, expires - now)) }
+                return deadline
+            end
+            plan = { left = left, expires = expires, newExpires = newExpires, beyond = true,
+                     lifetime = newExpires >= expires + seconds and 'extended' or 'capped' }
+            return math.max(deadline, newExpires)
+        end
         local target = deadline + seconds
         local newExpires, lifetime = expires, 'unchanged'
         if expires and target > expires then
@@ -1337,7 +1353,10 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
         -- than planned: the deadline is held to the lifetime it ended with.
         local after = Storage.readContract(contractId)
         local reached = after and tonumber(after.expires_at)
-        if reached and reached < moved then
+        if plan.beyond then
+            -- The deadline was past the lifetime already, and is left there.
+            if reached then plan.newExpires = math.min(plan.newExpires, reached) end
+        elseif reached and reached < moved then
             local held = Contracts.moveDeadline(contractId, function(current)
                 return math.min(tonumber(current.deadline_at) or reached, reached)
             end, 10)
@@ -1347,10 +1366,18 @@ function Admin.adjustDeadline(src, contractId, seconds, reason)
     end
 
     local applied = moved - was
+    local leftBefore, leftAfter = math.max(0, plan.left), math.max(0, plan.left + applied)
+    if plan.beyond then
+        -- What ends it moved, not the deadline: the time it has left is the
+        -- lesser of the two, before and after.
+        applied = math.max(0, plan.newExpires - plan.expires)
+        leftBefore = math.max(0, math.min(plan.left, plan.expires - now))
+        leftAfter = math.max(0, math.min(plan.left + (moved - was), plan.newExpires - now))
+    end
     local detail = {
         seconds = applied, requested = seconds, reason = why,
         old_deadline = was, new_deadline = moved,
-        left_before = math.max(0, plan.left), left_after = math.max(0, plan.left + applied),
+        left_before = leftBefore, left_after = leftAfter,
         paused = contract.paused_since ~= nil or nil,
         lifetime = applied > 0 and plan.lifetime or nil,
         old_expires = plan.newExpires ~= plan.expires and plan.expires or nil,
@@ -2107,6 +2134,22 @@ local function describeSwitch(value)
         :format(tostring(value), type(value))
 end
 
+--- What the app offers given the item and weapon escrow switches, each
+--- case its own line: money only where both are off, the one that is off
+--- named otherwise, and the old-config hint only where one is not set at
+--- all (nil), never for an explicit false.
+local function sayEscrowOffer(say, item, weapon)
+    local itemOn, weaponOn = item == true, weapon == true
+    if not itemOn and not weaponOn then
+        say(L('admin.the_app_tells_players_this_server'))
+    elseif not itemOn then
+        say(L('admin.item_escrow_is_off_players_are'))
+    elseif not weaponOn then
+        say(L('admin.weapon_escrow_is_off_players_are'))
+    end
+    if item == nil or weapon == nil then say(L('admin.your_config_lua_predates_config_sources')) end
+end
+
 --- Report why the app is not showing something.
 ---
 --- Three separate causes have produced the same symptom on a live server —
@@ -2588,9 +2631,7 @@ function Admin.diagnose(source, subjectId, later, opts)
         local weaponOff = Config.Sources.weapon or {}
         say((L('admin.item_escrow_weapon_escrow')):format(
             describeSwitch(itemOff.enabled), describeSwitch(weaponOff.enabled)))
-        if itemOff.enabled ~= true or weaponOff.enabled ~= true then
-            say(L('admin.the_app_tells_players_this_server'))
-        end
+        sayEscrowOffer(say, itemOff.enabled, weaponOff.enabled)
         say(L('admin.name_a_player_to_test_the'), 'console')
         consoleNotes()
         say('--- end ---')
@@ -2611,9 +2652,7 @@ function Admin.diagnose(source, subjectId, later, opts)
 
     say((L('admin.item_escrow_weapon_escrow_2')):format(
         describeSwitch(itemSource.enabled), describeSwitch(weaponSource.enabled)))
-    if itemSource.enabled ~= true or weaponSource.enabled ~= true then
-        say(L('admin.the_app_tells_players_this_server'))
-    end
+    sayEscrowOffer(say, itemSource.enabled, weaponSource.enabled)
     say((L('admin.offerable_to_you_item_weapon')):format(
         #App.escrowableItems(actor, carried), #App.escrowableWeapons(actor, carried)))
     if not readOk then

@@ -1,6 +1,7 @@
 CrimsonBoot.define('shared.log', function() --- Crimson Hitman System — the one way to the console.
 ---
---- With Config.Debug = false (as shipped) the server console stays quiet: a
+--- With Config.Debug = false (config.lua ships it true, for a first start
+--- that says what it finds) the server console stays quiet: a
 --- normal start on a sound config, and normal play, print nothing at all.
 --- Every line this resource prints, on either side, goes through here as one
 --- of three kinds:
