@@ -62,9 +62,13 @@ local function staff(src)
     return { staff = true, cid = cid or ('player ' .. tostring(src)), source = src }
 end
 
+--- A refusal's own sentence (extra.message, as the phone reads it) before
+--- the code's generic one: fail() always hands that one back fourth, so it
+--- would otherwise hide why (the boss away, a member still in it).
 local function said(ok, err, extra, message, okText)
     if ok then return true, nil, okText or L('org_staff_ops.done'), extra end
-    return false, err, message or Org.message(err), extra
+    local own = type(extra) == 'table' and type(extra.message) == 'string' and extra.message ~= '' and extra.message or nil
+    return false, err, own or message or Org.message(err), extra
 end
 
 --- The member a request names: an organisation handle from orgGet, or a
@@ -78,7 +82,13 @@ local function memberCid(src, data)
     return subject and subject.cid or nil
 end
 
-local function bool(v) return type(v) == 'boolean' and v or nil end
+--- true, false, or nil when it is not a boolean. Never `v and v or nil`,
+--- which turns false into nil: an unlock or a role made not boss would
+--- then change nothing and still say Done.
+local function bool(v)
+    if type(v) == 'boolean' then return v end
+    return nil
+end
 
 local function off()
     return false, Org.ERR.OFF, L('org_staff_ops.the_organisation_is_switched_off_config')
@@ -354,9 +364,27 @@ OPS.bossPermsRevokeAll = { 'write', function(src, data)
         cells = id and org.ceiling.member[id]
     end
     if not id then return false, Org.ERR.NOT_FOUND, Org.message(Org.ERR.NOT_FOUND) end
+    if subject == 'member' then
+        -- One boss: a Deny on every power they hold now or have a cell for
+        -- (a role's power included, which no cell of theirs names). A Deny
+        -- already there stays one: never put back to Inherit, which would
+        -- hand the role's power back. Counted: the powers they stop holding.
+        if not org.members[id] then return false, Org.ERR.NOT_FOUND, Org.message(Org.ERR.NOT_FOUND) end
+        local plan, stopped = {}, 0
+        for _, p in ipairs(Org.Powers.LIST) do
+            local held = Org.Engine.holds(org, id, p.code)
+            local cell = cells and cells[p.code]
+            if cell ~= 'deny' and (held or cell ~= nil) then plan[#plan + 1] = { p.code, held } end
+        end
+        for _, step in ipairs(plan) do
+            Org.setCeiling(who, 'member', id, step[1], 'deny')
+            if step[2] and not Org.Engine.holds(org, id, step[1]) then stopped = stopped + 1 end
+        end
+        return true, nil, (L('org_staff_ops.power_revoked')):format(stopped)
+    end
     local codes = {}
     for code in pairs(cells or {}) do codes[#codes + 1] = code end
-    for _, code in ipairs(codes) do Org.setCeiling(who, subject, id, code, subject == 'role' and 'off' or 'inherit') end
+    for _, code in ipairs(codes) do Org.setCeiling(who, subject, id, code, 'off') end
     return true, nil, (L('org_staff_ops.power_revoked')):format(#codes)
 end }
 

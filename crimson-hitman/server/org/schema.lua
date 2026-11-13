@@ -262,14 +262,15 @@ Schema.CREATE = {
         INDEX idx_org_splits_contract (contract_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci]],
     -- Sign-ups waiting for a boss or staff. The body holds the answers to
-    -- the recruitment form as JSON: TEXT, widened from VARCHAR(255) on
-    -- existing databases by migrate (Schema.WIDENED).
+    -- the recruitment form as JSON: MEDIUMTEXT (20 answers of 2000 letters
+    -- of two or more bytes are past TEXT's 65535 bytes), widened from TEXT or
+    -- VARCHAR(255) on existing databases by migrate (Schema.WIDENED).
     [[CREATE TABLE IF NOT EXISTS crimson_org_applications (
         id VARCHAR(48) PRIMARY KEY,
         org_id VARCHAR(32) NOT NULL,
         cid VARCHAR(32) NOT NULL,
         name VARCHAR(64),
-        body TEXT,
+        body MEDIUMTEXT,
         state VARCHAR(12) NOT NULL,
         decided_by VARCHAR(64),
         created_at INT NOT NULL,
@@ -296,7 +297,7 @@ Schema.CREATE = {
 --- Only ever widened, never narrowed, and only the columns named here.
 Schema.WIDENED = {
     crimson_orgs = { settings = 'mediumtext' },
-    crimson_org_applications = { body = 'text' },
+    crimson_org_applications = { body = 'mediumtext' },
 }
 
 --- The short names, for a backend to walk.

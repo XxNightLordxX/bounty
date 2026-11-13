@@ -6,6 +6,40 @@ say how things work now.
 
 ## 1.2.0
 
+**Review 86 fixes (organisation)**
+- Staff panel: **Unlock** on a member, and **Not boss** / **Bosses may edit**
+  on a role, now take effect; they answered *Done* and changed nothing.
+- Boss permissions **Revoke all** on one boss's column now sets **Deny** on
+  every power that boss holds, their role's included, and keeps a Deny staff
+  set; it used to put the cells back to *Inherit role*, which handed the
+  role's powers (and a denied one) back. The reply counts the powers taken.
+- Staff panel refusals from the organisation say the real reason (the boss
+  who asked is away, the member left, the organisation still has members,
+  and so on) instead of *The organisation does not let your role take this
+  contract.*
+- Reputation is the plain sum of completions, failures and staff changes:
+  failures early on are no longer forgiven, so the same record gives the
+  same tier in any order. The standing shown is never below 0.
+- With `SeveralOrganisations` off, a member of an organisation kept for when
+  it is on is no longer hired, invited, adopted or taken on by application
+  into the first one (`org_other_org`).
+- An internal-contract request that runs out tells the boss who asked and
+  is in the log (`org_internal_decided`, `expired`).
+- `ApprovalAbove = 0` holds every accept, one paid only in items included.
+- An S3 office rule a boss set can be lifted or taken over by that boss or a
+  boss above, not by another boss of the same rank (while the setter is still
+  of that rank).
+- Start-up warnings for `Config.Organisation.Roles` and `Limits` name the
+  shipped roles or values, not a Lua table address.
+- `mysql`: an organisation channel post by a member whose name is over 64
+  bytes (Cyrillic, emoji) is kept; role labels from the config are cut by
+  whole characters; `crimson_org_applications.body` is `MEDIUMTEXT`, so a
+  long recruitment form answered in full in a non-Latin script is kept (the
+  next start widens it on an existing database, keeping every value).
+- Docs: a territory hold tells the organisation `TerritoryMinutes`, not
+  `AssignMinutes`, so while the two differ a boss can tell it from a contract
+  a placer sent; features.md now says so and how to make them the same.
+
 **Review 85 fixes (organisation)**
 - A contract on a member of an organisation is no longer held for that
   organisation when the placer sends it there: it goes on the open board as

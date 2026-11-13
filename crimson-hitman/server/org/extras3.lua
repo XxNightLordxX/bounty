@@ -48,9 +48,11 @@ CrimsonBoot.define('server.org.extras3', function() --[[
 --- the target at that moment, in the same routing bucket: somebody who can
 --- already see where the target is. The position is never stored, sent or
 --- logged; the zones themselves are staff-only (never sent to a game). The
---- organisation is told exactly what it is told of a contract a placer sent
---- to it ("A contract was sent to the organisation"), so it cannot tell a
---- territory hold from a placer's choice, and the placer is told nothing
+--- organisation is told in the words of a contract a placer sent to it ("A
+--- contract was sent to the organisation"), but with TerritoryMinutes as its
+--- time: while that differs from AssignMinutes a boss can tell a territory
+--- hold from a placer's choice (docs/features.md says so, and how to make
+--- them the same). The placer is told nothing
 --- (not even when it goes on the open board), so the placer learns nothing
 --- about where the target was. The hold is short (TerritoryMinutes) and
 --- only ever delays the open board.
@@ -248,7 +250,10 @@ local function tiers()
     local out = {}
     for _, text in ipairs(type(Config.Organisation.RepTiers) == 'table' and Config.Organisation.RepTiers or {}) do
         local p, label, max = tostring(text):match('^%s*(%d+)%s*,%s*([^,]+),%s*(%d+)%s*$')
-        if p then out[#out + 1] = { points = tonumber(p), label = label:gsub('%s+$', ''):sub(1, 32), max = tonumber(max) } end
+        if p then
+            out[#out + 1] = { points = tonumber(p), label = Util.toValidUtf8((label:gsub('%s+$', '')):sub(1, 32)),
+                max = tonumber(max) }
+        end
     end
     table.sort(out, function(a, b) return a.points < b.points end)
     return out
@@ -317,7 +322,10 @@ function Extras3.observe(kind, cid, info)
             rep.points = math.floor(tonumber(rep.points) or 0) + whole('RepCompletion', 10, 0, 100000)
             rep.c = math.floor(tonumber(rep.c) or 0) + 1
         else
-            rep.points = math.max(0, math.floor(tonumber(rep.points) or 0) - whole('RepFailure', 15, 0, 100000))
+            -- Kept as the plain sum, below 0 too: floored here, failures
+            -- early on were forgiven and the same record gave a different
+            -- tier by the order it came in. standing() never shows below 0.
+            rep.points = math.floor(tonumber(rep.points) or 0) - whole('RepFailure', 15, 0, 100000)
             rep.f = math.floor(tonumber(rep.f) or 0) + 1
         end
     end
@@ -342,8 +350,10 @@ function Org.repAdjust(who, points, reason)
     reason = O.Extras.plain(reason, 200)
     if not reason then return fail(ERR.INVALID, { message = L('org_extras3.give_a_reason') }) end
     local rep = org.settings.rep
+    -- Added to the sum as it stands (below 0 included), as an outcome is:
+    -- the standing shown is never below 0.
     local before = math.floor(tonumber(rep.points) or 0)
-    rep.points = math.max(0, before + points)
+    rep.points = before + points
     kit.save()
     kit.record('org_rep_adjusted', who, { from = before, to = rep.points, reason = reason })
     return true, nil, Extras3.standing(org)
@@ -1198,6 +1208,13 @@ function Extras3.tick(org, at)
             if r.state == 'pending' and (r.expires or 0) <= at then
                 r.state = 'expired'
                 changed = true
+                -- As a decline is: the boss is told, and the log has it.
+                local d = deps()
+                if d.audit and d.audit.action then
+                    pcall(d.audit.action, 'org_internal_decided', r.by, nil,
+                        { org = org.id, member = r.target, state = 'expired' })
+                end
+                tell(r.by, L('org_extras3.your_request_for_an_internal_contract_ran_out'))
             elseif r.state ~= 'pending' and at - (r.decided or r.at or at) > 7 * 86400 then
                 org.settings.internal[id] = nil
                 changed = true

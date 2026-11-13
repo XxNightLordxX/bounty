@@ -915,6 +915,19 @@ Kill the server process (not `stop`: end FXServer from the task manager or `kill
 - [ ] `/cleanse <id>` with less than the buyout across bank and cash: it says you do not have that much, not to move money into one account
 - [ ] `Config.Locale` set to a copy of `en.lua` with `meeting.placer_point_set` and `bridges.role_client` changed: the meeting notice and `/ch-contracts <player>` read in the copy's words
 
+## 40. Review 86 organisation checks
+
+- [ ] Staff panel › Hitman organisation › Members: lock a member, then press Unlock: the member shows unlocked and their boss can change their role
+- [ ] Roles: mark a role Boss and Locked, save; then Not boss and Bosses may edit, save: both are off after reopening the panel
+- [ ] Boss permissions: allow Withdraw funds and Fire for the boss role, Deny Withdraw on one boss, press Revoke all on that boss's column: every cell of the column reads Deny and the boss can neither withdraw nor fire
+- [ ] `InternalContracts` on: a boss asks for an internal contract, then leaves the city; staff press Approve: the panel says the boss who asked is not in the city
+- [ ] `Reputation` on: with 3 failures then 10 completions the standing reads 55 (10 done, 3 failed), the same as 10 completions then 3 failures
+- [ ] `SeveralOrganisations` on: hire a citizen into a second organisation, switch it off, then hire them into the first: refused as a member of another organisation
+- [ ] `InternalExpireHours = 1`: ask for an internal contract and wait an hour: the boss is told it ran out
+- [ ] `AcceptApproval` on with `ApprovalAbove = 0`: a member accepts a contract paid only in items: it waits for a boss
+- [ ] Two bosses of the top rank, both with S3: boss A sets an office rule; boss B cannot lift it; boss A can
+- [ ] A member with a long Cyrillic character name posts in the organisation channel (`mysql`): the post is kept and shows the whole name
+
 ## If something fails
 
 The audit log records every financial movement and every rejected attempt.

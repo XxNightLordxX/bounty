@@ -469,7 +469,9 @@ function Extras.approvalGate(org, member, actor, contractId, opts, gate)
     local k = key(contractId, actor.cid)
     if Approved[k] then return nil end
     local above = math.floor(tonumber(Config.Organisation.ApprovalAbove) or 0)
-    local needs = value() > above or (onProbation and Config.Organisation.ApprovalProbation ~= false)
+    -- 0 is every accept: one paid only in items (or whose worth the escrow
+    -- cannot say) is worth 0, which is not above 0.
+    local needs = above <= 0 or value() > above or (onProbation and Config.Organisation.ApprovalProbation ~= false)
     if not needs then return nil end
     local wait = minutes('ApprovalMinutes', 15, 1440)
     local held = Pending[k]
@@ -748,7 +750,10 @@ function Org.channelPost(who, text)
     local from = who.staff and L('org_extras.staff') or ((O.codenamesOn() and member.codename)
         and O.codenameLabel(member.codename) or member.name)
     local row = { id = ('msg:%s:%d:%d'):format(org.id, now(), MessageSeq):sub(1, 64), org_id = org.id,
-        cid = who.staff and 'staff' or who.cid, name = tostring(from or L('org_extras.a_member')):sub(1, 64), body = body,
+        cid = who.staff and 'staff' or who.cid,
+        -- By whole characters: a byte cut can split one, which the
+        -- utf8mb4 column refuses (and every post with that name failed).
+        name = Util.sanitizeText(tostring(from or L('org_extras.a_member')), 64) or L('org_extras.a_member'), body = body,
         created_at = now() }
     local ok = pcall(deps().storage.writeOrgRow, 'messages', row)
     if not ok then return fail(ERR.REFUSED, { message = L('org_extras.the_message_could_not_be_kept') }) end

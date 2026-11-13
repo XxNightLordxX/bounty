@@ -454,8 +454,10 @@ character that loaded before the job was registered (a late start).
   - **Reputation and tiers** (`Reputation`). The organisation's standing:
     `RepCompletion` points for each member's completion, `RepFailure` off for
     each failure (counted from the record's own outcomes from when it is on),
-    less `RepHeat` for every point of heat its members carry now
-    (`Config.Record.Heat`). `RepTiers` names the tiers, one line each as
+    plus what staff added or took off, less `RepHeat` for every point of heat
+    its members carry now (`Config.Record.Heat`). It is the plain sum, never
+    floored along the way, so the same record gives the same standing in any
+    order; the standing shown is never below 0. `RepTiers` names the tiers, one line each as
     `'points, label, most an accept is worth'` ($, 0 = no cap): a member's
     accept of a contract worth more than their organisation's tier allows is
     refused in words (`org_tier`); a higher tier unlocks bigger ones. Members
@@ -487,9 +489,13 @@ character that loaded before the job was registered (a late start).
     the open board. **Privacy:** the target's position is read once, on the
     server, and acted on only when a member can already see the target
     (standing beside them); it is never stored, sent or logged; no zone is ever
-    sent to a game; the organisation is told exactly what it is told of a
-    contract a placer sent ("A contract was sent to the organisation"), so it
-    cannot tell a territory hold from a placer's choice; and the placer is told
+    sent to a game; the organisation is told in the same words as a contract
+    a placer sent ("A contract was sent to the organisation. Assign it within
+    N minutes"), but N and the time its card shows are `TerritoryMinutes`, not
+    `AssignMinutes`: while the two differ (5 and 30 as shipped) a boss can
+    tell a territory hold from a placer's choice, and so that the target is
+    near one of their members now. Set `TerritoryMinutes` to `AssignMinutes`
+    (both 1-60) for the two to look the same; and the placer is told
     nothing, then or when it goes on the open board, so they learn nothing of
     where the target was. The staff log has the hold, with no position.
   - **Garage** (`Garage`, `GarageVehicles`, `GarageMaxOut`, `GarageKeepMinutes`,
@@ -512,7 +518,8 @@ character that loaded before the job was registered (a late start).
     placed or taken until staff approve it in the panel; it is then placed in
     the boss's name, with their own money, through the ordinary placement, so
     every limit, cap and anonymity rule applies (a boss away or short is told,
-    and the request stays open). Declined or run out, the boss is told.
+    and the request stays open). Declined or run out, the boss is told, and
+    the log has it (`org_internal_decided`, `declined` or `expired`).
   - **Handler** (`Handler`, `HandlerAssigns`). The organisation's NPC spots
     (Locations, NPC spots; drawn only within `DrawMetres`, nothing runs while
     far) brief a member who talks to them: their assigned contract, its dossier

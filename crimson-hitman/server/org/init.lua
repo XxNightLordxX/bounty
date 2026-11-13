@@ -290,10 +290,20 @@ function Org.orgOf(cid)
     return nil
 end
 
---- A member of another organisation than `org`.
+--- With SeveralOrganisations off, the members of the organisations kept
+--- but not read (first.settings.others): [cid] = their organisation's id.
+--- Read at the boot, as nothing changes them while they are not loaded.
+local KeptMembers = {}
+
+--- A member of another organisation than `org`: a loaded one, or one kept
+--- for when SeveralOrganisations is on again (never in two at once).
 local function memberElsewhere(cid, org)
     local other = Org.orgOf(cid)
-    return other ~= nil and other ~= org
+    if other ~= nil and other ~= org then return true end
+    -- Already one of `org`'s (from before this check): left as they are.
+    if org and type(cid) == 'string' and org.members[cid] then return false end
+    local kept = type(cid) == 'string' and KeptMembers[cid] or nil
+    return kept ~= nil and (not org or kept ~= org.id)
 end
 
 --- The identity module the organisation was wired with.
@@ -308,7 +318,10 @@ local function parseRole(text)
     if type(text) ~= 'string' then return nil end
     local g, name, label, pay, boss = text:match('^%s*(%d+)%s*,%s*([%w_]+)%s*,%s*([^,]+),%s*(%d+)%s*,%s*(%a+)%s*$')
     if not g then return nil end
-    return { grade = tonumber(g), name = name:lower():sub(1, 32), label = label:gsub('%s+$', ''):sub(1, 64),
+    -- Cut by whole characters: a byte cut can split one, and the database
+    -- refuses the role row (crimson_org_roles.label is utf8mb4).
+    return { grade = tonumber(g), name = name:lower():sub(1, 32),
+        label = Util.toValidUtf8((label:gsub('%s+$', '')):sub(1, 64)),
         pay = tonumber(pay), is_boss = boss:lower() == 'yes' or boss:lower() == 'true' }
 end
 
@@ -572,6 +585,17 @@ function Org.boot(live)
         return false
     end
     Orgs, Order = { [first.id] = first }, { first.id }
+    KeptMembers = {}
+    if not Org.severalOn() then
+        for _, id in ipairs(type(first.settings.others) == 'table' and first.settings.others or {}) do
+            if type(id) == 'string' and id ~= first.id then
+                local okR, rows = pcall(deps.storage.readOrgRows, 'members', id)
+                for _, m in ipairs(okR and type(rows) == 'table' and rows or {}) do
+                    if type(m.cid) == 'string' then KeptMembers[m.cid] = id end
+                end
+            end
+        end
+    end
     -- The others staff made (SeveralOrganisations), each read the same way;
     -- one that cannot be read stays out until the next start, and is said.
     if Org.severalOn() then
@@ -614,7 +638,15 @@ function Org.validate(warn)
     end
     local cfg = Config.Organisation
     local function back(key, why)
-        warn[#warn + 1] = (L('org.organisation_using')):format(key, why, tostring(shipped[key]))
+        -- A table (Roles, Limits) said as its lines or as the shipped
+        -- values, never as a Lua table address.
+        local using = shipped[key]
+        if type(using) == 'table' then
+            local lines = {}
+            for _, v in ipairs(using) do lines[#lines + 1] = tostring(v) end
+            using = #lines > 0 and table.concat(lines, '; ') or L('org.the_shipped_values')
+        end
+        warn[#warn + 1] = (L('org.organisation_using')):format(key, why, tostring(using))
         cfg[key] = Util.copy(shipped[key])
     end
     for _, key in ipairs({ 'Enabled', 'RequireJobToAccept', 'AcceptNeedsPower', 'OnDutyOnly', 'DefaultDuty',
@@ -1875,15 +1907,25 @@ function Org.officeRule(who, code, on)
         local staff = type(org.settings.officeStaff) == 'table' and org.settings.officeStaff or Powers.officeDefaults()
         if not on and staff[code] then return fail(ERR.LOCKED) end
         -- A rule a boss above them set is theirs to keep: never lifted, nor
-        -- taken over, from below.
+        -- taken over, from below. One a boss of the same rank set is theirs
+        -- too, while they are still a member of that rank or above: only
+        -- they, or a boss above, lift it.
         local grades = type(org.settings.officeBossGrade) == 'table' and org.settings.officeBossGrade or {}
+        local by = type(org.settings.officeBossBy) == 'table' and org.settings.officeBossBy or {}
         local mine = org.members[who.cid].grade
-        if org.settings.officeBoss[code] and tonumber(grades[code]) and tonumber(grades[code]) > mine then
-            return fail(ERR.RANK)
+        local setAt = tonumber(grades[code])
+        if org.settings.officeBoss[code] and setAt then
+            if setAt > mine then return fail(ERR.RANK) end
+            local setter = type(by[code]) == 'string' and org.members[by[code]] or nil
+            if setAt == mine and setter and setter.cid ~= who.cid and setter.grade >= mine then
+                return fail(ERR.RANK)
+            end
         end
         org.settings.officeBoss[code] = on or nil
         grades[code] = on and mine or nil
+        by[code] = on and who.cid or nil
         org.settings.officeBossGrade = grades
+        org.settings.officeBossBy = by
     end
     saveOrgRow()
     record('org_office_rule', who, { power = code, on = on })
