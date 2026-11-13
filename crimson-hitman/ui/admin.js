@@ -4925,7 +4925,15 @@
   ACTIONS['ps-own'] = function (node) {
     var name = trim(S.forms['ps.name']);
     if (!name) { S.presets.answer = { ok: false, text: t('admin.name_the_preset_first') }; drawPresets(); return; }
-    if (!confirmed(node)) return;
+    // The armed click names the name, and says so when it replaces a
+    // preset of the server's own (the server matches names in any case);
+    // editing the name disarms it.
+    var low = name.toLowerCase();
+    var replaces = asList(S.presets.data && S.presets.data.presets).some(function (p) {
+      return p && p.own && String(p.name || '').toLowerCase() === low;
+    });
+    if (!armed(node, replaces ? t('admin.click_again_replace_preset', name) : t('admin.click_again_save_preset_as', name),
+      ['ps.name'])) return;
     write('presetSaveOwn', { name: name }, 'preset', node).then(function (reply) {
       if (!reply) return;
       S.presets.answer = { ok: reply.ok === true, text: words(reply) };
@@ -6663,7 +6671,10 @@
       return refuse('pay', t('admin.at_most') + money(max) + t('admin.at_once_config_staff_manualpaymentmax_2'));
     }
     if (!reason) return refuse('pay', t('admin.give_a_reason_it_goes_on'));
-    if (!confirmed(node)) return;
+    // The armed click names the amount and the account; typing in either
+    // box disarms it, so the second click pays what the first one named.
+    if (!armed(node, S.pstaff.account === 'bank' ? t('admin.click_again_pay_amount_bank', money(amount))
+      : t('admin.click_again_pay_amount_cash', money(amount)), ['pay.amount', 'pay.reason'])) return;
     staffWrite(write('manualPay', { ref: S.players.ref, amount: amount, account: S.pstaff.account,
       reason: reason.slice(0, 120) }, 'pstaff:pay', node), 'pay');
   };
@@ -6952,7 +6963,8 @@
         return null;
       }
       if (S.drawer.id !== id || S.drawer.rw !== st) return null;
-      var view = reply.ok ? (reply.data || {}) : { refused: reply.err || 'no_answer', message: words(reply) };
+      var view = reply.ok ? (reply.data || {}) : { refused: reply.err || 'no_answer', message: words(reply),
+        lost: LOST_ANSWER[reply.err] === true };
       if (by == null) { st.base = view; st.baseFor = id; }
       else { st.preview = view; st.previewBy = by; }
       var box = byId('dr-rw-preview');
@@ -6998,7 +7010,10 @@
     var open = writesOpen();
     var off = { disabled: !open, title: open ? null : whyNoWrite() };
     var facts = !base ? loading(t('admin.reading_the_reward'))
-      : base.refused ? h('p.note.is-warn', String(base.message || t('admin.its_reward_cannot_be_changed_now')))
+      : base.refused ? h('p.note.is-warn', String(base.message || t('admin.its_reward_cannot_be_changed_now')),
+        // A read that got no answer is asked again from here: it was kept
+        // as the answer, and nothing on the tab asked again.
+        base.lost ? frag(' ', btn('.ghost.is-small', 'rw-base-again', {}, t('admin.ask_again'), 'rotate')) : null)
         : h('dl.facts',
           h('dt', t('admin.collection')), h('dd', num(base.slot)),
           h('dt', t('admin.its_reward')), h('dd', money(base.reward)),
@@ -7040,6 +7055,11 @@
     var by = rewardBy();
     if (by != null) loadRewardPreview(by);
   }
+  ACTIONS['rw-base-again'] = function () {
+    var st = rwState();
+    st.base = null; st.baseFor = null; st.baseAsked = false;
+    drawDrawer();
+  };
   ACTIONS['rw-dir'] = function (node) { rwState().dir = node.getAttribute('data-value') === 'lower' ? 'lower' : 'raise'; rewardPicked(); };
   ACTIONS['rw-from'] = function (node) { disarm(); rwState().from = node.getAttribute('data-value') === 'placer' ? 'placer' : 'staff'; drawDrawer(); };
   ACTIONS['rw-account'] = function (node) { disarm(); rwState().account = node.getAttribute('data-value') === 'cash' ? 'cash' : 'bank'; drawDrawer(); };
@@ -8081,7 +8101,8 @@
     var typed = tlLimitsTyped('tj');
     if (typed.bad) return tlJobRefuse('jobAnswer', typed.bad);
     if (!typed.count) return tlJobRefuse('jobAnswer', t('admin.fill_in_at_least_one_limit'));
-    if (!confirmed(node, t('admin.click_again_save_limits_for') + job)) return;
+    if (!armed(node, t('admin.click_again_save_limits_for') + job,
+      ['tj.job'].concat(tlKeys().map(function (k) { return 'tj.' + k.key; })))) return;
     write('targetJobSet', { job: job, limits: typed.limits }, 'tl:job:' + job, node).then(function (reply) {
       if (!reply) return;
       S.tl.jobAnswer = { ok: reply.ok === true, text: words(reply) };
@@ -8311,11 +8332,11 @@
     clear: function (d, node) { return write('targetOverrideClear', d, 'tl:player', node); }
   };
 
-  function tlWrite(node, send, extra) {
+  function tlWrite(node, send, extra, label, binds) {
     if (!S.tl.ref) return tlRefuse(t('admin.look_them_up_first'));
     var reason = trim(S.forms['tp.reason']);
     if (!reason) return tlRefuse(t('admin.give_a_reason_it_goes_on'));
-    if (!confirmed(node)) return;
+    if (!armed(node, label, binds)) return;
     var data = { ref: S.tl.ref, reason: reason.slice(0, 120) };
     Object.keys(extra || {}).forEach(function (k) { data[k] = extra[k]; });
     var card = String(data.ref) + '#' + (S.tl.lookups || 0);
@@ -8336,7 +8357,7 @@
     var min = wholeNumber(S.forms['tp.min']);
     var most = Number(S.tl.meta && S.tl.meta.extendMax) || 43200;
     if (!min || min > most) return tlRefuse(t('admin.give_the_minutes_to_add_1') + most + '.');
-    tlWrite(node, TL_SEND.extend, { minutes: min });
+    tlWrite(node, TL_SEND.extend, { minutes: min }, tn('admin.click_again_extend_by_minutes', min), ['tp.min']);
   };
   ACTIONS['tp-until-set'] = function (node) {
     var at = parseWhen(S.forms['tp.until'], false);
@@ -8552,25 +8573,35 @@
       var g = groupOf(view);
       var label = (VIEW_LABEL[view] || [view])[0];
       if ((label + ' ' + (g ? g.label : '')).toLowerCase().indexOf(q) !== -1) {
-        hits.push({ kind: t('admin.section'), label: (g ? g.label + ' › ' : '') + label, act: 'gs-view', value: view });
+        hits.push({ kind: t('admin.section'), label: (g ? g.label + ' › ' : '') + label, act: 'gs-view', value: view,
+          exact: label.toLowerCase() === q });
       }
     });
     STAFF_ACTIONS.forEach(function (a, i) {
       if ((a.title + ' ' + a.text).toLowerCase().indexOf(q) !== -1 && viewAllowed(resolveView(a.view))) {
-        hits.push({ kind: t('admin.action'), label: a.title, act: 'gs-action', value: String(i) });
+        hits.push({ kind: t('admin.action'), label: a.title, act: 'gs-action', value: String(i),
+          exact: String(a.title).toLowerCase() === q });
       }
     });
     searchSettings().forEach(function (row) {
       if (row.text.indexOf(q) !== -1) {
         hits.push({ kind: t('admin.setting'), label: String(row.e.label || row.e.key), sub: areaLabel(areaOf(row.e))
-          + ' · ' + (row.e.secret ? 'server.cfg' : t('admin.config') + row.e.key), act: 'gs-setting', value: row.e.key });
+          + ' · ' + (row.e.secret ? 'server.cfg' : t('admin.config') + row.e.key), act: 'gs-setting', value: row.e.key,
+          exact: String(row.e.label || '').toLowerCase() === q || String(row.e.key).toLowerCase() === q });
       }
     });
-    if (!contract && !digits) {
-      hits.push({ kind: t('admin.player'), label: t('admin.look_up_2') + trim(raw).slice(0, 64) + t('admin.as_a_player'),
-        act: 'gs-player', value: trim(raw).slice(0, 64) });
+    if (contract || digits) return hits.slice(0, SEARCH_MAX);
+    /* A name: Enter (the first row) looks the player up, unless the words
+       are exactly a section's, an action's or a setting's name. The lookup
+       row came last and was cut off past SEARCH_MAX rows, and Enter on
+       "Ann" opened Announce, where the docs say Enter looks a name up. */
+    var lookup = { kind: t('admin.player'), label: t('admin.look_up_2') + trim(raw).slice(0, 64) + t('admin.as_a_player'),
+      act: 'gs-player', value: trim(raw).slice(0, 64) };
+    var exact = hits.filter(function (hit) { return hit.exact; })[0];
+    if (exact) {
+      return [exact].concat(hits.filter(function (hit) { return hit !== exact; }).slice(0, SEARCH_MAX - 2), [lookup]);
     }
-    return hits.slice(0, SEARCH_MAX);
+    return [lookup].concat(hits.slice(0, SEARCH_MAX - 1));
   }
 
   function searchBody() {
@@ -8856,6 +8887,9 @@
   function drawOrg() {
     if (ORG_VIEWS[S.section] || BP_VIEWS[S.section]) {
       setHtml(byId('org-body'), orgViewBody());
+      // A header-search jump to one of its settings lands here before the
+      // organisation is read: the row it asked for is drawn only now.
+      focusRow();
     }
     if (logArea() === 'org' || logArea() === 'grants') setHtml(byId('lg-org'), orgLogBody());
   }
@@ -10294,7 +10328,7 @@
     });
   }
   function drawPlaces() {
-    if (S.section === 'locations') setHtml(byId('places-body'), locationsBody());
+    if (S.section === 'locations') { setHtml(byId('places-body'), locationsBody()); focusRow(); }
   }
   function placeKinds() { return asList((S.places.data || {}).kinds); }
   function placeKind(id) { return placeKinds().filter(function (k) { return k.id === id; })[0] || null; }

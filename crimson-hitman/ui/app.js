@@ -2567,7 +2567,7 @@
         }
         darkArmed = null;
         once(key, function () {
-          return post('goDark', { id: contract.id, shown: { cost: cost, account: account } })
+          return post('goDark', { id: contract.id, shown: { cost: cost, account: terms.account } })
             .then(function (r) {
               if (!r.ok) {
                 var d = r.data || {};
@@ -3076,7 +3076,9 @@
             }
             say(accept ? t('app.you_have_joined') + (inv.label || t('app.the_organisation')) + '.'
               : t('app.invite_declined'), 'ok');
-            return refresh();
+            // Joined: the Org tab's own read (orgMine) is asked again too, or
+            // the tab kept the outsider's Apply form for a new member.
+            return accept ? Promise.all([refresh(), loadOrg()]) : refresh();
           });
         });
       };
@@ -3198,10 +3200,19 @@
     return screen.powers.some(orgHolds);
   }
 
+  /* The one screen each Boss menu names field (S2) renames: the first on
+     the list with that layout tab. The others share the tab only for
+     hiding, so a boss who named Notices 'Board' no longer got a second
+     'Board' button for the application form and a Channel titled 'Board'. */
+  var ORG_LAYOUT_OWNER = {};
+  ORG_SCREENS.forEach(function (screen) {
+    if (!ORG_LAYOUT_OWNER[screen.layout]) { ORG_LAYOUT_OWNER[screen.layout] = screen.id; }
+  });
+
   function orgScreenLabel(screen) {
     var labels = state.org.mine && state.org.mine.layout && state.org.mine.layout.labels;
     var own = labels && labels[screen.layout];
-    return screen.id !== 'applications' && typeof own === 'string' && own ? own : screen.label;
+    return ORG_LAYOUT_OWNER[screen.layout] === screen.id && typeof own === 'string' && own ? own : screen.label;
   }
 
   function loadOrg() {
@@ -3301,6 +3312,10 @@
       }
       state.org.armed = null;
       run();
+      // Drawn again whatever run() did: a form refused for a blank field
+      // (an early say()) left the button reading 'Tap again to ...' while
+      // it was disarmed, so the next tap only armed it once more.
+      redraw();
     };
     return b;
   }
@@ -4770,15 +4785,26 @@
         + t('app.still_take_it_themselves')));
       pick.appendChild(orgField('pick.id', t('app.contract_id'), 'text', 'ct00000001', 64));
       var members = orgMemberOptions();
-      if (members.length) { pick.appendChild(orgChoice('pick.member', members, undefined)); }
+      // Nobody is a choice of its own: it clears the pick. Pin it with no
+      // choice made is refused, where it used to clear a pick silently, and
+      // a member once chosen could be un-chosen only by reloading.
+      if (members.length) {
+        pick.appendChild(orgChoice('pick.member',
+          members.concat([{ value: '', label: t('app.nobody_clears_the_pick') }]), undefined));
+      }
+      var chosen = orgChosen('pick.member', undefined);
+      var clearing = chosen === '' || (chosen === undefined && !members.length);
       var rp = orgRow();
-      rp.appendChild(orgTwoTap('ghost', t('app.pin_it'), 'pick', t('app.tap_again_to_pin_it'), function () {
+      rp.appendChild(orgTwoTap('ghost', clearing ? t('app.clear_the_pick') : t('app.pin_it'), 'pick',
+        clearing ? t('app.tap_again_to_clear_the_pick') : t('app.tap_again_to_pin_it'), function () {
         var id = orgText('pick.id');
         var who = orgChosen('pick.member', undefined);
         if (!id) { return say(t('app.write_the_contracts_id')); }
+        if (who === undefined && members.length) { return say(t('app.choose_who_to_pin_it_to')); }
+        var clear = who === undefined || who === '';
         orgWrite('pick', function () {
-          return post('orgPick', who === undefined ? { id: id } : { id: id, member: who });
-        }, who === undefined ? t('app.pick_cleared') : t('app.pinned'));
+          return post('orgPick', clear ? { id: id } : { id: id, member: who });
+        }, clear ? t('app.pick_cleared') : t('app.pinned'));
       }));
       pick.appendChild(rp);
       view.appendChild(pick);
@@ -5272,10 +5298,16 @@
     var waits = relistWaitText(contract);
     var collected = collectedText(contract);
     var lead = contract.everTaken ? t('app.the_operative_who_took_it_walked') : t('app.nobody_has_taken_it');
+    // The anonymity fee is never handed back (see feeKeptText), and
+    // Withdraw said everything came back while Cancel and place again
+    // said the fee was kept, for the same contract and the same money.
+    var feeKept = feeWasKept(contract);
     ask(t('app.withdraw_this_contract'),
       (collected
-        ? lead + '. ' + collected + t('app.so_the_rest_of_what_you')
-        : lead + t('app.so_everything_you_put_up_comes'))
+        ? lead + '. ' + collected + (feeKept ? t('app.so_the_rest_comes_back_but_the_fee')
+          : t('app.so_the_rest_of_what_you'))
+        : lead + (feeKept ? t('app.so_everything_comes_back_but_the_fee')
+          : t('app.so_everything_you_put_up_comes')))
         + (waits ? ' ' + waits : '')
         + t('app.to_change_what_it_pays_or')
         + t('app.edit_instead'),
@@ -5294,8 +5326,10 @@
               + t('app.waiting_for_you_it_arrives_when') + checking
             : checking ? t('app.contract_withdrawn') + checking
               : collected
-                ? t('app.contract_withdrawn_rest_returned', collected)
-                : t('app.contract_withdrawn_everything_you_put_up'), 'ok');
+                ? (feeKept ? t('app.contract_withdrawn_rest_returned_but_the_fee', collected)
+                  : t('app.contract_withdrawn_rest_returned', collected))
+                : feeKept ? t('app.contract_withdrawn_everything_but_the_fee')
+                  : t('app.contract_withdrawn_everything_you_put_up'), 'ok');
           refresh();
         });
       }, { yes: t('app.withdraw_it'), no: t('app.keep_it') });
@@ -5555,8 +5589,13 @@
     return any > 0 ? t('app.cancel_place_again_in') + durationText(any) : t('app.cancel_and_place_again');
   }
   function feeKeptText(contract) {
-    return contract.creatorAnonymous === true
-      ? t('app.except_the_anonymity_fee_which_is') : '';
+    return feeWasKept(contract) ? t('app.except_the_anonymity_fee_which_is') : '';
+  }
+  /* Whether an anonymity fee was charged and kept on this contract: placed
+     anonymously on a server that charges one. Where anonymity is free the
+     words claimed a fee that was never taken. */
+  function feeWasKept(contract) {
+    return contract.creatorAnonymous === true && anonymityFee('creator') > 0;
   }
   function retargetBox(contract) {
     var box = el('div', 'sheet-retarget');
@@ -6065,7 +6104,7 @@
             : '')
           + (shownFee > 0
             ? t('app.anonymity_costs_2') + money(shownFee) + t('app.from_your')
-              + feeAccount + '.'
+              + accountWord(feeAccount) + '.'
             : '')
           // The organisation's cut, as the card said it.
           + (shownTerms ? ' ' + orgCutText(shownTerms) : '')
@@ -8957,12 +8996,19 @@
     input.setAttribute('aria-label', t('app.search_contracts_and_screens'));
     input.value = state.find || '';
     var screens = el('div', 'row search-screens');
+    // The search reads only the page on screen: the server sends the board
+    // a page at a time. A match on a later page left an empty board that
+    // said nothing, so this says where else to look.
+    var elsewhere = el('div', 'hint search-elsewhere', t('app.no_match_on_this_page'));
     function apply() {
       var q = String(input.value || '').trim().toLowerCase();
       state.find = input.value;
+      var shown = 0;
       box.cards.forEach(function (node) {
         node.hidden = !!q && String(node.textContent || '').toLowerCase().indexOf(q) === -1;
+        if (!node.hidden) { shown += 1; }
       });
+      elsewhere.hidden = !(q && box.cards.length && shown === 0 && box.pages > 1);
       screens.innerHTML = '';
       if (q) {
         SCREENS.forEach(function (sc) {
@@ -8978,7 +9024,9 @@
     input.oninput = apply;
     box.appendChild(input);
     box.appendChild(screens);
+    box.appendChild(elsewhere);
     box.cards = [];
+    box.pages = 1;
     box.apply = apply;
     return box;
   }
@@ -9022,6 +9070,7 @@
       search.cards.push(node);
       view.appendChild(node);
     });
+    search.pages = Number(data.pages) || 1;
     search.apply();
 
     // The board is sent a page at a time. With no pager, every contract past

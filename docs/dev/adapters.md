@@ -31,7 +31,7 @@ Developer, **Other scripts** (client kinds are sent to every player's game).
 |---|---|---|---|---|
 | `Framework` | `qbx_core` | server | Required: the resource waits for it (no `'none'`) | qbx_core 1.24 |
 | `Inventory` | `ox_inventory` | server | Item, weapon and dirty-money rewards, burner phones and proof items are off; cash and bank work | ox_inventory 2.48 |
-| `Target` | `ox_target` | client | Step markers and organisation spots get no third-eye option; map markers still show | ox_target 1.18.1 |
+| `Target` | `ox_target` | client | Step markers and organisation spots get no third-eye option, so organisation spots cannot be used and a body under `Config.Disposal` cannot be loaded or dropped off (the step ends at `TimeLimitMinutes`, as `OnTimeout` says); map markers still show | ox_target 1.18.1 |
 | `Dispatch` | `sc-dispatch` | server | Nothing filed in the police MDT; officers' phones are still told | escrowed: the two calls the resource always made, as the house rules document them |
 | `Ambulance` | `sc-ambulance`, `qbx_medical` | both | Death and last stand from the framework's player metadata and the game | sc-ambulance escrowed (its `IsDead` / `IsLaststand`, as always called); qbx_medical read |
 | `Banking` | `Renewed-Banking` | server | The organisation's funds in this resource's own ledger (chosen once, kept) | Renewed-Banking 2.1.4 |

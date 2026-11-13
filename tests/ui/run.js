@@ -14599,6 +14599,13 @@ async function main() {
         truthy(labels6(none.app).indexOf('Cancel and place again') !== -1, labels6(none.app).join(' | '));
         falsy(none.app.view.textContent.indexOf('not refunded') !== -1, 'no fee on a named contract');
       });
+      // Review 86 C13-2: anonymous, on a server where anonymity is free:
+      // no fee was taken, so none is said to be kept.
+      const freeAnon = await sheet6({ creatorAnonymous: true, creatorName: undefined },
+        { anonymityFees: { creator: 0, hitman: 0, account: 'bank' } });
+      it('R86 C13-2: Cancel and place again claims no kept fee where anonymity was free', function () {
+        falsy(freeAnon.app.view.textContent.indexOf('not refunded') !== -1, freeAnon.app.view.textContent);
+      });
       retarget6(none.app);
       retarget6(none.app);
       await settle(); await settle();
@@ -15618,6 +15625,109 @@ async function main() {
       drewCleanly(x3);
     });
 
+    // A tap that, on a page without the fix, has no button to find: the
+    // assertions below say what is missing, not a thrown suite.
+    function tryClick(app, label) { try { return click(app, label); } catch (e) { return null; } }
+    // Review 86 F2: a Boss menu name renames the one screen its field is
+    // for, not every screen that shares its layout tab.
+    const renamed = await openOrg(memberMine(ALL.concat(['K4', 'N4', 'M12']), { channel: true, armory: true,
+      orgContracts: true, recruitment: true, activity: true,
+      layout: { labels: { notices: 'Board', contracts: 'Jobs', members: 'Crew' }, hidden: {} } }));
+    const menu = buttons(renamed);
+    function times(list, word) { return list.filter(function (b) { return b === word; }).length; }
+    it('R86 F2: each renamed screen is on the menu once, the screens sharing its tab keep their names', function () {
+      eq(times(menu, 'Board'), 1, menu.join('|'));
+      eq(times(menu, 'Jobs'), 1, menu.join('|'));
+      eq(times(menu, 'Crew'), 1, menu.join('|'));
+      truthy(menu.indexOf('Assignments') !== -1 && menu.indexOf('Application form') !== -1
+        && menu.indexOf('Activity log') !== -1, menu.join('|'));
+      drewCleanly(renamed, 'renamed boss menu');
+    });
+
+    // Review 86 F3: a boss pick can be cleared with Nobody; Pin it with no
+    // member chosen asks for one and sends nothing.
+    const picker = await openOrg(memberMine(['K2', 'M1']));
+    await screen(picker, 'Contracts');
+    type(picker, 'org-pick-id', 'ct00000001');
+    tryClick(picker, 'Pin it');
+    await settle();
+    tryClick(picker, 'Tap again to pin it');
+    await settle(); await settle(); await settle();
+    const pickNotice = picker.notice();
+    const noChoiceSent = picker.orgSent.filter(function (s) { return s.name === 'orgPick'; }).length;
+    tryClick(picker, 'Kestrel');
+    await settle();
+    tryClick(picker, 'Pin it');
+    await settle();
+    tryClick(picker, 'Tap again to pin it');
+    await settle(); await settle(); await settle();
+    tryClick(picker, 'Nobody (clears the pick)');
+    await settle();
+    const clearLabel = buttons(picker).indexOf('Clear the pick') !== -1;
+    tryClick(picker, 'Clear the pick');
+    await settle();
+    tryClick(picker, 'Tap again to clear the pick');
+    await settle(); await settle(); await settle();
+    const picks = picker.orgSent.filter(function (s) { return s.name === 'orgPick'; }).map(function (s) {
+      return JSON.stringify(s.body); });
+    it('R86 F3: Pin it with nobody chosen asks for a member and sends nothing', function () {
+      eq(noChoiceSent, 0);
+      truthy(pickNotice.indexOf('Choose the member to pin it to, or Nobody to clear the pick.') !== -1, pickNotice);
+    });
+    it('R86 F3: a chosen member is pinned, and Nobody clears the pick', function () {
+      truthy(clearLabel, 'the button says what it does: ' + buttons(picker).join('|'));
+      eq(picks.join(' '), '{"id":"ct00000001","member":"m1_1111"} {"id":"ct00000001"}');
+      drewCleanly(picker, 'boss pick');
+    });
+
+    // Review 86 F5: a two-tap form refused for a blank field is drawn
+    // disarmed, so the next tap arms it and the one after sends.
+    const poster = await openOrg(memberMine(['N1']));
+    await screen(poster, 'Notices');
+    tryClick(poster, 'Post');
+    await settle();
+    tryClick(poster, 'Tap again to post it');
+    await settle(); await settle();
+    const afterRefusal = buttons(poster);
+    type(poster, 'org-notice-text', 'Meet at ten');
+    tryClick(poster, 'Post');
+    await settle();
+    tryClick(poster, 'Tap again to post it');
+    await settle(); await settle(); await settle();
+    it('R86 F5: after a blank-field refusal the button no longer reads Tap again', function () {
+      eq(afterRefusal.indexOf('Tap again to post it'), -1, afterRefusal.join('|'));
+      truthy(afterRefusal.indexOf('Post') !== -1, afterRefusal.join('|'));
+      eq(poster.orgSent.filter(function (s) { return s.name === 'orgNotice'; }).length, 1, 'posted on the two taps after');
+    });
+
+    // Review 86 F4: accepting an invite on the Org tab reads the tab again,
+    // so the new member is not left looking at the outsider's Apply form.
+    let joined = false;
+    const joining = boot({ list: function () {
+      const b = listing(joined ? 'member' : 'invitee')();
+      if (!joined) { b.data.orgInvite = { id: 'inv9', label: 'Crimson Contractors', role: 'Recruit', expiresIn: 300 }; }
+      return b;
+    }, mine: MINE, ledger: LEDGER,
+      orgMine: function () {
+        return joined ? memberMine([], { role: 'Recruit', grade: 0 })
+          : { ok: true, data: { enabled: true, member: false, label: 'Crimson Contractors', invite: { id: 'inv9' } } };
+      },
+      orgInviteAnswer: function () { joined = true; return { ok: true, data: { accepted: true } }; } });
+    await settle(); await settle(); await settle();
+    tab(joining, 'org');
+    await settle(); await settle();
+    const minesBefore = joining.sent.filter(function (s) { return s.name === 'orgMine'; }).length;
+    tryClick(joining, 'Accept');
+    await settle();
+    tryClick(joining, 'Tap again to accept');
+    await settle(); await settle(); await settle(); await settle();
+    it('R86 F4: accepting an invite on the Org tab shows the member view, not the Apply form', function () {
+      truthy(joining.sent.filter(function (s) { return s.name === 'orgMine'; }).length > minesBefore, 'orgMine asked again');
+      eq(buttons(joining).indexOf('Apply'), -1, joining.view.textContent);
+      truthy(joining.view.textContent.indexOf('Ask to join') === -1, joining.view.textContent);
+      drewCleanly(joining, 'joined from the Org tab');
+    });
+
     it('ORG TAB: the page words every org_* refusal the server can send', function () {
       const lua = fs.readFileSync(path.join(__dirname, '..', '..', 'crimson-hitman', 'server', 'org', 'init.lua'), 'utf8');
       const codes = {};
@@ -16359,6 +16469,106 @@ async function main() {
     it('R85 C14a-3: the invite\'s second tap is asked in the page\'s language', function () {
       eq(armed.join(' | '), 'TAP AGAIN TO ACCEPT');
       drewCleanly(app, 'translated invite');
+    });
+  })();
+
+  /* ---------- Review 86 ---------- */
+
+  function r86Buttons(app) {
+    return app.view.all().filter(function (n) { return n.tagName === 'BUTTON'; });
+  }
+
+  /* F1: Go dark echoes the account's code, not the word the page shows,
+     so it is not refused as terms_changed in another language. */
+  await (async function r86GoDarkTranslated() {
+    const now = Math.floor(Date.now() / 1000);
+    let dark = null;
+    const app = r85Translated({ list: BOARD, ledger: LEDGER,
+      mine: { ok: true, data: { created: [], accepted: [], onMe: [{ id: 'ct00000402', reason: 'Owes money',
+        mode: 'competitive', state: 'accepted', reward: { baseline: 5000 }, slots: 1, slotsClaimed: 0, currentSlot: 1,
+        hitmenActive: 1, hitmenMax: 5, targetName: 'You', role: 'target', bailoutAvailable: false,
+        timeLeft: band(7200), tippedAt: now - 300, goDark: { cost: 50000, account: 'bank', minutes: 30 } }] } },
+      goDark: function (body) { dark = body; return { ok: true, data: { untilAt: now + 1800, minutes: 30 } }; } });
+    await settle(); await settle(); await settle();
+    tab(app, 'onme');
+    await settle(); await settle();
+    r85Done();
+    const go = function () { return r86Buttons(app).filter(function (b) { return /^GO DARK/.test(b.textContent); })[0]; };
+    if (go()) { go().onclick(); await settle(); }
+    const again = r86Buttons(app).filter(function (b) { return /^TAP AGAIN TO PAY/.test(b.textContent); })[0];
+    if (again) { again.onclick(); await settle(); await settle(); }
+    it('R86 F1: Go dark on a translated page sends the account code it was quoted', function () {
+      truthy(again, r86Buttons(app).map(function (b) { return b.textContent; }).join(' | '));
+      eq(JSON.stringify(dark && dark.shown), JSON.stringify({ cost: 50000, account: 'bank' }));
+      truthy(app.view.textContent.indexOf('PAID FROM YOUR BANK') !== -1 || app.view.textContent.indexOf('BANK') !== -1,
+        'the word shown is still the translated one');
+    });
+  })();
+
+  /* C13-4: the accept dialog names the anonymity fee's account in the
+     page's language, as every other fee line does. */
+  (function r86AcceptFeeAccountWord() {
+    const src = fs.readFileSync(APP, 'utf8');
+    it('R86 C13-4: the accept dialog\'s fee account goes through accountWord()', function () {
+      eq(src.indexOf("+ feeAccount + '.'"), -1, 'the raw code is still joined in');
+      truthy(src.indexOf("t('app.from_your')\n              + accountWord(feeAccount) + '.'") !== -1, 'translated word');
+    });
+  })();
+
+  /* C13-2: Withdraw on an anonymous contract says the anonymity fee is
+     kept, as Cancel and place again does; and nothing claims a fee where
+     anonymity was free. */
+  async function r86Withdraw(fee) {
+    const card = { id: 'ct00000071', reason: 'Owes money', mode: 'competitive', state: 'active',
+      reward: { baseline: 5000, bonus: 0 }, slots: 1, slotsClaimed: 0, currentSlot: 1, hitmenActive: 0, hitmenMax: 5,
+      targetName: 'Dana Reyes', creatorAnonymous: true, role: 'creator', timeLeft: band(3 * 3600), penaltyAmount: 0,
+      hitmen: [] };
+    const app = boot({
+      list: { ok: true, data: { page: 1, pages: 1, contracts: [], settings: { relay: true, calls: false,
+        deadlineMaxMinutes: 2880, buyouts: true, amendments: true,
+        anonymityFees: { creator: fee, hitman: 0, account: 'bank' } } } },
+      ledger: LEDGER, amendments: { ok: true, data: [] },
+      mine: { ok: true, data: { created: [card], accepted: [], onMe: [] } },
+      cancel: { ok: true, data: { id: 'ct00000071' } } });
+    await settle(); await settle(); await settle();
+    tab(app, 'mine'); await settle(); await settle();
+    click(app, 'Withdraw');
+    await settle();
+    const dialog = app.view.textContent;
+    click(app, 'Withdraw it'); await settle(); await settle();
+    return { dialog: dialog, notice: app.notice() };
+  }
+  await (async function r86WithdrawSaysTheFeeIsKept() {
+    const paid = await r86Withdraw(5000);
+    const free = await r86Withdraw(0);
+    it('R86 C13-2: Withdraw on an anonymous contract says the anonymity fee is not refunded', function () {
+      truthy(paid.dialog.indexOf('everything you put up comes back to you, except the anonymity fee, which is not refunded.') !== -1,
+        paid.dialog);
+      eq(paid.notice, 'Contract withdrawn. Everything you put up has been returned, except the anonymity fee, which is not refunded.');
+    });
+    it('R86 C13-2: where anonymity was free, no fee is said to be kept', function () {
+      eq(free.dialog.indexOf('anonymity fee'), -1, free.dialog);
+      eq(free.notice, 'Contract withdrawn. Everything you put up has been returned.');
+    });
+  })();
+
+  /* C13-3: the board search reads the page on screen; with every card on
+     it hidden on a board of several pages, it says so. */
+  await (async function r86SearchSaysOnlyThisPage() {
+    const b = JSON.parse(JSON.stringify(BOARD));
+    b.data.page = 1; b.data.pages = 2;
+    const app = boot({ list: b, mine: MINE, ledger: LEDGER });
+    await settle(); await settle(); await settle();
+    const input = app.view.all().filter(function (n) { return n.tagName === 'INPUT' && n.type === 'search'; })[0];
+    input.value = 'zzz-no-such-target'; input.oninput();
+    const hint = app.view.all().filter(function (n) { return String(n.className || '').indexOf('search-elsewhere') !== -1; })[0];
+    const shownNoMatch = !!hint && !hint.hidden;
+    input.value = ''; input.oninput();
+    const shownEmpty = !!hint && !hint.hidden;
+    it('R86 C13-3: no match on this page of several says only this page was searched', function () {
+      truthy(shownNoMatch, 'no line saying so');
+      falsy(shownEmpty, 'shown with no search');
+      truthy(hint.textContent.indexOf('reads only the page on screen') !== -1, hint.textContent);
     });
   })();
 

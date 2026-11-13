@@ -423,7 +423,7 @@ Three backends behind one interface (`server/main.lua` picks one by `Config.Data
 backend against the same tests. Same rows in all three:
 
 - `mysql`: tables made at start after `MySQL.ready` (utf8mb4, InnoDB), created or altered only where `information_schema` says something is missing; the same statements in `install/sql/crimson_hitman.sql`. Every statement races `Config.Database.QueryTimeoutSeconds`. Upserts use `ON DUPLICATE KEY UPDATE c = VALUES(c)`; SQL takes `?` parameters only and never holds `:` or `@`.
-- `json`: `data/store.json` is the index (sequence, contract files, audit days); `data/records.json` the records (ledger, pending payouts, stats, reveals, photo records, the review queue, panel settings), written only when one changes; `data/contracts/<id>.json` one contract each with its escrow, hitmen, amendments and messages; `data/heartbeat.json` when the server was last seen running, which a restart dates its downtime from; `audit-<day>.jsonl` the log. Written on change and at the flush, money writes synced at once (`SyncOnFinancialWrite`). `store.json.prev` and `records.json.prev` are the last start's copies: a missing or unreadable index or records file stops the start rather than lose what it held, and a file cut off by a crash is restored from its last whole copy. The folders ship with a README each because `SaveResourceFile` cannot create a folder.
+- `json`: `data/store.json` is the index (sequence, contract files, audit days); `data/records.json` the records (ledger, pending payouts, stats, reveals, photo records, the review queue, panel settings), written only when one changes; `data/contracts/<id>.json` one contract each with its escrow, hitmen, amendments and messages; `data/heartbeat.json` when the server was last seen running, which a restart dates its downtime from; `clocks.json` exclusive holds' idle clocks across restarts; `audit-<YYYY-MM-DD>.jsonl` the log, one file per UTC day. Written on change and at the flush, money writes synced at once (`SyncOnFinancialWrite`). `store.json.prev` and `records.json.prev` are the last start's copies: a missing or unreadable index or records file stops the start rather than lose what it held, and a file cut off by a crash is restored from its last whole copy. The folders ship with a README each because `SaveResourceFile` cannot create a folder.
 - `memory`: testing only; releases every open escrow at a stop.
 
 Database changes only add (new tables, `ADD COLUMN` inside `pcall`); nothing
@@ -1075,7 +1075,7 @@ comment sits in. The titles, to read a citation by:
 | §14.7 | Economic limits are keyed to the account, not the character |
 | §14.8 | Every contract has an absolute lifetime; the pause has a ceiling; hitmen can always get out |
 | §14.9 | Cancellation is defined, gated, locked and logged |
-| §14.10 | Release is source-faithful; currency conversion is a payout-only, lossy, explicit step |
+| §14.10 | Release is source-faithful; the one conversion is a payout's, only with `Config.Roleplay.DirtyPayouts` on, at a whole `Rate` (nothing lost) |
 | §14.11 | The write debounce is not a durability window for money |
 | §14.12 | Pending releases are per-line, bounded, and dead-lettered |
 | §14.13 | One validator builds the escrow record from server-read data, over baseline and bonus together |

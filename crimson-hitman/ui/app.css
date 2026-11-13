@@ -242,6 +242,8 @@ main::-webkit-scrollbar-thumb { background: var(--line); border-radius: 1rem; }
 .search-field { -webkit-appearance: none; appearance: none; }
 .search-screens { margin-top: 0; }
 .search-screens > button { flex: 0 1 auto; font-size: var(--t-sm); }
+/* Nothing on this board page matches: says only this page was searched. */
+.search-elsewhere { margin-top: 0; }
 
 /* ---------- contract card ---------- */
 

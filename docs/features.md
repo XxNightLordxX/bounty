@@ -95,7 +95,7 @@ first and the card is marked on the board.
 - **Freeze** a player (Players): every live contract of theirs goes on hold until **Unfreeze**, which gives the time back. Players see only *on hold by staff*.
 - **Suspend** a player from contracts, or **protect** one from them, for hours, days or for good; neither touches running contracts. **Lift** ends either.
 - **Pay** a player by hand (cash or bank, a reason, at most `Config.Staff.ManualPaymentMax`).
-- **Deadlines**: extend or shorten a live contract by up to `Config.Limits.StaffDeadlineMaxAdjustSeconds`, never under `StaffDeadlineMinLeftSeconds`.
+- **Deadlines**: extend or shorten a live contract by up to `Config.Limits.StaffDeadlineMaxAdjustSeconds`, never under `StaffDeadlineMinLeftSeconds`. An extension past the contract's lifetime moves the lifetime too, to at most `Config.Limits.ContractLifetimeSeconds` from the moment of the change (the reply says so), so a contract can outlive two days from placing.
 - **On a contract**: staff notes, remove an operative (stake to the placer as a walk-away, or returned), edit a player's text, export, *As a player sees it*.
 - **Change reward** on a live contract (`crimson.admin`, a reason, two clicks, at most `Config.Staff.RewardChangeMax` at once): a raise is *added by staff* (taken from nobody, and handed back to staff, never to the placer, if the contract is cancelled, expires, is bought out or voided), or charged to the placer's cash or bank if staff choose that and the placer is in the city; a cut comes off what staff added first, then the placer's own, each part going back to whoever funded it (queued for a placer who is away), never below `Config.Limits.MinContractReward` and never touching money already owed or being paid: the store cuts a line only while it is owed to nobody and being given to nobody, and the change stops at a claim that starts while it runs, so a claim's hitman is paid what the claim owed them. Refused while a payout is being settled, a buyout waits out its delay, or the contract is on hold (unfreeze first). The placer and every operative are told staff changed it; nobody is named.
 - **Reassign** a live contract to another hitman (`crimson.admin`, a reason, two clicks): the hitman is named by a Players lookup and must be in the city and pass every check their own Accept would (job, eligibility, not the target, the placer or the target's guard, their limits, the stake rule). Every operative on it is taken off as **Remove** does (their stake to the placer, or returned; barred from taking it again unless staff untick it), all under the contract's own key, so nobody takes it from the board in between. The new hitman's stake is waived (`Config.Staff.ReassignStake = 'waive'`, as shipped) or charged as on Accept (`'charge'`). They go on it **anonymously** and are never charged the anonymity fee, unless staff choose **Named to the placer** or **As they chose before** (their own earlier stint on it); only a server with a hitman's anonymity turned off names them anyway, as it names every hitman. Every check of the acceptance (the stake money, `MaxAcceptedPerHitman`, anonymity, a walk-away's wait) is asked before anybody is taken off, and the preview asks the same, so it refuses what the reassignment would. If the acceptance is still refused once the operatives are off (a balance or a limit that moved in between), every operative is put back on it with their stake still held and the bar this set lifted, and staff are told so.
@@ -113,8 +113,8 @@ All off as shipped, each `Config.Roleplay.<Feature>.Enabled`.
 | **EMS before re-listing** (`EmsRelisting`) | A target killed on a contract cannot be listed again until up for `TreatedMinutes` (or revived by a medic with `RequireEMS`), at most `MaxHoldMinutes` |
 | **City news** (`CityNews`) | A completed contract on a whitelisted-job target (or any, with `AllTargets`) posts an anonymous news item on Birdy or as a server event |
 | **Dirty money payouts** (`DirtyPayouts`) | A hitman's cash and bank payout is handed over as a dirty money item (by count or by worth); refunds go back as taken |
-| **Proof of intent** (`ProofOfIntent`) | A payout is held, never refused, until the hitman has worked the contract in character (`MinMessages` to the placer, a live handover or a meeting point), at most `HoldMaxMinutes` |
-| **Bodyguards** (`Protection`) | A target hires protection from On me (reward held, pin where they stand); a guard takes it from the board. Ended without a completion: the guard is paid; completed anyway: their share (`PayOnCompletionPercent`), the rest back. Switched off mid-job, a live job carries on: the target can still move its pin or cancel it, and its guard keeps the Protection tab with Set GPS |
+| **Proof of intent** (`ProofOfIntent`) | A payout is held, never refused, until the hitman has worked the contract in character (`MinMessages` messages to the placer in the thread; a live handover is itself proof, so only a kill or a proof item is ever held), at most `HoldMaxMinutes` |
+| **Bodyguards** (`Protection`) | A target hires protection from On me (reward held, pin where they stand); a guard takes it from the board. Ended without a completion (expired, withdrawn, bought out): the guard is paid; completed anyway: their share (`PayOnCompletionPercent`), the rest back; voided by staff, or never taken by a guard: all of it back to the target. Switched off mid-job, a live job carries on: the target can still move its pin or cancel it, and its guard keeps the Protection tab with Set GPS |
 | **Hit on the hitman** (`HitOnHitman`) | A target whose informant named an operative may place a contract on them, under every placing rule |
 | **Burner phone** (`BurnerPhone`) | Placing, accepting and every contract action (turning contract decay off included) need the item; it may be used up on placing or accepting. Sell it through sc-blackmarket |
 | **Broker and informant placed from the panel** (`NpcPlaces`) | Staff place the broker and the informant in the admin panel's Locations by standing there (Use my position, read by the server); each rotates among the places set as its `RotateHours` says. Kept by the store with the other spots staff set, on every backend. The `Locations` lists stay the defaults: used while none is set, after Reset to config, and with this off |
@@ -198,9 +198,10 @@ character that loaded before the job was registered (a late start).
   Every day count (an armory role's limit and `ArmoryManagePerDay`,
   `StrikesPerDay`, `PromotionsPerDay`) and `FireCooldownMinutes` are kept
   with the organisation's settings, so a restart or a crash never starts a
-  fresh day. A member is told when they are fired (with the boss's reason),
-  suspended or lifted, and moved to another role: by *a boss* or *staff*,
-  never by name.
+  fresh day. A member is told when they are fired (with the reason, and
+  whether *a boss* or *staff* did it, never by name), suspended (for how long,
+  with the reason) or lifted, and moved to another role; those last notices
+  name nobody, not even whether a boss or staff acted.
   Every bound is `Config.Organisation.Limits`, and staff may set an
   organisation's own.
 - **Funds.** Renewed-Banking's society account for the job when it is
@@ -299,8 +300,9 @@ character that loaded before the job was registered (a late start).
   who can see the funds); the rest are still paid. A member suspended on pay
   day is skipped and told unless `Config.Organisation.PaySuspended`, and one
   pay day pays at most `Config.Organisation.Limits.PayrollPerDayMax` in all
-  (0: no cap beyond each role's; members past it, from the lowest rank up,
-  are skipped and told). Where the bank refuses a salary it goes back to the
+  (0: no cap beyond each role's). Members are paid from the highest rank
+  down (the same rank by citizen id), so once the cap is reached the
+  salaries left, the lowest ranks', are skipped and those members told. Where the bank refuses a salary it goes back to the
   funds; a give-back that fails is on the record
   (`org_payroll_refund_failed`) and tried again every tick until it lands
   (`org_payroll_refunded`). If the server stops after a salary left the funds
@@ -395,7 +397,9 @@ character that loaded before the job was registered (a late start).
     items out (for good) and set any role's limit. With
     `Config.Integrations.Inventory` set to `none`, or no inventory script
     started, the armory is off and the console says so in one line. The
-    limits a day are kept in memory: a restart starts the day again.
+    limits a day (each role's and `ArmoryManagePerDay`) are kept with the
+    organisation's settings, so a restart or a crash never starts a fresh
+    day.
   - **Record and leaderboard** (`Stats`). Each member's completions, failures,
     earnings and reliability in the organisation (completions out of
     completions and failures, once `StatsMinForRate` are in), counted from the
@@ -585,7 +589,7 @@ be handed over at the kill instead (0 as shipped: all at the drop-off).
 
 - **The body** is a stage the server keeps on the step (at the scene, then loaded), never an ox_inventory item or a prop a player holds: nothing to drop, trade, stash or duplicate, and nothing lost to a death or full pockets.
 - **The clock** (`TimeLimitMinutes`) runs only while the hitman is in the city and nothing holds the contract: a staff freeze on any party, the app pause and the restart hold stop it, keep the vehicle where it is, and refuse loading and dropping off. The hitman is told the time left as a band (over 20 minutes, 10 to 20, 5 to 10, under 5); staff see it to the second.
-- **On timeout** (`OnTimeout`): `pay` (as shipped, so nobody can grief a hitman out of a kill), `reduced` (they keep `ReducedPercent` of the money in all, the part paid at once by `PayNowPercent` counted in it and never taken back; items are paid whole; the rest goes back to the placer) or `refund` (all of it back to the placer).
+- **On timeout** (`OnTimeout`): `pay` (as shipped, so nobody can grief a hitman out of a kill), `reduced` (they keep `ReducedPercent` of the money in all, the part paid at once by `PayNowPercent` counted in it; where `PayNowPercent` is the larger, they keep just what was paid at the kill, since that is never taken back; items are paid whole; the rest goes back to the placer) or `refund` (everything still held goes back to the placer, items included; the part paid at the kill by `PayNowPercent` is kept).
 - **The clock's ceiling** (`MaxHoldMinutes`, 120 as shipped, never below `TimeLimitMinutes`): real minutes from the kill, counted whether the hitman is in the city or not, and through restarts. Past it the step no longer keeps its target off the board, held or not, so a hitman logging off over a body cannot shield the target from every new contract. It times out as `OnTimeout` says once that many minutes have stood without a staff hold (a freeze, the app pause, the restart hold), even while the hitman is away: a hold longer than the ceiling does not time the step out as it ends.
 - **The vehicle** is a server-made networked vehicle, nobody's own, with no garage row, a random plate (`CH` and six random characters, never one another step's vehicle has, so a key qbx_vehiclekeys gave for an earlier disposal vehicle opens no later one) and a `crimsonDisposal` state bag, so nothing can store or sell it. Left more than `AbandonMetres` behind for `AbandonMinutes`, lost or destroyed, it is taken away and made again at the spawn spot, at most `MaxRespawns` times; past that a vehicle left behind stays where it was left. It goes when the hitman leaves the city (made again when they are back, not counted) and at every stop; every other loss counts as a respawn, a relog in between or not, so losing it and relogging does not make free vehicles.
 - **How the server keeps it** (OneSync entity rules): its orphan mode is set to keep it (`SetEntityOrphanMode(vehicle, 2)`, where the artifact has the native), since a server-made entity is otherwise deleted once nobody is in scope of it, and only this resource deletes it. It is put in the hitman's routing bucket when made, and moved with them if they change bucket, or a hitman in an instance never sees it. Population or cleanup resources that delete vehicles by plate or by distance should leave `crimsonDisposal` vehicles alone; one deleted anyway counts as lost.

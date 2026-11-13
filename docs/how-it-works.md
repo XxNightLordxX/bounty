@@ -40,10 +40,10 @@ One word for one thing, on the phone, in the panel, in notices and here.
 
 1. **Placing** (Place tab): pick the target, give a reason, set the reward (and a stake, a kidnapping bonus or more payouts where allowed); the second tap on **Place** names the total and takes it. The target is not told at once.
 2. **Accepting** (Board): the hitman sees the reward, the rough time left and any stake, and accepts (anonymously where allowed). One hitman (**exclusive**) or several (**competitive**).
-3. **The clock**: the deadline (3 h as shipped) runs only while the placer, the target and one hitman holding it are all in the city, never while the target is jailed, and stops before a txAdmin restart. Players see a rough band (*More than 2 hours left* … *Under 15 minutes left*), from the deadline or the lifetime, whichever ends first; staff see the exact time. A two-day lifetime ends any contract, pauses included.
+3. **The clock**: the deadline (3 h as shipped) runs only while the placer, the target and one hitman holding it are all in the city, never while the target is jailed, and stops before a txAdmin restart. So a contract nobody has taken never runs out at its deadline: it ends when it is withdrawn, or at its lifetime. Players see a rough band from the deadline or the lifetime, whichever ends first: *More than 2 hours left* (over 2 h), *1–2 hours left* (over 1 h, up to 2 h), *Under 1 hour left* (over 15 minutes, up to 1 h) and *Under 15 minutes left* (15 minutes or less); staff see the exact time. A two-day lifetime (`Config.Limits.ContractLifetimeSeconds`) ends any contract, the time its players were away included; the time a staff freeze, the restart hold or the app pause took is given back to it, and a staff extension past it (or `/ch-refresh timers`) moves it out to at most two days from that moment.
 4. **Finishing**: as shipped only a live handover completes it (`Config.Completion.Fulfilment = 'alive'`): the hitman brings the target alive within `Config.Kidnap.Radius` of the placer and the three stay close for `Config.Kidnap.CountdownSeconds`. With `'either'`, a verified kill completes it too (**Verify kill**, with or without a kill photo).
-5. **Ending**: completed, the hitman is paid from escrow (owed and paid at their next login if away or full). Withdrawn by the placer while nobody holds it, expired, voided by staff or bought out: the reward goes back to the placer; a hitman's stake goes as the rules say. An exclusive hitman who never goes near the target is released after `ExclusiveIdleReleaseSeconds`.
-6. **Changes**: before anyone takes it, the placer's **Edit** sheet changes reason, reward, stake, deadline, mode, the buyout price, how it is completed (*alive or dead* only where `Config.Completion.Fulfilment` is `'either'`) and whether it is placed anonymously (only where the anonymity switches allow it for that target, the creator fee charged then), each checked as placing checks it. The target cannot be changed in place: **Cancel and place again** (two taps) withdraws it with everything handed back and opens the Place form, where the new one goes through every placing check; the usual wait after withdrawing (`Config.Amendments.CancelCooldownSeconds`) applies. Once taken, the reward can still be raised (a kidnapping bonus raised is escrowed as that percentage of every money payout still held, the ones added later included), the deadline extended, and anything else proposed (**Propose change**) for the hitman to accept.
+5. **Ending**: completed, the hitman is paid from escrow (owed and paid at their next login if away or full). Withdrawn by the placer while nobody holds it, expired, voided by staff or bought out: the reward goes back to the placer. A hitman's stake comes back to them on a completion, a void or a buyout; it goes to the placer when they walk away, are released for idling, or the deadline runs out while they hold it (a contract that only reached its lifetime hands it back). An exclusive hitman who never goes near the target is released after `ExclusiveIdleReleaseSeconds`, and so is the idlest hitman on a competitive contract that is full (`MaxHitmenPerContract`), so the place frees up.
+6. **Changes**: before anyone takes it, the placer's **Edit** sheet changes reason, reward, stake, deadline, mode, the buyout price, how it is completed (*alive or dead* only where `Config.Completion.Fulfilment` is `'either'`) and whether it is placed anonymously (only where the anonymity switches allow it for that target, the creator fee charged then), each checked as placing checks it. The target cannot be changed in place: **Cancel and place again** (two taps) withdraws it with everything handed back but an anonymity fee, which is never refunded, and opens the Place form, where the new one goes through every placing check; the usual wait after withdrawing (`Config.Amendments.CancelCooldownSeconds`) applies. Once taken, the reward can still be raised (a kidnapping bonus raised is escrowed as that percentage of every money payout still held, the ones added later included), the deadline extended, and anything else proposed (**Propose change**) for the hitman to accept.
 
 ## The meeting point
 
@@ -67,7 +67,7 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 
 ## Money rules
 
-- Every reward is held from placing to ending; a payout comes only from what is held, in exactly the sources it holds (dirty money in, dirty money out: there is no conversion, because `sc-blackmarket` values dirty money above clean).
+- Every reward is held from placing to ending; a payout comes only from what is held, in exactly the sources it holds (dirty money in, dirty money out: nothing is converted, because `sc-blackmarket` values dirty money above clean). The one exception is `Config.Roleplay.DirtyPayouts`, off as shipped: it hands a hitman's cash or bank payout over as a dirty money item, at a whole number of items a dollar (`Rate`) or as one item carrying its worth, so nothing is lost; refunds always go back as they were taken.
 - A payout to a player who is away or full is owed and given at their next login (and retried every 30 s while online). One the server could not give after three tries waits for staff under **Money waiting** in the panel's inbox.
 - Every completion (a verified kill, a live handover, a proof item, a confirmed handover) is paid by one claim, after one check that it may pay (still on it, no staff or restart hold, no slot cooldown, a slot left). Once paid, a payout may wait in escrow, owed to the hitman, for the payout checks switched on, in order: body disposal (`Config.Disposal`), then proof of intent (`Config.Roleplay.ProofOfIntent`); it is handed over by the same retry once none holds it.
 - Anything no rule can settle (a buyout the store would not record, a payment the database did not confirm) goes to **Needs review** for staff.
@@ -75,10 +75,10 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 
 ## What stops it being abused
 
-- One account can never be two parties to a contract (`Config.AntiCollusion`); a target cannot be listed again for a while after a contract on them closes, nor by the same placer.
+- One account can never be two parties to a contract (`Config.AntiCollusion`); a target cannot be listed again for a while after a contract on them closes (`TargetCooldownAfterResolveSeconds`; not after one withdrawn or run out before anybody took it, where only the placer who withdrew it waits), nor by the same placer. While the target is in the city, an untaken contract whose named placer is away does not fill one of the target's places (`MaxActiveContractsPerTarget`): it cannot be taken or worked, so two cheap contracts from friends who log off do not keep everybody else off the target. An anonymous placer's contracts always count.
 - New characters and players just online cannot be targets (`Config.Immunity`); whitelisted-job targets may be (`Config.Targeting.AllowProtectedJobTargets`, on as shipped), and the advisory warns officers. The Place search marks somebody who has played too little (`MinTargetPlaytimeHours`) as *Too new to be a target yet*. A target who leaves the city while an operative is at work on them (a handover counting on them, or a hit landed within `MinTargetSessionMinutes`) and comes back within `MinTargetSessionMinutes` is not "just online" for that operative: quitting does not buy ten minutes of immunity. Everybody else, and a target who left with nobody at work on them, gets the floor as before.
 - A contract placed where the placer may not stay anonymous says so on the Place form, in the officer warning and on the second tap: it goes out under their name, the target sees who placed it, and an officer's whitelisted-job view shows it at once.
-- Barred jobs (`Config.BlockedJobTypes`, `BlockedJobNames`) never use the app; they see only the whitelisted-job view.
+- Barred jobs (`Config.BlockedJobTypes`, `BlockedJobNames`) never use the app; they see only the whitelisted-job view: the contracts on them, with **Buy out** on their own where buyouts run, and **Notify me**.
 - Every request is rate-limited per player (`Config.Cooldowns`), every write is audited, and nothing a player's game sends is trusted for money, items or position.
 - Anonymous parties stay anonymous to everybody but staff holding `crimson.identity`, in every view and log.
 
@@ -87,9 +87,11 @@ Off as shipped (`Config.Kidnap.PlacerConfirms = false`): a live handover pays th
 Every screen says in one line, at its top, what it is for. The **Board**,
 where the app opens, also sums up what you have going (*N taken*, *N
 placed*, *N on you*: a tap on each opens where they are) and has one
-**search** over the contracts on the board and the app's own screens: type
-a name or a word, and the cards that do not match step aside while the
-screens that do (*Open Ledger*, *Open Place*…) are one tap away.
+**search** over the contracts on the board page on screen and the app's own
+screens: type a name or a word, and the cards that do not match step aside
+while the screens that do (*Open Ledger*, *Open Place*…) are one tap away.
+The board comes a page at a time, so a contract on a later page is found
+there (**More**); with nothing on this page matching, the search says so.
 
 ## The most common actions, in taps
 
@@ -102,7 +104,7 @@ action starts on; typing is not counted.
 | Place a contract | placer | 2 after the form (Place, then *Tap again to place* with the total) |
 | Deliver alive | hitman | 1, then hold the countdown |
 | Verify kill (`'either'`) | hitman | 1, then the photo |
-| Message the other side | any party | 2 (Message, Send); one operative opens straight away |
+| Message the other side | placer or hitman | 2 (Message, Send); one operative opens straight away |
 | Buy out a contract | target | 2 |
 | Withdraw an untaken contract | placer | 2 |
 | Abandon a contract | hitman | 2 |

@@ -56,7 +56,7 @@ Config.Integrations = {
     Garage      = 'auto',  -- 'auto' | 'onesync' | 'none' (organisation garage vehicles)
     Mugshot     = 'auto',  -- 'auto' | 'MugShotBase64' | 'none' (target headshots)
     Clothing    = 'auto',  -- 'auto' | a clothing adapter's name | 'none'
-    Progression = 'auto',  -- 'auto' | 'sc-blackmarket' | 'none' (trust per kill)
+    Progression = 'auto',  -- 'auto' | 'sc-blackmarket' | 'none' (trust per completion)
 }
 
 -- ============================================================================
@@ -67,12 +67,12 @@ Config.Integrations = {
 
 Config.Limits = {
     DefaultDeadlineSeconds               = 10800,   -- run time; runs only with placer, target, operative in
-    ContractLifetimeSeconds              = 172800,  -- hard ceiling, pauses included
+    ContractLifetimeSeconds              = 172800,  -- longest a contract lives; holds give time back, staff Extend moves it
     StaffDeadlineMaxAdjustSeconds        = 86400,   -- most staff may extend or shorten a deadline by at once
     StaffDeadlineMinLeftSeconds          = 300,     -- least run time a staff shortening may leave
-    TargetCooldownAfterResolveSeconds    = 1800,    -- nobody may target a person again for this long
+    TargetCooldownAfterResolveSeconds    = 1800,    -- then nobody may target them (not after an untaken one ends)
     SameCreatorSameTargetCooldownSeconds = 7200,    -- the same placer on the same target
-    ExclusiveIdleReleaseSeconds          = 1800,    -- release an exclusive hitman never near them; 0 = off
+    ExclusiveIdleReleaseSeconds          = 1800,    -- release an idle exclusive hitman, or a full contract's idlest; 0 = off
     ExclusiveAttemptWindowSeconds        = 7200,    -- release one who never makes an attempt; 0 = off
     PauseWhileTargetJailed               = true,    -- the deadline stops while the target serves time
     JailZone                             = { x = 1693.3, y = 2569.5, radius = 300 },  -- the prison grounds
@@ -117,7 +117,7 @@ Config.Limits.MaxEscrowLines      = 60    -- escrow lines one contract may hold
 
 Config.Penalty = {
     MaxAmount                 = 100000,  -- most stake a hitman may be asked for
-    MaxFractionOfEscrow       = 2.0,     -- and at most this times the reward
+    MaxFractionOfEscrow       = 2.0,     -- and at most this times the reward's cash and bank
     RequireDisclosureOnAccept = true,    -- accept must echo the stake it was shown
     MinWindowMinutes          = 30,      -- no staked accept with less than this left
 }
@@ -129,8 +129,8 @@ Config.PendingEscrow = {
 
 Config.Bailout = {
     Enabled                 = true,       -- a target may buy out a contract on them
-    MinMultiplier           = 1.0,        -- least buyout price, times the reward
-    MaxMultiplier           = 3.0,        -- most buyout price, times the reward
+    MinMultiplier           = 1.0,        -- least buyout price, times the reward's cash and bank
+    MaxMultiplier           = 3.0,        -- most buyout price, times the reward's cash and bank
     AbsoluteMax             = 500000,     -- most buyout price in money
     ProcessingDelaySeconds  = 120,        -- a held contract's hitman gets this long first
     BlockWhileIncapacitated = true,       -- no buyout while dead or downed
@@ -156,8 +156,8 @@ Config.Completion = {
     PhotoStorage              = 'server',  -- 'server' (file in data/photos) | 'host' (lb-phone's)
     PhotoPublicUrl            = nil,       -- 'server': https address for Save to Photos; nil = web_baseUrl
     KeptPhotoDays             = nil,       -- days a photo kept in the app lasts; nil = until deleted
-    ProofWindowSeconds        = 60,        -- a kill still verifies this long after death
-    PhotoTokenLifetimeSeconds = 120,       -- seconds a kill waits to be verified
+    ProofWindowSeconds        = 60,        -- a target back up this soon after death still counts as killed
+    PhotoTokenLifetimeSeconds = 120,       -- seconds after death a body still down can be verified
     PhotoRadius               = 5.0,       -- metres from the body to verify a kill
     PhotoOpenSeconds          = 600,       -- seconds the placer may view a photo before it is deleted
 }
@@ -212,7 +212,7 @@ Config.Ledger = {
 -- ============================================================================
 -- Who may open the app and who can be named as a target. Law enforcement,
 -- EMS and fire jobs are barred by job type and by name, legal jobs by name;
--- with the whitelisted-job view on they get one read-only screen instead.
+-- with the whitelisted-job view on they get one screen instead.
 
 Config.BlockedJobTypes = { -- job types barred from the app
     leo = true, police = true, ems = true, fire = true,
@@ -228,7 +228,7 @@ Config.BlockOffDuty           = true  -- barred jobs stay barred off duty
 Config.HideAppFromBlockedJobs = true  -- hide the icon from barred jobs (only while the view is off)
 
 Config.WhitelistedView = {
-    Enabled = true,  -- barred jobs see one read-only screen: the contracts on them
+    Enabled = true,  -- barred jobs see one screen: contracts on them, Buy out, Notify me
     Alerts  = true,  -- they may turn on Notify me for new entries there
 }
 
@@ -467,7 +467,7 @@ Config.Record = {}  -- one block each below
 
 Config.Record.Progression = {
     Enabled             = true,              -- feed completions into the criminal progression
-    TrustPerElimination = 10,                -- trust per kill
+    TrustPerElimination = 10,                -- trust per completion by a kill
     TrustPerKidnapping  = 20,                -- trust per live handover
 }
 
@@ -495,7 +495,7 @@ Config.Record.Heat = {
     Enabled                 = false,  -- hitmen gather heat the city can feel
     ProtectedCompletionHeat = 3,      -- heat for a completion on a whitelisted-job target
     WitnessHeat             = 2,      -- heat for a witness report on their completion
-    AdvisoryHeat            = 1,      -- heat for a police bulletin on their acceptance
+    AdvisoryHeat            = 1,      -- heat per police bulletin: an accept, or a tip on a whitelisted job
     DecayHours              = 24,     -- hours each heat stays
     Threshold               = 5,      -- heat at which a hitman counts as known
     WarnTargetChancePercent = 50,     -- chance their next target is warned, 0-100
@@ -664,11 +664,11 @@ Config.Roleplay.HitOnHitman = {
 }
 
 Config.Roleplay.BurnerPhone = {
-    Enabled         = false,           -- placing and accepting need the item
+    Enabled         = false,           -- every contract action needs the item; the target's do not
     Item            = 'burner_phone',  -- the ox_inventory item
     ConsumeOnPlace  = false,           -- use one up when a contract is placed
     ConsumeOnAccept = false,           -- use one up when a contract is accepted
-    RequireToOpen   = true,            -- no item, no contract tabs at all
+    RequireToOpen   = true,            -- no item: Board and your own contracts hidden; On me shows
 }
 
 Config.Roleplay.NpcPlaces = {
@@ -693,9 +693,9 @@ Config.Improvements = Config.Improvements or {}  -- the improvements, one block 
 Config.Improvements.ContractDecay = {
     Enabled            = false,   -- an untaken contract changes as it waits
     Mode               = 'rise',  -- 'rise': its reward goes up; 'shorten': it ends sooner
-    Percent            = 10,      -- how much each step changes it
+    Percent            = 10,      -- rise: % of the first step's reward; shorten: % of time left
     Hours              = 1,       -- hours between steps
-    MaxIncreasePercent = 50,      -- most a reward rises in all ('rise')
+    MaxIncreasePercent = 50,      -- most a reward rises in all, % of that first reward ('rise')
     Account            = 'bank',  -- where a rise is charged from: 'cash' or 'bank'
 }
 
@@ -833,7 +833,7 @@ Config.Organisation = {
         MemberMaxAtOnce          = 3,       -- most contracts a boss lets a member hold
         MemberCooldownMaxMinutes = 120,     -- longest cooldown between accepts a boss sets
         MaxRoles                 = 8,       -- roles at most
-        PayMax                   = 500,     -- most pay per role per pay-cycle ($)
+        PayMax                   = 500,     -- most qbx_core job-grade pay per role per paycheck ($)
         BonusMax                 = 10000,   -- largest bonus ($)
         BonusPerDay              = 25000,   -- bonuses one boss pays a day ($)
         WithdrawMax              = 50000,   -- largest withdrawal ($)
@@ -849,7 +849,7 @@ Config.Organisation = {
         NoticeMaxLength          = 500,     -- characters in the board notice
         RenameCooldownMinutes    = 1440,    -- minutes between two label changes by a boss
         InviteMinutes            = 10,      -- minutes a boss's invite waits for the player to accept
-        SalaryMax                = 1000,    -- most salary a boss sets per role per pay day ($)
+        SalaryMax                = 1000,    -- most salary per role per pay day, paid from the funds ($)
         PayrollPerDayMax         = 0,       -- most paid in salaries in all on one pay day ($); 0 = no cap
         CodenameCooldownMinutes  = 1440,    -- minutes between two own codename changes
         ChannelMuteMaxHours      = 24,      -- longest a boss mutes a member in the channel (hours)
@@ -898,13 +898,13 @@ Config.Disposal = {
 -- kill and handover checks. The shipped values suit most servers.
 
 Config.Audit = {
-    LogAllActions          = true,   -- audit every action, not only money and staff
+    LogAllActions          = true,   -- audit every action; off: money, staff and refusals only
     LogReasonText          = true,   -- keep the reason text in the audit log
     FlushIntervalMs        = 10000,  -- how often queued rows are written
     MaxQueueSize           = 5000,   -- rows queued at most
     RetentionDays          = 30,     -- days the audit log is kept; 0 = forever
     ContractRetentionDays  = 30,     -- days a finished contract is kept; 0 = forever
-    ContractsPrunedPerTick = 200,    -- finished contracts removed per tick
+    ContractsPrunedPerTick = 200,    -- finished contracts removed per pass (25 at most on mysql)
 }
 
 Config.Diagnostics = {
@@ -923,17 +923,17 @@ Config.RateLimit = {
 Config.Cooldowns = { -- per-player allowances: refill over `per` seconds, `burst` held
     diagnostic      = { per = 60, burst = 10 },   -- the page's own fault reports
     create          = { per = 60, burst = 2 },    -- placing a contract
-    accept          = { per = 30, burst = 3 },    -- accepting one
+    accept          = { per = 30, burst = 3 },    -- accept, abandon, cancel, handovers, one-tap actions
     bailout         = { per = 60, burst = 1 },    -- buying one out
     informant       = { per = 300, burst = 1 },   -- the target's informant
     placerInformant = { per = 300, burst = 1 },   -- the placer's informant
     locationTip     = { per = 60, burst = 2 },    -- buying an informant tip on a target
     message         = { per = 5,  burst = 5 },    -- messages, calls, mutes, Notify me
-    amend           = { per = 30, burst = 3 },    -- proposing a change
+    amend           = { per = 30, burst = 3 },    -- Edit, add or take back reward, extend, proposals, meeting
     load            = { per = 10, burst = 20 },   -- the app reading its own state
     search          = { per = 10, burst = 15 },   -- searching names
     wallet          = { per = 10, burst = 8 },    -- reading what the placer carries
-    photo           = { per = 15, burst = 3 },    -- asking to photograph a kill
+    photo           = { per = 15, burst = 3 },    -- a kill photo, Verify kill, handing over a proof item
     photoSubmit     = { per = 15, burst = 5 },    -- sending the photo
     photoView       = { per = 10, burst = 5 },    -- opening a kill photo
     photoDecide     = { per = 5,  burst = 5 },    -- keeping or deleting it
@@ -961,7 +961,7 @@ Config.Bailout.MaxSettleAttempts      = 10     -- ticks a queued buyout waits on
 Config.Completion.PhotoMaxSide            = 1280    -- 'server': longest side of a photo, in pixels
 Config.Completion.PhotoMaxBytes           = 600000  -- 'server': largest photo, in bytes
 Config.Completion.PhotoHostRefreshSeconds = 300     -- 'host': re-read lb-phone's hosts this often
-Config.Completion.ExtraPhotoHosts         = { -- 'host': image hosts allowed besides lb-phone's own
+Config.Completion.ExtraPhotoHosts         = { -- 'host': hosts besides lb-phone's own (its shared clouds only here)
     'fivemanage.com', 'fmfile.com',
 }
 Config.Completion.RejectLastStand       = true                  -- a downed player is never a kill

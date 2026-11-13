@@ -38,7 +38,7 @@ Which of your other scripts this resource works with, one per kind (docs/dev/ada
 | `Config.Integrations.Garage` | `'auto'` | 'auto' \| 'onesync' \| 'none' (organisation garage vehicles) |
 | `Config.Integrations.Mugshot` | `'auto'` | 'auto' \| 'MugShotBase64' \| 'none' (target headshots) |
 | `Config.Integrations.Clothing` | `'auto'` | 'auto' \| a clothing adapter's name \| 'none' |
-| `Config.Integrations.Progression` | `'auto'` | 'auto' \| 'sc-blackmarket' \| 'none' (trust per kill) |
+| `Config.Integrations.Progression` | `'auto'` | 'auto' \| 'sc-blackmarket' \| 'none' (trust per completion) |
 
 ## Rules: Timers
 
@@ -47,12 +47,12 @@ How long things last. The deadline runs only while the placer, the target and on
 | Setting | Shipped | What it does |
 |---|---|---|
 | `Config.Limits.DefaultDeadlineSeconds` | `10800` | run time; runs only with placer, target, operative in |
-| `Config.Limits.ContractLifetimeSeconds` | `172800` | hard ceiling, pauses included |
+| `Config.Limits.ContractLifetimeSeconds` | `172800` | longest a contract lives; holds give time back, staff Extend moves it |
 | `Config.Limits.StaffDeadlineMaxAdjustSeconds` | `86400` | most staff may extend or shorten a deadline by at once |
 | `Config.Limits.StaffDeadlineMinLeftSeconds` | `300` | least run time a staff shortening may leave |
-| `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | nobody may target a person again for this long |
+| `Config.Limits.TargetCooldownAfterResolveSeconds` | `1800` | then nobody may target them (not after an untaken one ends) |
 | `Config.Limits.SameCreatorSameTargetCooldownSeconds` | `7200` | the same placer on the same target |
-| `Config.Limits.ExclusiveIdleReleaseSeconds` | `1800` | release an exclusive hitman never near them; 0 = off |
+| `Config.Limits.ExclusiveIdleReleaseSeconds` | `1800` | release an idle exclusive hitman, or a full contract's idlest; 0 = off |
 | `Config.Limits.ExclusiveAttemptWindowSeconds` | `7200` | release one who never makes an attempt; 0 = off |
 | `Config.Limits.PauseWhileTargetJailed` | `true` | the deadline stops while the target serves time |
 | `Config.Limits.JailZone` | `{ radius = 300, x = 1693.3, y = 2569.5 }` | the prison grounds |
@@ -81,14 +81,14 @@ What a reward may be made of and how big it may be, payouts, stakes and buyouts.
 | `Config.Limits.SlotCooldownSeconds` | `600` | a hitman's wait between two payouts on one contract |
 | `Config.Limits.MaxEscrowLines` | `60` | escrow lines one contract may hold |
 | `Config.Penalty.MaxAmount` | `100000` | most stake a hitman may be asked for |
-| `Config.Penalty.MaxFractionOfEscrow` | `2.0` | and at most this times the reward |
+| `Config.Penalty.MaxFractionOfEscrow` | `2.0` | and at most this times the reward's cash and bank |
 | `Config.Penalty.RequireDisclosureOnAccept` | `true` | accept must echo the stake it was shown |
 | `Config.Penalty.MinWindowMinutes` | `30` | no staked accept with less than this left |
 | `Config.PendingEscrow.MaxRetriesPerLogin` | `5` | owed payouts one retry pass tries |
 | `Config.PendingEscrow.LoginRetryDelayMs` | `5000` | wait after a login before paying what is owed |
 | `Config.Bailout.Enabled` | `true` | a target may buy out a contract on them |
-| `Config.Bailout.MinMultiplier` | `1.0` | least buyout price, times the reward |
-| `Config.Bailout.MaxMultiplier` | `3.0` | most buyout price, times the reward |
+| `Config.Bailout.MinMultiplier` | `1.0` | least buyout price, times the reward's cash and bank |
+| `Config.Bailout.MaxMultiplier` | `3.0` | most buyout price, times the reward's cash and bank |
 | `Config.Bailout.AbsoluteMax` | `500000` | most buyout price in money |
 | `Config.Bailout.ProcessingDelaySeconds` | `120` | a held contract's hitman gets this long first |
 | `Config.Bailout.BlockWhileIncapacitated` | `true` | no buyout while dead or downed |
@@ -109,8 +109,8 @@ How many contracts a player may place, take or carry, and how one is finished: a
 | `Config.Completion.Fulfilment` | `'alive'` | 'alive' (live handover only) \| 'either' (a kill too) |
 | `Config.Completion.KillPhotos` | `false` | under 'either': true = a photo, false = at the scene |
 | `Config.Completion.PhotoStorage` | `'server'` | 'server' (file in data/photos) \| 'host' (lb-phone's) |
-| `Config.Completion.ProofWindowSeconds` | `60` | a kill still verifies this long after death |
-| `Config.Completion.PhotoTokenLifetimeSeconds` | `120` | seconds a kill waits to be verified |
+| `Config.Completion.ProofWindowSeconds` | `60` | a target back up this soon after death still counts as killed |
+| `Config.Completion.PhotoTokenLifetimeSeconds` | `120` | seconds after death a body still down can be verified |
 | `Config.Completion.PhotoRadius` | `5.0` | metres from the body to verify a kill |
 | `Config.Completion.PhotoOpenSeconds` | `600` | seconds the placer may view a photo before it is deleted |
 | `Config.Kidnap.CountdownSeconds` | `30` | seconds the handover is held |
@@ -141,7 +141,7 @@ How many contracts a player may place, take or carry, and how one is finished: a
 
 ## Rules: Targeting
 
-Who may open the app and who can be named as a target. Law enforcement, EMS and fire jobs are barred by job type and by name, legal jobs by name; with the whitelisted-job view on they get one read-only screen instead.
+Who may open the app and who can be named as a target. Law enforcement, EMS and fire jobs are barred by job type and by name, legal jobs by name; with the whitelisted-job view on they get one screen instead.
 
 | Setting | Shipped | What it does |
 |---|---|---|
@@ -149,7 +149,7 @@ Who may open the app and who can be named as a target. Law enforcement, EMS and 
 | `Config.BlockedJobNames` | `{ ambulance = true, bcso = true, doj = true, fib = true, … 14 in all }` | job names barred from the app, alongside the types |
 | `Config.BlockOffDuty` | `true` | barred jobs stay barred off duty |
 | `Config.HideAppFromBlockedJobs` | `true` | hide the icon from barred jobs (only while the view is off) |
-| `Config.WhitelistedView.Enabled` | `true` | barred jobs see one read-only screen: the contracts on them |
+| `Config.WhitelistedView.Enabled` | `true` | barred jobs see one screen: contracts on them, Buy out, Notify me |
 | `Config.WhitelistedView.Alerts` | `true` | they may turn on Notify me for new entries there |
 | `Config.Targeting.MinQueryLength` | `3` | letters before a name search runs |
 | `Config.Targeting.MaxResults` | `8` | names a search returns |
@@ -294,7 +294,7 @@ A character's record (docs/features.md, A hitman's record): the trust a completi
 | Setting | Shipped | What it does |
 |---|---|---|
 | `Config.Record.Progression.Enabled` | `true` | feed completions into the criminal progression |
-| `Config.Record.Progression.TrustPerElimination` | `10` | trust per kill |
+| `Config.Record.Progression.TrustPerElimination` | `10` | trust per completion by a kill |
 | `Config.Record.Progression.TrustPerKidnapping` | `20` | trust per live handover |
 | `Config.Record.Reputation.Enabled` | `false` | trust for a completion scaled by how it was done |
 | `Config.Record.Reputation.BaseFactor` | `0.5` | a plain completion |
@@ -310,7 +310,7 @@ A character's record (docs/features.md, A hitman's record): the trust a completi
 | `Config.Record.Heat.Enabled` | `false` | hitmen gather heat the city can feel |
 | `Config.Record.Heat.ProtectedCompletionHeat` | `3` | heat for a completion on a whitelisted-job target |
 | `Config.Record.Heat.WitnessHeat` | `2` | heat for a witness report on their completion |
-| `Config.Record.Heat.AdvisoryHeat` | `1` | heat for a police bulletin on their acceptance |
+| `Config.Record.Heat.AdvisoryHeat` | `1` | heat per police bulletin: an accept, or a tip on a whitelisted job |
 | `Config.Record.Heat.DecayHours` | `24` | hours each heat stays |
 | `Config.Record.Heat.Threshold` | `5` | heat at which a hitman counts as known |
 | `Config.Record.Heat.WarnTargetChancePercent` | `50` | chance their next target is warned, 0-100 |
@@ -410,11 +410,11 @@ Optional roleplay features, each its own block and each off as shipped (docs/fea
 | `Config.Roleplay.Protection.PayOnCompletionPercent` | `25` | the guard's share if the hit completes anyway |
 | `Config.Roleplay.Protection.MaxJobsPerGuard` | `2` | protection jobs one guard holds at once |
 | `Config.Roleplay.HitOnHitman.Enabled` | `false` | a target may place a contract on an operative revealed |
-| `Config.Roleplay.BurnerPhone.Enabled` | `false` | placing and accepting need the item |
+| `Config.Roleplay.BurnerPhone.Enabled` | `false` | every contract action needs the item; the target's do not |
 | `Config.Roleplay.BurnerPhone.Item` | `'burner_phone'` | the ox_inventory item |
 | `Config.Roleplay.BurnerPhone.ConsumeOnPlace` | `false` | use one up when a contract is placed |
 | `Config.Roleplay.BurnerPhone.ConsumeOnAccept` | `false` | use one up when a contract is accepted |
-| `Config.Roleplay.BurnerPhone.RequireToOpen` | `true` | no item, no contract tabs at all |
+| `Config.Roleplay.BurnerPhone.RequireToOpen` | `true` | no item: Board and your own contracts hidden; On me shows |
 | `Config.Roleplay.NpcPlaces.Enabled` | `false` | broker and informant placed from the panel (Locations) |
 | `Config.Roleplay.ReasonQuality.Enabled` | `false` | hold free-text reasons to the rules below |
 | `Config.Roleplay.ReasonQuality.MinLength` | `15` | least characters in a reason |
@@ -430,9 +430,9 @@ Optional changes to existing features, each its own block and each off as shippe
 |---|---|---|
 | `Config.Improvements.ContractDecay.Enabled` | `false` | an untaken contract changes as it waits |
 | `Config.Improvements.ContractDecay.Mode` | `'rise'` | 'rise': its reward goes up; 'shorten': it ends sooner |
-| `Config.Improvements.ContractDecay.Percent` | `10` | how much each step changes it |
+| `Config.Improvements.ContractDecay.Percent` | `10` | rise: % of the first step's reward; shorten: % of time left |
 | `Config.Improvements.ContractDecay.Hours` | `1` | hours between steps |
-| `Config.Improvements.ContractDecay.MaxIncreasePercent` | `50` | most a reward rises in all ('rise') |
+| `Config.Improvements.ContractDecay.MaxIncreasePercent` | `50` | most a reward rises in all, % of that first reward ('rise') |
 | `Config.Improvements.ContractDecay.Account` | `'bank'` | where a rise is charged from: 'cash' or 'bank' |
 | `Config.Improvements.ProofItems.Enabled` | `false` | a hitman may finish with an item taken from the target |
 | `Config.Improvements.ProofItems.Item` | `'id_card'` | the ox_inventory item (qbx_idcard's id card as shipped) |
@@ -547,7 +547,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.MemberMaxAtOnce` | `3` | most contracts a boss lets a member hold |
 | `Config.Organisation.Limits.MemberCooldownMaxMinutes` | `120` | longest cooldown between accepts a boss sets |
 | `Config.Organisation.Limits.MaxRoles` | `8` | roles at most |
-| `Config.Organisation.Limits.PayMax` | `500` | most pay per role per pay-cycle ($) |
+| `Config.Organisation.Limits.PayMax` | `500` | most qbx_core job-grade pay per role per paycheck ($) |
 | `Config.Organisation.Limits.BonusMax` | `10000` | largest bonus ($) |
 | `Config.Organisation.Limits.BonusPerDay` | `25000` | bonuses one boss pays a day ($) |
 | `Config.Organisation.Limits.WithdrawMax` | `50000` | largest withdrawal ($) |
@@ -563,7 +563,7 @@ The hitman organisation: a real qbx_core job with roles, a boss menu and Boss pe
 | `Config.Organisation.Limits.NoticeMaxLength` | `500` | characters in the board notice |
 | `Config.Organisation.Limits.RenameCooldownMinutes` | `1440` | minutes between two label changes by a boss |
 | `Config.Organisation.Limits.InviteMinutes` | `10` | minutes a boss's invite waits for the player to accept |
-| `Config.Organisation.Limits.SalaryMax` | `1000` | most salary a boss sets per role per pay day ($) |
+| `Config.Organisation.Limits.SalaryMax` | `1000` | most salary per role per pay day, paid from the funds ($) |
 | `Config.Organisation.Limits.PayrollPerDayMax` | `0` | most paid in salaries in all on one pay day ($); 0 = no cap |
 | `Config.Organisation.Limits.CodenameCooldownMinutes` | `1440` | minutes between two own codename changes |
 | `Config.Organisation.Limits.ChannelMuteMaxHours` | `24` | longest a boss mutes a member in the channel (hours) |
@@ -606,30 +606,30 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 
 | Setting | Shipped | What it does |
 |---|---|---|
-| `Config.Audit.LogAllActions` | `true` | audit every action, not only money and staff |
+| `Config.Audit.LogAllActions` | `true` | audit every action; off: money, staff and refusals only |
 | `Config.Audit.LogReasonText` | `true` | keep the reason text in the audit log |
 | `Config.Audit.FlushIntervalMs` | `10000` | how often queued rows are written |
 | `Config.Audit.MaxQueueSize` | `5000` | rows queued at most |
 | `Config.Audit.RetentionDays` | `30` | days the audit log is kept; 0 = forever |
 | `Config.Audit.ContractRetentionDays` | `30` | days a finished contract is kept; 0 = forever |
-| `Config.Audit.ContractsPrunedPerTick` | `200` | finished contracts removed per tick |
+| `Config.Audit.ContractsPrunedPerTick` | `200` | finished contracts removed per pass (25 at most on mysql) |
 | `Config.Diagnostics.SlowJobMs` | `25` | a maintenance job slower than this prints a Debug line; 0 = never |
 | `Config.VersionCheck.Enabled` | `false` | ask Url once at start; the console says if a newer version is out |
 | `Config.VersionCheck.Url` | `''` | where the version is read (text or JSON); '' = nothing is asked |
 | `Config.RateLimit.Key` | `'license'` | 'license' (per account) \| 'citizenid' (per character) |
 | `Config.Cooldowns.diagnostic` | `{ burst = 10, per = 60 }` | the page's own fault reports |
 | `Config.Cooldowns.create` | `{ burst = 2, per = 60 }` | placing a contract |
-| `Config.Cooldowns.accept` | `{ burst = 3, per = 30 }` | accepting one |
+| `Config.Cooldowns.accept` | `{ burst = 3, per = 30 }` | accept, abandon, cancel, handovers, one-tap actions |
 | `Config.Cooldowns.bailout` | `{ burst = 1, per = 60 }` | buying one out |
 | `Config.Cooldowns.informant` | `{ burst = 1, per = 300 }` | the target's informant |
 | `Config.Cooldowns.placerInformant` | `{ burst = 1, per = 300 }` | the placer's informant |
 | `Config.Cooldowns.locationTip` | `{ burst = 2, per = 60 }` | buying an informant tip on a target |
 | `Config.Cooldowns.message` | `{ burst = 5, per = 5 }` | messages, calls, mutes, Notify me |
-| `Config.Cooldowns.amend` | `{ burst = 3, per = 30 }` | proposing a change |
+| `Config.Cooldowns.amend` | `{ burst = 3, per = 30 }` | Edit, add or take back reward, extend, proposals, meeting |
 | `Config.Cooldowns.load` | `{ burst = 20, per = 10 }` | the app reading its own state |
 | `Config.Cooldowns.search` | `{ burst = 15, per = 10 }` | searching names |
 | `Config.Cooldowns.wallet` | `{ burst = 8, per = 10 }` | reading what the placer carries |
-| `Config.Cooldowns.photo` | `{ burst = 3, per = 15 }` | asking to photograph a kill |
+| `Config.Cooldowns.photo` | `{ burst = 3, per = 15 }` | a kill photo, Verify kill, handing over a proof item |
 | `Config.Cooldowns.photoSubmit` | `{ burst = 5, per = 15 }` | sending the photo |
 | `Config.Cooldowns.photoView` | `{ burst = 5, per = 10 }` | opening a kill photo |
 | `Config.Cooldowns.photoDecide` | `{ burst = 5, per = 5 }` | keeping or deleting it |
@@ -653,7 +653,7 @@ Logging, diagnostics, rate limits, json tuning and the timings of the kill and h
 | `Config.Completion.PhotoMaxSide` | `1280` | 'server': longest side of a photo, in pixels |
 | `Config.Completion.PhotoMaxBytes` | `600000` | 'server': largest photo, in bytes |
 | `Config.Completion.PhotoHostRefreshSeconds` | `300` | 'host': re-read lb-phone's hosts this often |
-| `Config.Completion.ExtraPhotoHosts` | `{ 'fivemanage.com', 'fmfile.com' }` | 'host': image hosts allowed besides lb-phone's own |
+| `Config.Completion.ExtraPhotoHosts` | `{ 'fivemanage.com', 'fmfile.com' }` | 'host': hosts besides lb-phone's own (its shared clouds only here) |
 | `Config.Completion.RejectLastStand` | `true` | a downed player is never a kill |
 | `Config.Completion.RequireObservedDamage` | `true` | a kill needs a hit the server saw |
 | `Config.Completion.DeathReportWindowMs` | `30000` | a hit counts this long before a death |

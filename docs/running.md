@@ -35,7 +35,9 @@ keeping every value.
 
 `json` mode keeps everything in files under `crimson-hitman/data/`
 (`store.json`, `records.json`, `contracts/`, `audit-<day>.jsonl`,
-`playtime.json`, `photos/`) and needs no database; it does not suit thousands
+`playtime.json`, `clocks.json`, `heartbeat.json`, `photos/`, and the
+`.prev` copies of the first two): back it up or move it as the whole folder.
+It needs no database; it does not suit thousands
 of live contracts. Kill photo files are in `data/photos/` in every mode.
 
 ## After a crash, and when the database stops answering
@@ -84,10 +86,15 @@ To add a language (say German, `de`):
 A key your file leaves out reads in English, and the console says so once;
 you can translate a few screens and leave the rest. The pages show their
 texts as plain text: write `&` and `<` as they are.
-Console lines stay English, and so do the files that only ever print to the
-console (the stores, `server/boot.lua`, `server/versioncheck.lua`). Labels a
-server owner sets are in `config/config.lua` (titles of advisories, bulletins
-and the city news, the command names).
+The start-up checks, their warnings and notes, and the lines about a missing
+script print in the server's language, since the panel's diagnosis shows the
+same lines; the rest of the console stays English, and so do the files that
+only ever print to the console (the stores, `server/boot.lua`,
+`server/versioncheck.lua`). Labels a server owner sets are in
+`config/config.lua` (the witness-report and heat-bulletin titles, the city
+news account and its templates, the command names); the officers' threat
+advisory titles are translated text, `notify.threat_advisory*` in
+`locales/<lang>.lua`.
 
 ## Performance
 

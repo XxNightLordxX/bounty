@@ -27,7 +27,9 @@ can do what* (every ACE, and how to grant it).
 
 - **Search** (`/` or Ctrl+K, in the header) finds a setting, an action or a
   section as you type; Enter on a contract id opens it, on a player id or a
-  name looks them up.
+  name looks them up (Enter on the exact name of a section, an action or a
+  setting opens that instead). The *Look up as a player* row is always listed,
+  however many rows match.
 - **The player and contract you are on stay put.** A lookup puts *Player:
   <name>* in the header, with the minutes left of the lookup (ten); the
   contract you last opened is a chip too. The contract drawer stays open over
@@ -90,7 +92,8 @@ every other write.
 
 - **Defaults**: the six limits every target has unless a job or a player
   override says otherwise. `Config.Limits.TargetCooldownAfterResolveSeconds`
-  (wait after a contract on a person ends), `SameCreatorSameTargetCooldownSeconds`
+  (wait after a contract on a person ends; not after one withdrawn or run out
+  before anybody took it, where only the placer who withdrew it waits), `SameCreatorSameTargetCooldownSeconds`
   (the same placer naming them again), `TargetCooldownAfterCompletionSeconds`
   (after a completed one, 0 off), `MaxActiveContractsPerTarget` (live at
   once), and two new caps, both 0 (off) as shipped:

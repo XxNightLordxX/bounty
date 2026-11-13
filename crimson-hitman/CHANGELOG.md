@@ -40,6 +40,52 @@ say how things work now.
   `AssignMinutes`, so while the two differ a boss can tell it from a contract
   a placer sent; features.md now says so and how to make them the same.
 
+**Review 86 fixes (pages and docs)**
+- Phone: **Go dark** works on a translated server. It echoed the account in
+  the page's words and was refused every time with *Going dark now costs …
+  Nothing was taken.*; the accept dialog names the anonymity fee's account in
+  the page's language too.
+- Organisation: a Boss menu name renames only the screen its field is for;
+  the screens sharing its layout tab (Assignments, Application form, Activity
+  log, the Channel, Armory, Leaderboard and Garage) keep their own names, so
+  the menu no longer shows two buttons with one name.
+- Organisation › Contracts › Boss pick: **Nobody (clears the pick)** clears
+  a pick; **Pin it** with nobody chosen asks for a member instead of quietly
+  clearing the pick.
+- Organisation: accepting an invite on the Org tab shows the member's page
+  at once, not the outsider's Apply form; a two-tap button refused for an
+  empty field reads its own name again, so the next two taps send it.
+- Phone: **Withdraw** on an anonymous contract says the anonymity fee is not
+  refunded, as **Cancel and place again** does; where anonymity was free,
+  neither speaks of a fee.
+- Phone: the board search says when nothing on this page matches on a board
+  of several pages, and to look with **More**.
+- Staff panel: **Pay**, **Save the panel's changes as a preset**, Target
+  limits' **Extend by minutes** and **Save job limits** name the amount, name
+  or minutes when armed (the preset one says when it replaces one of yours),
+  and typing in their boxes disarms them, so the second click sets what the
+  first one named.
+- Staff panel header search: Enter on a name looks the player up unless it is
+  exactly a section's, action's or setting's name, and the *Look up as a
+  player* row is listed however many rows match.
+- Staff panel: a contract's Money tab whose reward read got no answer offers
+  **Ask again**; a header-search jump to an organisation or Locations setting
+  marks its row once the view has drawn.
+- Docs and config notes now say what the code does: the lifetime (holds
+  give their time back, a staff extension moves it), an untaken contract's
+  deadline (it does not run), the time bands' edges, where a stake goes, the
+  proof window against the photo window, buyout and stake caps (cash and
+  bank only), the shared rate-limit buckets, `LogAllActions`, the mysql prune
+  pace, the target wait after an untaken contract, an away placer's contract
+  and the target's cap, idle release on a full competitive contract, the
+  burner phone, `AdvisoryHeat`, dirty-money payouts, the bodyguard on a void,
+  proof of intent, disposal's `reduced` and `refund` with `PayNowPercent`,
+  payroll order, job pay against salary, the armory's day counts, which
+  organisation notices name a boss or staff, lb-phone's shared clouds, the
+  json files to back up, the audit day files (UTC), which console lines are
+  translated, `/ch-void` and moderators, the whitelisted-job view and the
+  missing target script.
+
 **Review 85 fixes (organisation)**
 - A contract on a member of an organisation is no longer held for that
   organisation when the placer sends it there: it goes on the open board as

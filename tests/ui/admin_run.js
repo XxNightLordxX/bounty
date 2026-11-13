@@ -8849,6 +8849,199 @@ async function main() {
     });
   })();
 
+  /* ---------- Review 86 ---------- */
+
+  /* E12-1: Manual Pay names the amount and account when armed, and typing
+     in its boxes disarms it, so the second click pays what the first named. */
+  await (async function r86PayNamesTheAmount() {
+    const app = boot(standardServer({
+      player: function () { const r = player(); r.data.payMax = 100000; return r; },
+      manualPay: function (d) { return { ok: true, message: 'Paid $' + d.amount + '.' }; }
+    }));
+    app.open(ADMIN); await settled();
+    app.nav('players'); await settled();
+    app.type(app.byId('pl-q'), '12');
+    app.key(app.byId('pl-q'), 'Enter'); await settled();
+    app.nav('pmoney'); await settled();
+    app.type(app.byId('pay-amount'), '500');
+    app.type(app.byId('pay-reason'), 'Lost to a bug');
+    app.click(app.button('Pay')); await settled();
+    const first = app.button('Pay');
+    const firstLabel = first && first.querySelector('.cfm') ? first.querySelector('.cfm').textContent : '';
+    const armedFirst = !!(first && first.classList.contains('is-armed'));
+    app.type(app.byId('pay-amount'), '50000');
+    const armedAfterTyping = app.button('Pay').classList.contains('is-armed');
+    app.click(app.button('Pay')); await settled();
+    const sentAfterEdit = app.requests('manualPay').length;
+    const secondLabel = app.button('Pay').querySelector('.cfm').textContent;
+    app.click(app.button('Pay')); await settled();
+    it('R86 E12-1: Pay, armed, names the amount and the account', function () {
+      truthy(armedFirst, 'armed');
+      eq(firstLabel, 'Click again: pay $500 in cash');
+    });
+    it('R86 E12-1: typing a new amount disarms Pay, and the next click names the new one', function () {
+      falsy(armedAfterTyping, 'still armed after the amount changed');
+      eq(sentAfterEdit, 0, 'paid on the click after the edit');
+      eq(secondLabel, 'Click again: pay $50,000 in cash');
+      eq(app.requests('manualPay').map(function (r) { return r.data.amount; }), [50000]);
+    });
+    clean(app, 'r86 pay');
+  })();
+
+  /* E12-2: saving an own preset names the name, says when it replaces one,
+     and editing the name disarms it. */
+  await (async function r86PresetNamesTheName() {
+    const PRESETS = { ok: true, data: { presets: [
+      { name: 'Day', builtIn: false, own: true, about: 'Saved by Staff.', same: 0,
+        changes: [{ key: 'Limits.MaxAcceptedPerHitman', label: 'Contracts a hitman may hold', from: '3', to: '4' }], refused: [] }] } };
+    const app = boot(standardServer({ presets: PRESETS,
+      presetSaveOwn: function (d) { return { ok: true, message: 'Saved: ' + d.name + '.' }; } }));
+    app.open(ADMIN); await settled();
+    app.nav('presets'); await settled();
+    const box = function () { return app.$$('input').filter(function (i) { return i.getAttribute('data-bind') === 'ps.name'; })[0]; };
+    const save = function () { return app.button("Save the panel's changes as a preset"); };
+    app.type(box(), 'Night');
+    app.click(save()); await settled();
+    const nightLabel = save().querySelector('.cfm').textContent;
+    app.type(box(), 'day');
+    const armedAfterTyping = save().classList.contains('is-armed');
+    app.click(save()); await settled();
+    const sentAfterEdit = app.requests('presetSaveOwn').length;
+    const dayLabel = save().querySelector('.cfm').textContent;
+    app.click(save()); await settled();
+    it('R86 E12-2: Save as a preset, armed, names the name', function () {
+      eq(nightLabel, 'Click again: save them as “Night”');
+    });
+    it('R86 E12-2: editing the name disarms it; armed again it says which preset it replaces', function () {
+      falsy(armedAfterTyping, 'still armed after the name changed');
+      eq(sentAfterEdit, 0, 'saved on the click after the edit');
+      eq(dayLabel, 'Click again: replace your preset “day” with them');
+      eq(app.requests('presetSaveOwn').map(function (r) { return r.data.name; }), ['day']);
+    });
+    clean(app, 'r86 preset');
+  })();
+
+  /* E12-1: Target limits' Extend names the minutes; Save job limits
+     disarms when a limit is typed in. */
+  await (async function r86TargetLimitsNameTheValue() {
+    const app = boot(tlServer({ targetExtend: { ok: true, message: 'Extended.' } }));
+    app.open(access({ canWrite: false, canModerate: true, canIdentify: false })); await settled();
+    app.nav('tlplayer'); await settled();
+    app.type(app.byId('tp-q'), 'Dana');
+    app.click(app.button('Look up')); await settled();
+    app.type(app.byId('tp-reason'), 'ticket 12');
+    app.type(app.byId('tp-min'), '30');
+    app.click(app.button('Extend by minutes')); await settled();
+    const label = app.button('Extend by minutes').querySelector('.cfm').textContent;
+    app.type(app.byId('tp-min'), '600');
+    const armedAfterTyping = app.button('Extend by minutes').classList.contains('is-armed');
+    app.click(app.button('Extend by minutes')); await settled();
+    const sentAfterEdit = app.requests('targetExtend').length;
+    it('R86 E12-1: Extend by minutes, armed, names the minutes; typing new ones disarms it', function () {
+      eq(label, 'Click again: extend by 30 minutes');
+      falsy(armedAfterTyping, 'still armed');
+      eq(sentAfterEdit, 0, 'sent on the click after the edit');
+    });
+    clean(app, 'r86 target extend');
+
+    const jobs = boot(tlServer());
+    jobs.open(ADMIN); await settled();
+    jobs.click(jobs.byId('grp-targets')); await settled();
+    jobs.nav('tljobs'); await settled();
+    jobs.type(jobs.byId('tj-job'), 'police');
+    jobs.type(jobs.byId('tj-TargetCooldownAfterResolveSeconds'), '9000');
+    jobs.click(jobs.byId('tj-save')); await settled();
+    jobs.type(jobs.byId('tj-TargetCooldownAfterResolveSeconds'), '90000');
+    const jobArmed = jobs.byId('tj-save').classList.contains('is-armed');
+    jobs.click(jobs.byId('tj-save')); await settled();
+    it('R86 E12-1: Save job limits disarms when a limit is typed in after arming', function () {
+      falsy(jobArmed, 'still armed');
+      eq(jobs.requests('targetJobSet').length, 0, 'sent on the click after the edit');
+    });
+    clean(jobs, 'r86 job limits');
+  })();
+
+  /* E12-3: Enter on a name in the header search looks the player up, and
+     the lookup row is there however many rows match. */
+  await (async function r86SearchEnterOnAName() {
+    const app = boot(standardServer());
+    app.open(ADMIN); await settled();
+    app.type(app.byId('gs-q'), 'Ann'); await settled();
+    const annHits = app.byId('gs-results').querySelectorAll('.gs-hit').map(function (b) { return b.textContent; });
+    app.key(app.byId('gs-q'), 'Enter'); await settled();
+    it('R86 E12-3: Enter on a name that also matches a section looks the player up', function () {
+      truthy(/as a player/.test(annHits[0]), 'the first row: ' + JSON.stringify(annHits));
+      eq(app.requests('player').length, 1);
+      truthy(annHits.some(function (h) { return /Announce/.test(h); }), 'Announce still listed');
+    });
+    clean(app, 'r86 search Ann');
+
+    const exact = boot(standardServer());
+    exact.open(ADMIN); await settled();
+    exact.type(exact.byId('gs-q'), 'announce'); await settled();
+    exact.key(exact.byId('gs-q'), 'Enter'); await settled();
+    it('R86 E12-3: Enter on a section\'s own name still opens it', function () {
+      eq(exact.byId('nav-announce').getAttribute('aria-current'), 'page');
+      eq(exact.requests('player').length, 0);
+    });
+
+    const view = settingsView();
+    for (let i = 0; i < 25; i++) {
+      view.data.limits.push({ key: 'Limits.Max' + i, category: 'limits', group: 'Limits', area: 'placing',
+        label: 'Max thing ' + i, kind: 'number', value: 1, min: 0, max: 10, integer: true, source: 'config' });
+    }
+    const many = boot(standardServer({ settings: view }));
+    many.open(ADMIN); await settled();
+    many.nav('rules'); await settled();
+    many.type(many.byId('gs-q'), 'Max'); await settled();
+    const hits = many.byId('gs-results').querySelectorAll('.gs-hit').map(function (b) { return b.textContent; });
+    it('R86 E12-3: past the cap the lookup row is still listed', function () {
+      truthy(hits.length <= 20, String(hits.length));
+      truthy(hits.some(function (h) { return /as a player/.test(h); }), JSON.stringify(hits.slice(-3)));
+    });
+    clean(many, 'r86 search Max');
+  })();
+
+  /* C12-2: a reward read that got no answer can be asked again from the
+     Money tab. */
+  await (async function r86RewardBaseAskAgain() {
+    let fail = true;
+    const app = boot(standardServer({ contract: contractDetail({ staff: { notes: [], removals: [], edits: [], text: { editable: false } } }),
+      __fetchFails: function (b) { return fail && b.op === 'rewardPreview'; },
+      rewardPreview: { ok: true, data: { max: 1000, slot: 1, reward: 8000, staffAdded: 0 } } }));
+    app.open(ADMIN); await settled();
+    app.nav('contracts'); await settled();
+    app.click(app.$('tr.row')); await settled();
+    app.tab('money'); await settled();
+    const again = app.$$('[data-act="rw-base-again"]')[0];
+    fail = false;
+    if (again) { app.click(again); await settled(); }
+    it('R86 C12-2: a lost reward read offers Ask again, which reads it again', function () {
+      truthy(again, 'no Ask again: ' + app.text(app.drawer()).slice(0, 300));
+      eq(app.requests('rewardPreview').length, 2);
+      has(app.text(app.drawer()), '$8,000');
+    });
+    clean(app, 'r86 reward base');
+  })();
+
+  /* C12-3: a header-search hit for an organisation setting marks its row
+     once Org > Setup has drawn it. */
+  await (async function r86OrgSettingFocus() {
+    const app = boot(orgServer());
+    app.open(ADMIN); await settled();
+    app.type(app.byId('gs-q'), 'office radius'); await settled();
+    const hit = app.$$('[data-act="gs-setting"]').filter(function (b) {
+      return b.getAttribute('data-value') === 'Organisation.OfficeRadius'; })[0];
+    if (hit) { app.click(hit); await settled(); await settled(); }
+    it('R86 C12-3: the organisation setting\'s row is marked', function () {
+      truthy(hit, 'no hit');
+      const row = app.byId('st-row-Organisation.OfficeRadius');
+      truthy(row, 'row drawn');
+      truthy(row && row.classList.contains('is-focus'), 'row not marked');
+    });
+    clean(app, 'r86 org focus');
+  })();
+
   console.log('');
   failures.forEach(function (f) { console.log('FAIL  ' + f); });
   console.log('\n' + passed + ' passed, ' + failures.length + ' failed');

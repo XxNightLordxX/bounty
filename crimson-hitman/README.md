@@ -129,7 +129,7 @@ every card and Ledger entry.
 | `/ch-timeline <contract>` | One contract's state, escrow and audit trail | `crimson.admin`, `crimson.moderator` or an extra ACE |
 | `/ch-stuck` | Money waiting for staff, and open review items | `crimson.admin`, `crimson.moderator` or an extra ACE |
 | `/ch-whois <contract>` | Who is behind an anonymous party | `crimson.identity` |
-| `/ch-void <contract> [reason]` | Close a contract and refund its placer | `crimson.admin` |
+| `/ch-void <contract> [reason]` | Close a contract and refund its placer (moderators void from the panel) | `crimson.admin` |
 | `/ch-settle <line> pay [amount] \| return [citizenid] \| delivered` | Finish one stuck payout by hand | `crimson.admin` |
 | `/ch-review [all] \| <id> refund … \| pay … \| dismiss <note>` | The review queue | `crimson.admin` |
 | `/ch-refresh timers` | Test servers: bring every wait forward | `crimson.admin` |
@@ -152,7 +152,7 @@ refuses such a change, and a stored one is not applied at the start.
 |---|---|---|
 | `crimson.admin` (`Config.Admin.Ace`) | The panel and every command; every write (settings, money, settling, reviews) | `add_ace group.admin crimson.admin allow` |
 | `Config.Admin.ExtraAces` (`command` as shipped) | Reading: the panel's read-only sections, `/ch-diag`, `/ch-timeline`, `/ch-stuck`, `/ch-contracts` | already held by the ACE named |
-| `crimson.moderator` (`Config.Admin.ModeratorAce`) | Reading without identities; freeze, suspend, protect, void, move deadlines | `add_ace group.<your moderators> crimson.moderator allow` |
+| `crimson.moderator` (`Config.Admin.ModeratorAce`) | Reading without identities; in the panel: freeze, suspend, protect, void, move deadlines | `add_ace group.<your moderators> crimson.moderator allow` |
 | `crimson.developer` (`Config.Admin.DeveloperAce`) | The Developer section (console, diagnostics, developer settings); `crimson.admin` always has it | `add_ace group.admin crimson.developer allow` |
 | `crimson.identity` (`Config.Admin.IdentityAce`) | Who is behind an anonymous party, every citizen id, `/ch-whois` | grant to few: `add_ace identifier.license:<licence> crimson.identity allow` |
 
@@ -225,7 +225,7 @@ reads only and changes nothing.
 | A player cannot find the app | It is in the phone's App Store; each player downloads it. `Config.App.DefaultInstalled = true` puts it on every eligible phone. Barred jobs see only the whitelisted-job view. `/ch-diag <player>` says why it is not showing |
 | A kill does not complete a contract | As shipped `Config.Completion.Fulfilment = 'alive'`: only a live handover completes one. Set `'either'` for kills; contracts already placed keep their rule |
 | A new character can be targeted, or an old one cannot | `/ch-diag <player>` shows what the playtime rule reads for them; correct one character's hours under **Players** |
-| The informant is not offered | Each informant ships off; the target's is never offered to a whitelisted-job member; the placer's only while an operative they do not know is on the contract |
+| The informant is not offered | Each informant ships off; the target's is not offered to a whitelisted-job member unless `Config.TargetClasses.whitelisted.Informant` is on; the placer's only while an operative they do not know is on the contract |
 | A staff command typed in chat answers nothing | It answers in your F8 console |
 | *Not authorised* | Grant the ACE ([Permissions](#permissions)); the server checks on every request |
 | The console prints `N setting(s) need attention` | `/ch-diag` lists each in full, or set `Config.Debug = true` |
@@ -243,7 +243,7 @@ reads only and changes nothing.
 | `table crimson_… already exists … and is not this resource's` | Another resource owns that table name: rename it, or give crimson-hitman its own database |
 | A panel change is back to config.lua's value after a restart | An edit to config.lua made the override invalid; the start lists it among the settings that need attention |
 | A value is refused in the panel with a sentence about another setting | It is checked against everything else in force: change the other one first |
-| `photo hosts: 0`, or kill photos refused as not allowed | `'host'` storage: add the phone's upload host to `Config.Completion.ExtraPhotoHosts` |
+| `photo hosts: 0`, or kill photos refused as not allowed | `'host'` storage: add the phone's upload host to `Config.Completion.ExtraPhotoHosts`; a shared cloud host in lb-phone's list (amazonaws.com, cloudfront.net, r2.dev, storage.googleapis.com, googleusercontent.com, blob.core.windows.net, digitaloceanspaces.com) counts only when named there too |
 | Save to Photos keeps the photo in the app | `'server'` storage needs a public https address (`Config.Completion.PhotoPublicUrl` or `web_baseUrl`) in lb-phone's upload whitelist |
 | Alerts are not posted to Discord | Set `crimson_hitman_alert_webhook` with `set` and turn on `Config.Alerts.ToDiscord`; **Logs → Alerts** says which webhook it uses |
 | `/ch-settle` says *ending unfinished; it settles itself within a minute* | Nothing to do: the maintenance tick finishes it |
